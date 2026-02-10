@@ -1,0 +1,218 @@
+/* ========== Image Card ========== */
+.image-card {
+  position: relative;
+  background: var(--bg-surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: all var(--transition);
+  display: flex;
+  flex-direction: column;
+}
+
+.image-card:hover {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-md);
+}
+
+.image-card.expanded {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-glow);
+}
+
+/* Cropper Area */
+.card-cropper {
+  position: relative;
+  width: 100%;
+  min-height: 150px;
+  max-height: 500px;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.cropper-instance {
+  width: 100%;
+  height: 100%;
+}
+
+/* Override react-advanced-cropper default styles for dark theme */
+.image-card .advanced-cropper {
+  background: var(--bg-base) !important;
+}
+
+.image-card .advanced-cropper-background-wrapper {
+  background: var(--bg-base);
+}
+
+/* Toggle Button (gear icon) */
+.card-toggle {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: all var(--transition);
+  z-index: 5;
+  opacity: 0;
+}
+
+.image-card:hover .card-toggle,
+.image-card.expanded .card-toggle {
+  opacity: 1;
+}
+
+.card-toggle:hover {
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  transform: rotate(45deg);
+}
+
+.card-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  opacity: 1;
+  transform: rotate(90deg);
+}
+
+/* Delete Button (X icon) */
+.card-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: all var(--transition);
+  z-index: 5;
+  opacity: 0;
+}
+
+.image-card:hover .card-delete {
+  opacity: 1;
+}
+
+.card-delete:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: white;
+  transform: scale(1.1);
+}
+
+/* Filename */
+.card-filename {
+  padding: 6px 10px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  letter-spacing: 0.01em;
+}
+
+/* Expandable Footer */
+.card-footer {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.2s ease;
+  opacity: 0;
+}
+
+.card-footer.open {
+  max-height: 200px;
+  opacity: 1;
+}
+
+.footer-content {
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+/* Footer Section */
+.footer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.footer-label {
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+/* Aspect Ratio Pills */
+.aspect-pills {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.aspect-pill {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  line-height: 1;
+}
+
+.aspect-pill:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+  background: var(--bg-overlay);
+}
+
+.aspect-pill.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.aspect-pill.global-active {
+  border-color: rgba(129, 140, 248, 0.3);
+  color: var(--text-secondary);
+}
+
+/* Footer Actions */
+.footer-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}

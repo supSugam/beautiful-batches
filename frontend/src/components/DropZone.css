@@ -1,0 +1,119 @@
+.dropzone {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  transition: all 0.25s ease;
+}
+
+.dropzone.drag-over .dropzone-inner {
+  border-color: var(--accent);
+  background: rgba(129, 140, 248, 0.06);
+  transform: scale(1.01);
+}
+
+.dropzone.drag-over .dropzone-glow {
+  opacity: 1;
+}
+
+.dropzone-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 3.5rem 4.5rem;
+  border: 2px dashed rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  transition: all 0.25s ease;
+  max-width: 520px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.dropzone-inner:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.dropzone-glow {
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at center, rgba(129, 140, 248, 0.08), transparent 60%);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.dropzone-inner:hover .dropzone-glow {
+  opacity: 0.5;
+}
+
+.dropzone-icon {
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.dropzone-inner h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  letter-spacing: -0.01em;
+}
+
+.dropzone-sub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.dropzone-divider {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 1rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0.25rem 0;
+}
+
+.dropzone-divider::before,
+.dropzone-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.dropzone-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.btn-lg {
+  padding: 10px 20px;
+  font-size: 0.875rem;
+}
+
+.dropzone-status {
+  font-size: 0.8rem;
+  color: var(--accent);
+  margin-top: 0.5rem;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
