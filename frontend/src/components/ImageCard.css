@@ -26,6 +26,7 @@
   width: 100%;
   overflow: hidden;
   background: var(--bg-base);
+  padding: 4px;
   /* Height is set inline by JS */
 }
 
@@ -137,7 +138,7 @@
 }
 
 .card-footer.open {
-  max-height: 200px;
+  max-height: 300px; /* Increased to accommodate new controls */
   opacity: 1;
 }
 
@@ -164,8 +165,8 @@
   color: var(--text-muted);
 }
 
-/* Aspect Ratio Pills */
-.aspect-pills {
+/* Aspect Ratio Pills & Transform Actions */
+.aspect-pills, .transform-actions {
   display: flex;
   gap: 3px;
   flex-wrap: wrap;
@@ -199,7 +200,14 @@
   color: var(--accent);
 }
 
-/* Footer Actions */
+.footer-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+  opacity: 0.5;
+}
+
+/* Footer Actions (Reset/Remove) */
 .footer-actions {
   display: flex;
   gap: 4px;

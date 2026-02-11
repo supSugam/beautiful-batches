@@ -3,8 +3,15 @@ import { DropZone } from './components/DropZone';
 import { JustifiedGrid } from './components/JustifiedGrid';
 import JSZip from 'jszip';
 import {
-  FolderOpen, Download, XCircle, Loader2,
-  Grid3x3, Maximize, FolderPlus, Image as ImageIcon
+  FolderOpen,
+  Download,
+  XCircle,
+  Loader2,
+  Grid3x3,
+  Maximize,
+  FolderPlus,
+  Image as ImageIcon,
+  Settings,
 } from 'lucide-react';
 import './App.css';
 
@@ -52,6 +59,7 @@ function App() {
   const [rowHeight, setRowHeight] = useState(250); // Default target row height
   const [format, setFormat] = useState('png');
   const [quality, setQuality] = useState(90);
+  const [showAllFooters, setShowAllFooters] = useState(true);
 
   const addMoreRef = useRef(null);
 
@@ -107,32 +115,77 @@ function App() {
       try {
         const img = images[i];
         const bitmap = await createImageBitmap(img.file);
-        const crop = cropData.get(img.id);
 
-        let sx, sy, sw, sh;
-        if (crop) {
-          sx = Math.round(crop.left);
-          sy = Math.round(crop.top);
-          sw = Math.round(crop.width);
-          sh = Math.round(crop.height);
-        } else {
-          sx = 0;
-          sy = 0;
-          sw = bitmap.width;
-          sh = bitmap.height;
-        }
+        // Retrieve crop data and transforms
+        const cropEntry = cropData.get(img.id);
+        // Normalize data structure (handle legacy/simple coords vs object with transforms)
+        const coordinates =
+          cropEntry?.coordinates || (cropEntry?.width ? cropEntry : null);
+        const transforms = cropEntry?.transforms || {
+          rotate: 0,
+          flip: { horizontal: false, vertical: false },
+        };
 
+        const hasTransforms =
+          transforms.rotate !== 0 ||
+          transforms.flip.horizontal ||
+          transforms.flip.vertical;
+
+        // Determine effective source dimensions (swapped if rotated 90/270)
+        // If transformed, we reference the transformed dimensions.
+        // If not transformed, we reference original bitmap.
+        const isRotated90 = Math.abs(transforms.rotate) % 180 === 90;
+        const sourceWidth =
+          hasTransforms && isRotated90 ? bitmap.height : bitmap.width;
+        const sourceHeight =
+          hasTransforms && isRotated90 ? bitmap.width : bitmap.height;
+
+        // Determine crop region (default to full source if no crop)
+        const sx = coordinates ? Math.round(coordinates.left) : 0;
+        const sy = coordinates ? Math.round(coordinates.top) : 0;
+        const sw = coordinates ? Math.round(coordinates.width) : sourceWidth;
+        const sh = coordinates ? Math.round(coordinates.height) : sourceHeight;
+
+        // Create final canvas
         const canvas = document.createElement('canvas');
         canvas.width = sw;
         canvas.height = sh;
         const ctx = canvas.getContext('2d');
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+
+        if (hasTransforms) {
+          // 1. Create intermediate canvas for the full transformed image
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = sourceWidth;
+          tempCanvas.height = sourceHeight;
+          const tempCtx = tempCanvas.getContext('2d');
+          tempCtx.imageSmoothingEnabled = true;
+          tempCtx.imageSmoothingQuality = 'high';
+
+          // 2. Apply transforms to temp context
+          tempCtx.save();
+          tempCtx.translate(sourceWidth / 2, sourceHeight / 2);
+          tempCtx.rotate((transforms.rotate * Math.PI) / 180);
+          tempCtx.scale(
+            transforms.flip.horizontal ? -1 : 1,
+            transforms.flip.vertical ? -1 : 1,
+          );
+          // Draw original bitmap centered
+          tempCtx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2);
+          tempCtx.restore();
+
+          // 3. Crop from temp canvas
+          ctx.drawImage(tempCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+        } else {
+          // Direct crop from bitmap (Optimization)
+          ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+        }
+
         bitmap.close();
 
-        const blob = await new Promise(resolve =>
-          canvas.toBlob(resolve, formatMime, quality / 100)
+        const blob = await new Promise((resolve) =>
+          canvas.toBlob(resolve, formatMime, quality / 100),
         );
 
         const baseName = img.name.replace(/\.[^.]+$/, '');
@@ -242,6 +295,17 @@ function App() {
             />
             <Maximize size={14} className="toolbar-dim" />
           </div>
+
+          <div className="toolbar-divider" />
+
+          <button
+            className={`btn btn-sm ${showAllFooters ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setShowAllFooters(!showAllFooters)}
+            title={showAllFooters ? 'Hide Settings' : 'Show Settings'}
+          >
+            <Settings size={14} />
+            <span>Settings</span>
+          </button>
         </div>
 
         <div className="toolbar-section toolbar-actions">
@@ -302,6 +366,7 @@ function App() {
           targetRowHeight={rowHeight} // Slider controls target height
           padding={8}
           cropData={cropData}
+          showAllFooters={showAllFooters}
           onCropChange={handleCropChange}
           onDelete={handleDelete}
         />

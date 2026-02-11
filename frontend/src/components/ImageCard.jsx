@@ -1,4 +1,11 @@
-import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  memo,
+} from 'react';
 import { Cropper } from 'react-advanced-cropper';
 import 'react-advanced-cropper/dist/style.css';
 import {
@@ -11,6 +18,9 @@ import {
   RectangleVertical,
   Smartphone,
   RectangleHorizontal,
+  RotateCw,
+  FlipHorizontal,
+  FlipVertical,
 } from 'lucide-react';
 import './ImageCard.css';
 
@@ -23,18 +33,42 @@ const ASPECT_PRESETS = [
 ];
 
 export const ImageCard = memo(
-  ({ image, cropState, onCropChange, onDelete, rowHeight }) => {
-    const [expanded, setExpanded] = useState(false);
+  ({ image, cropState, onCropChange, onDelete, rowHeight, showAllFooters }) => {
+    const [expanded, setExpanded] = useState(showAllFooters);
     const [localAspect, setLocalAspect] = useState(undefined);
     const cropperRef = useRef(null);
+    const wrapperRef = useRef(null);
 
-    const effectiveAspect = localAspect !== undefined ? localAspect : undefined;
+    // Sync with global toggle
+    useEffect(() => {
+      setExpanded(showAllFooters);
+    }, [showAllFooters]);
+    const effectiveAspect = useMemo(() => {
+      const rotation = Math.abs((cropState?.transforms?.rotate || 0) % 360);
+      const isRotated = rotation % 180 === 90;
+
+      if (localAspect === null) return null;
+      if (localAspect !== undefined) {
+        return isRotated ? 1 / localAspect : localAspect;
+      }
+
+      let ratio = image.naturalRatio || 1;
+      return isRotated ? 1 / ratio : ratio;
+    }, [image.naturalRatio, localAspect, cropState]);
+
+    // Initialize transforms from props if available
+    const defaultTransforms = cropState?.transforms || {
+      rotate: 0,
+      flip: { horizontal: false, vertical: false },
+    };
 
     const handleCropEnd = useCallback(() => {
       if (!cropperRef.current) return;
       const coords = cropperRef.current.getCoordinates();
+      const transforms = cropperRef.current.getTransforms();
+
       if (coords) {
-        onCropChange(image.id, coords);
+        onCropChange(image.id, { coordinates: coords, transforms });
       }
     }, [image.id, onCropChange]);
 
@@ -46,16 +80,12 @@ export const ImageCard = memo(
     }, [rowHeight]);
 
     // Robust fix: Stop wheel events from reaching the Cropper
-    // This allows page scrolling and disables zoom even if the library ignores props
-    const wrapperRef = useRef(null);
     useEffect(() => {
       const wrapper = wrapperRef.current;
       if (!wrapper) return;
 
       const handleWheel = (e) => {
-        // Stop the event from reaching the Cropper (children)
         e.stopPropagation();
-        // Do NOT preventDefault() - this allows the page to scroll
       };
 
       wrapper.addEventListener('wheel', handleWheel, {
@@ -70,9 +100,14 @@ export const ImageCard = memo(
     const handleResetCrop = useCallback(() => {
       if (cropperRef.current) {
         cropperRef.current.reset();
+        // Reset transforms too
+        // React Advanced Cropper reset() might not reset transforms unless configured?
+        // Actually reset() resets everything usually.
         setTimeout(() => {
           const coords = cropperRef.current?.getCoordinates();
-          if (coords) onCropChange(image.id, coords);
+          const transforms = cropperRef.current?.getTransforms();
+          if (coords)
+            onCropChange(image.id, { coordinates: coords, transforms });
         }, 50);
       }
       setLocalAspect(undefined);
@@ -81,6 +116,38 @@ export const ImageCard = memo(
     const handleAspectChange = useCallback((value) => {
       setLocalAspect(value);
     }, []);
+
+    const handleRotate = useCallback(() => {
+      if (cropperRef.current) {
+        cropperRef.current.rotateImage(90);
+        handleCropEnd(); // Save state
+      }
+    }, [handleCropEnd]);
+
+    const handleFlip = useCallback(
+      (horizontal) => {
+        if (cropperRef.current) {
+          const state = cropperRef.current.getState();
+          const rotate = Math.abs((state?.transforms?.rotate || 0) % 360);
+
+          // Determine if we need to swap axes based on rotation
+          // At 90/270 degrees, the V-axis of the screen is the H-axis of the image
+          const isSwapped = rotate % 180 === 90;
+
+          const flipToggle = {
+            horizontal: isSwapped ? !horizontal : horizontal,
+            vertical: isSwapped ? horizontal : !horizontal,
+          };
+
+          cropperRef.current.transformImage(
+            { flip: flipToggle },
+            { adjustStencil: false },
+          );
+          handleCropEnd();
+        }
+      },
+      [handleCropEnd],
+    );
 
     const handleToggle = useCallback((e) => {
       e.stopPropagation();
@@ -113,8 +180,8 @@ export const ImageCard = memo(
               aspectRatio: effectiveAspect,
               grid: true,
             }}
+            defaultTransforms={defaultTransforms}
             transformImage={{
-              adjustStencil: false,
               wheel: false,
             }}
             moveImage={{
@@ -149,6 +216,7 @@ export const ImageCard = memo(
 
         <div className={`card-footer ${expanded ? 'open' : ''}`}>
           <div className="footer-content">
+            {/* Aspect Ratio Section */}
             <div className="footer-section">
               <span className="footer-label">Aspect</span>
               <div className="aspect-pills">
@@ -165,6 +233,39 @@ export const ImageCard = memo(
                 ))}
               </div>
             </div>
+
+            {/* Transform Section */}
+            <div className="footer-section">
+              <span className="footer-label">Transform</span>
+              <div className="transform-actions">
+                <button
+                  className="aspect-pill"
+                  onClick={handleRotate}
+                  title="Rotate 90°"
+                >
+                  <RotateCw size={12} />
+                  <span>Rotate</span>
+                </button>
+                <button
+                  className="aspect-pill"
+                  onClick={() => handleFlip(true)}
+                  title="Flip Horizontal"
+                >
+                  <FlipHorizontal size={12} />
+                  <span>Flip H</span>
+                </button>
+                <button
+                  className="aspect-pill"
+                  onClick={() => handleFlip(false)}
+                  title="Flip Vertical"
+                >
+                  <FlipVertical size={12} />
+                  <span>Flip V</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="footer-divider" />
 
             <div className="footer-actions">
               <button
