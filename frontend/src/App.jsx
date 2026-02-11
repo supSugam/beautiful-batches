@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { DropZone } from './components/DropZone';
-import { ImageCard } from './components/ImageCard';
+import { JustifiedGrid } from './components/JustifiedGrid';
 import JSZip from 'jszip';
 import {
   FolderOpen, Download, XCircle, Loader2,
@@ -12,20 +12,56 @@ const IMAGE_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif', '.tiff', '.tif'
 ]);
 
+// Load natural dimensions for each image file
+function loadImageWithDimensions(file, id, relativePath) {
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      resolve({
+        id,
+        name: file.name,
+        relativePath,
+        objectUrl,
+        file,
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+        naturalRatio: img.naturalWidth / img.naturalHeight,
+      });
+    };
+    img.onerror = () => {
+      resolve({
+        id,
+        name: file.name,
+        relativePath,
+        objectUrl,
+        file,
+        naturalWidth: 1,
+        naturalHeight: 1,
+        naturalRatio: 1,
+      });
+    };
+    img.src = objectUrl;
+  });
+}
+
 function App() {
   const [images, setImages] = useState([]);
-  const [cropData, setCropData] = useState(new Map()); // id → { left, top, width, height }
+  const [cropData, setCropData] = useState(new Map());
   const [processing, setProcessing] = useState(null);
-  const [columnWidth, setColumnWidth] = useState(280);
-
-  // Export settings only
+  const [rowHeight, setRowHeight] = useState(250); // Default target row height
   const [format, setFormat] = useState('png');
   const [quality, setQuality] = useState(90);
 
   const addMoreRef = useRef(null);
 
-  const handleImagesLoaded = useCallback((newImages) => {
-    setImages(prev => [...prev, ...newImages]);
+  const handleImagesLoaded = useCallback(async (rawImages) => {
+    const withDims = await Promise.all(
+      rawImages.map((img) =>
+        loadImageWithDimensions(img.file, img.id, img.relativePath),
+      ),
+    );
+    setImages((prev) => [...prev, ...withDims]);
   }, []);
 
   const handleCropChange = useCallback((id, coords) => {
@@ -57,7 +93,6 @@ function App() {
     setCropData(new Map());
   }, [images]);
 
-  // Export: crop region = output size (no resize)
   const handleExport = useCallback(async () => {
     if (images.length === 0) return;
 
@@ -74,7 +109,6 @@ function App() {
         const bitmap = await createImageBitmap(img.file);
         const crop = cropData.get(img.id);
 
-        // Crop coordinates from the cropper, or full image if not cropped
         let sx, sy, sw, sh;
         if (crop) {
           sx = Math.round(crop.left);
@@ -82,14 +116,12 @@ function App() {
           sw = Math.round(crop.width);
           sh = Math.round(crop.height);
         } else {
-          // No crop = full image
           sx = 0;
           sy = 0;
           sw = bitmap.width;
           sh = bitmap.height;
         }
 
-        // Output size = crop size (no resizing)
         const canvas = document.createElement('canvas');
         canvas.width = sw;
         canvas.height = sh;
@@ -118,23 +150,25 @@ function App() {
     a.download = `cropped_${Date.now()}.zip`;
     a.click();
     URL.revokeObjectURL(url);
-
     setProcessing(null);
   }, [images, cropData, format, quality]);
 
-  const handleAddMore = useCallback((e) => {
+  const handleAddMore = useCallback(async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    const newImages = Array.from(files)
-      .filter(f => IMAGE_EXTENSIONS.has('.' + f.name.split('.').pop().toLowerCase()))
-      .map((file, i) => ({
-        id: `add-${Date.now()}-${i}`,
-        name: file.name,
-        relativePath: file.webkitRelativePath || file.name,
-        objectUrl: URL.createObjectURL(file),
-        file,
-      }));
-    if (newImages.length > 0) setImages(prev => [...prev, ...newImages]);
+    const valid = Array.from(files).filter((f) =>
+      IMAGE_EXTENSIONS.has('.' + f.name.split('.').pop().toLowerCase()),
+    );
+    const withDims = await Promise.all(
+      valid.map((file, i) =>
+        loadImageWithDimensions(
+          file,
+          `add-${Date.now()}-${i}`,
+          file.webkitRelativePath || file.name,
+        ),
+      ),
+    );
+    if (withDims.length > 0) setImages((prev) => [...prev, ...withDims]);
     e.target.value = '';
   }, []);
 
@@ -168,7 +202,6 @@ function App() {
         </div>
 
         <div className="toolbar-section toolbar-controls">
-          {/* Format */}
           <div className="control-group">
             <label className="control-label">Format</label>
             <select
@@ -182,7 +215,6 @@ function App() {
             </select>
           </div>
 
-          {/* Quality (only for lossy formats) */}
           {format !== 'png' && (
             <div className="control-group">
               <label className="control-label">Quality</label>
@@ -198,16 +230,15 @@ function App() {
             </div>
           )}
 
-          {/* Grid Size */}
           <div className="control-group">
             <Grid3x3 size={13} className="toolbar-dim" />
             <input
               type="range"
               className="size-slider"
-              min={200}
+              min={150}
               max={500}
-              value={columnWidth}
-              onChange={(e) => setColumnWidth(Number(e.target.value))}
+              value={rowHeight}
+              onChange={(e) => setRowHeight(Number(e.target.value))}
             />
             <Maximize size={14} className="toolbar-dim" />
           </div>
@@ -221,7 +252,10 @@ function App() {
             <FolderPlus size={14} />
             <span>Add</span>
           </button>
-          <button className="btn btn-ghost btn-danger-ghost btn-sm" onClick={clearAll}>
+          <button
+            className="btn btn-ghost btn-danger-ghost btn-sm"
+            onClick={clearAll}
+          >
             <XCircle size={14} />
             <span>Clear</span>
           </button>
@@ -236,7 +270,9 @@ function App() {
             {processing ? (
               <>
                 <Loader2 size={14} className="spin" />
-                <span>{processing.current}/{processing.total}</span>
+                <span>
+                  {processing.current}/{processing.total}
+                </span>
               </>
             ) : (
               <>
@@ -248,38 +284,29 @@ function App() {
         </div>
       </header>
 
-      {/* Progress Bar */}
       {processing && (
         <div className="progress-bar">
           <div
             className="progress-fill"
-            style={{ width: `${(processing.current / processing.total) * 100}%` }}
+            style={{
+              width: `${(processing.current / processing.total) * 100}%`,
+            }}
           />
         </div>
       )}
 
-      {/* Image Grid */}
+      {/* Justified Grid Layout */}
       <div className="image-grid-scroll">
-        <div
-          className="image-grid"
-          style={{
-            gridTemplateColumns: `repeat(auto-fill, minmax(${columnWidth}px, 1fr))`
-          }}
-        >
-          {images.map(img => (
-            <ImageCard
-              key={img.id}
-              image={img}
-              cropState={cropData.get(img.id)}
-              onCropChange={handleCropChange}
-              onDelete={handleDelete}
-              globalAspect={null}
-            />
-          ))}
-        </div>
+        <JustifiedGrid
+          images={images}
+          targetRowHeight={rowHeight} // Slider controls target height
+          padding={8}
+          cropData={cropData}
+          onCropChange={handleCropChange}
+          onDelete={handleDelete}
+        />
       </div>
 
-      {/* Hidden file input */}
       <input
         ref={addMoreRef}
         type="file"

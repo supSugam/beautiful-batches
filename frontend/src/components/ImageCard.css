@@ -5,7 +5,7 @@
   border-radius: var(--radius);
   border: 1px solid var(--border);
   overflow: hidden;
-  transition: all var(--transition);
+  transition: border-color var(--transition), box-shadow var(--transition);
   display: flex;
   flex-direction: column;
 }
@@ -24,24 +24,19 @@
 .card-cropper {
   position: relative;
   width: 100%;
-  min-height: 150px;
-  max-height: 500px;
   overflow: hidden;
   background: var(--bg-base);
+  /* Height is set inline by JS */
 }
 
 .cropper-instance {
-  width: 100%;
-  height: 100%;
+  width: 100% !important;
+  height: 100% !important;
 }
 
-/* Override react-advanced-cropper default styles for dark theme */
+/* Override react-advanced-cropper for dark theme */
 .image-card .advanced-cropper {
   background: var(--bg-base) !important;
-}
-
-.image-card .advanced-cropper-background-wrapper {
-  background: var(--bg-base);
 }
 
 /* Toggle Button (gear icon) */
@@ -155,7 +150,6 @@
   background: var(--bg-elevated);
 }
 
-/* Footer Section */
 .footer-section {
   display: flex;
   flex-direction: column;
@@ -203,11 +197,6 @@
   background: var(--accent-dim);
   border-color: var(--accent);
   color: var(--accent);
-}
-
-.aspect-pill.global-active {
-  border-color: rgba(129, 140, 248, 0.3);
-  color: var(--text-secondary);
 }
 
 /* Footer Actions */
