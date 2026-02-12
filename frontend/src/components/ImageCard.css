@@ -1,215 +1,123 @@
-/* ========== Image Card ========== */
 .image-card {
   position: relative;
   background: var(--bg-surface);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  transition: border-color var(--transition), box-shadow var(--transition);
-  display: flex;
-  flex-direction: column;
+  border: 1px solid var(--border);
+  transition: all var(--transition-spring);
+  cursor: pointer;
+  user-select: none;
 }
 
 .image-card:hover {
+  transform: translateY(-2px);
   border-color: var(--border-hover);
   box-shadow: var(--shadow-md);
 }
 
-.image-card.expanded {
+.image-card.selected {
   border-color: var(--accent);
-  box-shadow: var(--shadow-glow);
+  box-shadow: 0 0 0 2px var(--accent-dim), var(--shadow-glow);
 }
 
-/* Cropper Area */
-.card-cropper {
+.card-preview {
   position: relative;
   width: 100%;
-  overflow: hidden;
   background: var(--bg-base);
-  padding: 4px;
-  /* Height is set inline by JS */
-}
-
-.cropper-instance {
-  width: 100% !important;
-  height: 100% !important;
-}
-
-/* Override react-advanced-cropper for dark theme */
-.image-card .advanced-cropper {
-  background: var(--bg-base) !important;
-}
-
-/* Toggle Button (gear icon) */
-.card-toggle {
-  position: absolute;
-  bottom: 8px;
-  right: 8px;
-  width: 28px;
-  height: 28px;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 50%;
-  color: rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-  transition: all var(--transition);
-  z-index: 5;
-  opacity: 0;
 }
 
-.image-card:hover .card-toggle,
-.image-card.expanded .card-toggle {
-  opacity: 1;
+.card-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0);
+  transition: background 0.2s ease;
+  pointer-events: none;
 }
 
-.card-toggle:hover {
-  background: rgba(0, 0, 0, 0.8);
-  color: white;
-  transform: rotate(45deg);
+.image-card:hover .card-overlay {
+  background: rgba(0, 0, 0, 0.1);
 }
 
-.card-toggle.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
-  opacity: 1;
-  transform: rotate(90deg);
+.card-overlay button {
+  pointer-events: auto;
 }
 
-/* Delete Button (X icon) */
 .card-delete {
   position: absolute;
   top: 8px;
   right: 8px;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 50%;
-  color: rgba(255, 255, 255, 0.5);
-  cursor: pointer;
-  transition: all var(--transition);
-  z-index: 5;
   opacity: 0;
+  transform: scale(0.8);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .image-card:hover .card-delete {
   opacity: 1;
+  transform: scale(1);
 }
 
 .card-delete:hover {
   background: var(--danger);
-  border-color: var(--danger);
-  color: white;
-  transform: scale(1.1);
+  transform: scale(1.1) !important;
 }
 
-/* Filename */
+.selection-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
+  border: 2px solid var(--bg-surface);
+  animation: slideIn 0.3s var(--transition-spring);
+}
+
+@keyframes slideIn {
+  from { transform: scale(0) rotate(-45deg); opacity: 0; }
+  to { transform: scale(1) rotate(0); opacity: 1; }
+}
+
+.card-info {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .card-filename {
-  padding: 6px 10px;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  background: var(--bg-surface);
-  border-top: 1px solid var(--border);
-  letter-spacing: 0.01em;
 }
 
-/* Expandable Footer */
-.card-footer {
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.2s ease;
-  opacity: 0;
-}
-
-.card-footer.open {
-  max-height: 300px; /* Increased to accommodate new controls */
-  opacity: 1;
-}
-
-.footer-content {
-  padding: 8px 10px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-elevated);
-}
-
-.footer-section {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.footer-label {
-  font-size: 0.6rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.card-dimensions {
+  font-size: 0.65rem;
   color: var(--text-muted);
-}
-
-/* Aspect Ratio Pills & Transform Actions */
-.aspect-pills, .transform-actions {
-  display: flex;
-  gap: 3px;
-  flex-wrap: wrap;
-}
-
-.aspect-pill {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px 7px;
-  border-radius: 100px;
-  border: 1px solid var(--border);
-  background: var(--bg-base);
-  color: var(--text-muted);
-  font-size: 0.6rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  line-height: 1;
-}
-
-.aspect-pill:hover {
-  border-color: var(--border-hover);
-  color: var(--text);
-  background: var(--bg-overlay);
-}
-
-.aspect-pill.active {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.footer-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 2px 0;
-  opacity: 0.5;
-}
-
-/* Footer Actions (Reset/Remove) */
-.footer-actions {
-  display: flex;
-  gap: 4px;
-  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
 }

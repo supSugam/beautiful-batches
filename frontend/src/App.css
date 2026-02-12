@@ -123,12 +123,22 @@
   transition: width 0.15s linear;
 }
 
+/* ========== Layout ========== */
+.main-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0; /* Important for flex child scrolling */
+  position: relative;
+}
+
 /* ========== Image Grid ========== */
 .image-grid-scroll {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px;
+  background: var(--bg-base);
+  transition: flex 0.3s var(--transition-spring);
 }
 
 

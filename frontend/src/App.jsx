@@ -1,7 +1,9 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { DropZone } from './components/DropZone';
 import { JustifiedGrid } from './components/JustifiedGrid';
+import { Inspector } from './components/Inspector';
 import JSZip from 'jszip';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   FolderOpen,
   Download,
@@ -60,6 +62,7 @@ function App() {
   const [format, setFormat] = useState('png');
   const [quality, setQuality] = useState(90);
   const [showAllFooters, setShowAllFooters] = useState(true);
+  const [selectedId, setSelectedId] = useState(null);
 
   const addMoreRef = useRef(null);
 
@@ -359,17 +362,33 @@ function App() {
         </div>
       )}
 
-      {/* Justified Grid Layout */}
-      <div className="image-grid-scroll">
-        <JustifiedGrid
-          images={images}
-          targetRowHeight={rowHeight} // Slider controls target height
-          padding={8}
-          cropData={cropData}
-          showAllFooters={showAllFooters}
-          onCropChange={handleCropChange}
-          onDelete={handleDelete}
-        />
+      {/* Main Layout: Grid + Sidebar */}
+      <div className="main-layout">
+        <div className="image-grid-scroll">
+          <JustifiedGrid
+            images={images}
+            targetRowHeight={rowHeight} // Slider controls target height
+            padding={8}
+            cropData={cropData}
+            showAllFooters={showAllFooters}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onCropChange={handleCropChange}
+            onDelete={handleDelete}
+          />
+        </div>
+
+        <AnimatePresence>
+          {selectedId && (
+            <Inspector
+              image={images.find((img) => img.id === selectedId)}
+              cropState={cropData.get(selectedId)}
+              onCropChange={handleCropChange}
+              onClose={() => setSelectedId(null)}
+              onDelete={handleDelete}
+            />
+          )}
+        </AnimatePresence>
       </div>
 
       <input

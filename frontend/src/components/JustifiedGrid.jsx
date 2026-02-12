@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useMemo } from 'react';
+import { RowsPhotoAlbum } from 'react-photo-album';
+import 'react-photo-album/rows.css';
 import { ImageCard } from './ImageCard';
 
 const JustifiedGrid = ({
@@ -7,110 +9,70 @@ const JustifiedGrid = ({
   padding = 8,
   cropData,
   showAllFooters,
+  selectedId,
+  onSelect,
   onCropChange,
   onDelete,
 }) => {
-  const containerRef = useRef(null);
-  const [containerWidth, setContainerWidth] = useState(0);
+  const photos = useMemo(() => {
+    if (!images || images.length === 0) return [];
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      for (let entry of entries) {
-        if (entry.contentRect.width > 0) {
-          setContainerWidth(entry.contentRect.width);
-        }
-      }
-    });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  const rows = useMemo(() => {
-    if (!containerWidth || !images || images.length === 0) return [];
-
-    const result = [];
-    let currentBuffer = [];
-    let currentRatioSum = 0;
-
-    images.forEach((img) => {
+    return images.map((img) => {
       let ratio = img.naturalRatio || 1;
 
-      // Check for rotation in cropData
+      // Check for rotation in cropData to adjust layout aspect ratio
       const cropEntry = cropData?.get(img.id);
       if (cropEntry?.transforms?.rotate) {
         const rotation = Math.abs(cropEntry.transforms.rotate);
         if (rotation % 180 === 90) {
-          // If rotated 90 or 270 degrees, invert the aspect ratio
           ratio = 1 / ratio;
         }
       }
 
-      currentBuffer.push({ ...img, effectiveRatio: ratio });
-      currentRatioSum += ratio;
-
-      const gaps = (currentBuffer.length - 1) * padding;
-      const height = (containerWidth - gaps) / currentRatioSum;
-
-      if (height <= targetRowHeight) {
-        result.push({
-          images: currentBuffer,
-          height: height,
-        });
-        currentBuffer = [];
-        currentRatioSum = 0;
-      }
+      return {
+        src: img.objectUrl,
+        // We use a base size and aspect ratio
+        width: ratio * 1000,
+        height: 1000,
+        id: img.id,
+        originalImage: img,
+      };
     });
-
-    if (currentBuffer.length > 0) {
-      result.push({
-        images: currentBuffer,
-        height: targetRowHeight,
-        isLast: true,
-      });
-    }
-
-    return result;
-  }, [images, containerWidth, targetRowHeight, padding, cropData]);
+  }, [images, cropData]);
 
   return (
-    <div ref={containerRef} style={{ width: '100%' }}>
-      {rows.map((row, rIdx) => (
-        <div
-          key={rIdx}
-          style={{
-            display: 'flex',
-            flexWrap: 'nowrap',
-            gap: padding,
-            marginBottom: padding,
-            width: '100%',
-          }}
-        >
-          {row.images.map((img) => {
-            const width =
-              row.height * (img.effectiveRatio || img.naturalRatio || 1);
-            return (
-              <div
-                key={img.id}
-                style={{
-                  width: width,
-                  flexGrow: row.isLast ? 0 : 1,
-                  flexShrink: 1,
-                }}
-              >
-                <ImageCard
-                  image={img}
-                  rowHeight={row.height}
-                  cropState={cropData.get(img.id)}
-                  showAllFooters={showAllFooters}
-                  onCropChange={onCropChange}
-                  onDelete={onDelete}
-                />
-              </div>
-            );
-          })}
-        </div>
-      ))}
+    <div className="justified-grid-container" style={{ width: '100%' }}>
+      <RowsPhotoAlbum
+        photos={photos}
+        targetRowHeight={targetRowHeight}
+        spacing={padding}
+        padding={0} // Outer padding
+        render={{
+          photo: (props, { photo, width, height }) => (
+            <div
+              key={photo.id}
+              style={{
+                width,
+                height,
+                position: 'relative',
+              }}
+            >
+              <ImageCard
+                image={photo.originalImage}
+                rowHeight={height}
+                cropState={cropData.get(photo.id)}
+                showAllFooters={showAllFooters}
+                selected={selectedId === photo.id}
+                onSelect={() =>
+                  onSelect(photo.id === selectedId ? null : photo.id)
+                }
+                onCropChange={onCropChange}
+                onDelete={onDelete}
+              />
+            </div>
+          ),
+        }}
+      />
     </div>
   );
 };
