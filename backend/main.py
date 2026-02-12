@@ -1,14 +1,17 @@
-from fastapi import FastAPI, HTTPException, Query
+import json
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
+import zipfile
 from pathlib import Path
 from PIL import Image
 from io import BytesIO
 
 app = FastAPI()
+# ... (existing middleware and cache)
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,6 +105,84 @@ def get_image(path: str = Query(...)):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(path)
+
+
+@app.post("/api/process-bulk")
+async def process_bulk(
+    files: List[UploadFile] = File(...),
+    config: str = Form(...) # JSON string
+):
+    try:
+        cfg = json.loads(config)
+        # cfg: { "format": "png", "quality": 90, "crops": { "id": { coordinates, transforms } } }
+        
+        output_format = cfg.get("format", "png").upper()
+        if output_format == "JPG":
+            output_format = "JPEG"
+        quality = cfg.get("quality", 90)
+        crops = cfg.get("crops", {})
+
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+            for upload_file in files:
+                # We use the filename as the key to match with crops data
+                # Frontend should ensure filenames are unique or we use a mapping
+                filename = upload_file.filename
+                
+                # Try to find crop data by filename or some ID
+                # In this setup, we'll assume the frontend sends IDs as filenames or we match by index
+                # Let's assume the frontend sends a mapping: { filename: crop_data }
+                img_data = crops.get(filename)
+                
+                contents = await upload_file.read()
+                img = Image.open(BytesIO(contents))
+                
+                if img_data:
+                    coords = img_data.get("coordinates")
+                    transforms = img_data.get("transforms", {})
+                    rotate = transforms.get("rotate", 0)
+                    flip = transforms.get("flip", {"horizontal": False, "vertical": False})
+                    
+                    # 1. Apply Transforms
+                    if rotate != 0:
+                        img = img.rotate(-rotate, expand=True) # Pillow rotate is counter-clockwise
+                    if flip.get("horizontal"):
+                        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                    if flip.get("vertical"):
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+                    
+                    # 2. Apply Crop
+                    if coords:
+                        # Pillow crop is (left, top, right, bottom)
+                        img = img.crop((
+                            coords["left"],
+                            coords["top"],
+                            coords["left"] + coords["width"],
+                            coords["top"] + coords["height"]
+                        ))
+
+                # Save to buffer
+                img_buffer = BytesIO()
+                # Handle alpha channel for JPEG
+                if output_format == "JPEG" and img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                
+                img.save(img_buffer, format=output_format, quality=quality)
+                
+                # Add to ZIP
+                ext = ".jpg" if output_format == "JPEG" else f".{output_format.lower()}"
+                zip_file.writestr(f"{Path(filename).stem}{ext}", img_buffer.getvalue())
+
+        zip_buffer.seek(0)
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/x-zip-compressed",
+            headers={"Content-Disposition": f"attachment; filename=processed_images.zip"}
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/crop")

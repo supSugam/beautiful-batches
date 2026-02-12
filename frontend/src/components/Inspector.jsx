@@ -6,17 +6,21 @@ import {
   X, RotateCw, FlipHorizontal, FlipVertical, 
   RotateCcw, Trash2, Maximize, Square, 
   RectangleVertical, Smartphone, RectangleHorizontal,
-  Save, Check, Loader2
+  Save, Check, Loader2, ChevronLeft, ChevronRight,
+  MousePointer2, Layers, ArrowLeftCircle, ArrowRightCircle,
+  Zap, RefreshCcw
 } from 'lucide-react';
 import './Inspector.css';
 
 const ASPECT_PRESETS = [
-  { label: 'Free', value: null, icon: Maximize },
-  { label: '1:1', value: 1, icon: Square },
+  { label: 'Freeform', value: null, icon: MousePointer2 },
+  { label: 'Square', value: 1, icon: Square },
   { label: '2:3', value: 2 / 3, icon: RectangleVertical },
   { label: '9:16', value: 9 / 16, icon: Smartphone },
   { label: '16:9', value: 16 / 9, icon: RectangleHorizontal },
 ];
+
+const MIN_CROP_SIZE = 20; // pixels
 
 /**
  * Generates a rotated and flipped version of the image source
@@ -48,7 +52,12 @@ export const Inspector = ({
   cropState, 
   onCropChange, 
   onClose,
-  onDelete 
+  onDelete,
+  onNext,
+  onPrev,
+  hasNext,
+  hasPrev,
+  onApplyTo
 }) => {
   const [crop, setCrop] = useState();
   const [aspect, setAspect] = useState(null);
@@ -61,6 +70,80 @@ export const Inspector = ({
   
   const imgRef = useRef(null);
   const lastId = useRef(null);
+
+  const getFullSizeCrop = useCallback((w, h) => {
+    return {
+      unit: '%',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100
+    };
+  }, []);
+
+  // Handle saving logic
+  const handleSave = useCallback(() => {
+    if (!isDirty && !saved) return;
+    
+    let finalCrop = crop;
+    if (!finalCrop && imgRef.current) {
+        finalCrop = getFullSizeCrop(imgRef.current.width, imgRef.current.height);
+    }
+
+    if (finalCrop && finalCrop.unit === '%' && imgRef.current) {
+        finalCrop = convertToPixelCrop(finalCrop, imgRef.current.width, imgRef.current.height);
+    }
+
+    if (!finalCrop) return;
+
+    const scaleX = (rotation % 180 === 90 ? image.naturalHeight : image.naturalWidth) / imgRef.current.width;
+    const scaleY = (rotation % 180 === 90 ? image.naturalWidth : image.naturalHeight) / imgRef.current.height;
+
+    const scaledCrop = {
+      left: Math.round(finalCrop.x * scaleX),
+      top: Math.round(finalCrop.y * scaleY),
+      width: Math.round(finalCrop.width * scaleX),
+      height: Math.round(finalCrop.height * scaleY),
+    };
+
+    onCropChange(image.id, {
+      coordinates: scaledCrop,
+      aspect,
+      transforms: { rotate: rotation, flip }
+    });
+    setIsDirty(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, [crop, image, aspect, rotation, flip, isDirty, onCropChange, saved, getFullSizeCrop]);
+
+  // Navigation with auto-save
+  const navigateNext = useCallback(() => {
+    if (hasNext) {
+      if (isDirty) handleSave();
+      onNext();
+    }
+  }, [hasNext, isDirty, handleSave, onNext]);
+
+  const navigatePrev = useCallback(() => {
+    if (hasPrev) {
+      if (isDirty) handleSave();
+      onPrev();
+    }
+  }, [hasPrev, isDirty, handleSave, onPrev]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'ArrowRight') navigateNext();
+      if (e.key === 'ArrowLeft') navigatePrev();
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [navigateNext, navigatePrev, handleSave]);
 
   // Update visual source whenever orientation changes
   useEffect(() => {
@@ -83,7 +166,6 @@ export const Inspector = ({
     update();
     return () => {
       active = false;
-      // Note: We don't revoke newUrl here because it might be the one we just set
     };
   }, [image.id, rotation, flip]);
 
@@ -91,10 +173,12 @@ export const Inspector = ({
   useEffect(() => {
     if (lastId.current !== image.id) {
        if (cropState) {
-        setCrop(cropState.coordinates);
         setRotation(cropState.transforms?.rotate || 0);
         setFlip(cropState.transforms?.flip || { horizontal: false, vertical: false });
         setAspect(cropState.aspect || null);
+        
+        // Wait for image to load to set pixel-based crop
+        setCrop(undefined); 
       } else {
         setCrop(undefined);
         setRotation(0);
@@ -109,40 +193,57 @@ export const Inspector = ({
 
   const onImageLoad = (e) => {
     imgRef.current = e.currentTarget;
-    if (aspect && !crop) {
-      const { width, height } = e.currentTarget;
+    const { width, height } = e.currentTarget;
+
+    if (cropState?.coordinates) {
+      const scaleX = width / (rotation % 180 === 90 ? image.naturalHeight : image.naturalWidth);
+      const scaleY = height / (rotation % 180 === 90 ? image.naturalWidth : image.naturalHeight);
+      
+      setCrop({
+        unit: 'px',
+        x: cropState.coordinates.left * scaleX,
+        y: cropState.coordinates.top * scaleY,
+        width: cropState.coordinates.width * scaleX,
+        height: cropState.coordinates.height * scaleY,
+      });
+    } else if (aspect) {
       const newCrop = centerCrop(
-        makeAspectCrop(
-          { unit: '%', width: 90 },
-          aspect,
-          width,
-          height
-        ),
+        makeAspectCrop({ unit: '%', width: 90 }, aspect, width, height),
         width,
         height
       );
       setCrop(newCrop);
+    } else {
+        setCrop(getFullSizeCrop(width, height));
     }
   };
 
   const handleCropChange = (c) => {
+    // Enforce min size
+    if (c.width < MIN_CROP_SIZE || c.height < MIN_CROP_SIZE) {
+        if (c.unit === 'px') return; // Don't update if too small
+    }
     setCrop(c);
     setIsDirty(true);
     setSaved(false);
   };
 
   const handleAspectChange = (value) => {
+    if (value === null && aspect === null) {
+        // Reset to full image if clicking freeform while already in freeform
+        if (imgRef.current) {
+            setCrop(getFullSizeCrop(imgRef.current.width, imgRef.current.height));
+            setIsDirty(true);
+        }
+        return;
+    }
+
     setAspect(value);
     setIsDirty(true);
     if (imgRef.current && value) {
       const { width, height } = imgRef.current;
       const newCrop = centerCrop(
-        makeAspectCrop(
-          { unit: '%', width: 90 },
-          value,
-          width,
-          height
-        ),
+        makeAspectCrop({ unit: '%', width: 90 }, value, width, height),
         width,
         height
       );
@@ -150,35 +251,31 @@ export const Inspector = ({
     }
   };
 
-  const handleSave = () => {
-    let finalCrop = crop;
-    if (crop && crop.unit === '%' && imgRef.current) {
-        finalCrop = convertToPixelCrop(crop, imgRef.current.width, imgRef.current.height);
-    }
+  const handleCustomDimChange = (dim, value) => {
+    if (!imgRef.current) return;
+    const val = parseInt(value) || 0;
+    const { width, height } = imgRef.current;
+    
+    const scaleX = width / (rotation % 180 === 90 ? image.naturalHeight : image.naturalWidth);
+    const scaleY = height / (rotation % 180 === 90 ? image.naturalWidth : image.naturalHeight);
 
-    const scaleX = (rotation % 180 === 90 ? image.naturalHeight : image.naturalWidth) / imgRef.current.width;
-    const scaleY = (rotation % 180 === 90 ? image.naturalWidth : image.naturalHeight) / imgRef.current.height;
-
-    const scaledCrop = {
-      left: Math.round(finalCrop.x * scaleX),
-      top: Math.round(finalCrop.y * scaleY),
-      width: Math.round(finalCrop.width * scaleX),
-      height: Math.round(finalCrop.height * scaleY),
-    };
-
-    onCropChange(image.id, {
-      coordinates: scaledCrop,
-      aspect,
-      transforms: { rotate: rotation, flip }
+    setCrop(prev => {
+        const next = { ...prev, unit: 'px' };
+        if (dim === 'w') next.width = val * scaleX;
+        if (dim === 'h') next.height = val * scaleY;
+        
+        // Ensure it doesn't exceed image bounds
+        if (next.x + next.width > width) next.x = Math.max(0, width - next.width);
+        if (next.y + next.height > height) next.y = Math.max(0, height - next.height);
+        
+        return next;
     });
-    setIsDirty(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setIsDirty(true);
   };
 
   const handleRotate = () => {
     setRotation((prev) => (prev + 90) % 360);
-    setCrop(undefined); // Reset crop to trigger re-center on next load
+    setCrop(undefined); 
     setIsDirty(true);
     setSaved(false);
   };
@@ -189,19 +286,12 @@ export const Inspector = ({
       [horizontal ? 'horizontal' : 'vertical']:
         !prev[horizontal ? 'horizontal' : 'vertical'],
     }));
-    // We don't necessarily need to reset crop for flips, but it keeps things consistent
     setIsDirty(true);
     setSaved(false);
   };
 
-  const handleReset = () => {
-    setCrop(undefined);
-    setRotation(0);
-    setFlip({ horizontal: false, vertical: false });
-    setAspect(null);
-    setIsDirty(true);
-    setSaved(false);
-  };
+  const currentPixelWidth = imgRef.current && crop ? Math.round(convertToPixelCrop(crop, imgRef.current.width, imgRef.current.height).width * ((rotation % 180 === 90 ? image.naturalHeight : image.naturalWidth) / imgRef.current.width)) : 0;
+  const currentPixelHeight = imgRef.current && crop ? Math.round(convertToPixelCrop(crop, imgRef.current.width, imgRef.current.height).height * ((rotation % 180 === 90 ? image.naturalWidth : image.naturalHeight) / imgRef.current.height)) : 0;
 
   if (!image) return null;
 
@@ -219,21 +309,23 @@ export const Inspector = ({
           <strong>{image.name}</strong>
         </div>
         <div className="header-actions">
+          <div className="nav-arrows">
+            <button className="btn-icon" onClick={navigatePrev} disabled={!hasPrev}>
+                <ChevronLeft size={18} />
+            </button>
+            <button className="btn-icon" onClick={navigateNext} disabled={!hasNext}>
+                <ChevronRight size={18} />
+            </button>
+          </div>
+          <div className="toolbar-divider" />
           <button
             className={`btn btn-sm ${isDirty ? 'btn-primary' : 'btn-ghost'}`}
             onClick={handleSave}
             disabled={(!isDirty && !saved) || isProcessing}
           >
-            {saved ? (
-              <Check size={14} />
-            ) : isProcessing ? (
-              <Loader2 size={14} className="spin" />
-            ) : (
-              <Save size={14} />
-            )}
-            <span>{saved ? 'Saved' : 'Save Changes'}</span>
+            {saved ? <Check size={14} /> : isProcessing ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+            <span>{saved ? 'Saved' : 'Save'}</span>
           </button>
-          <div className="toolbar-divider" />
           <button className="btn-icon" onClick={onClose}>
             <X size={18} />
           </button>
@@ -252,6 +344,8 @@ export const Inspector = ({
                 onComplete={handleCropChange}
                 aspect={aspect}
                 className="custom-cropper"
+                minWidth={MIN_CROP_SIZE}
+                minHeight={MIN_CROP_SIZE}
               >
                 <img
                   src={visualUrl || image.objectUrl}
@@ -262,7 +356,7 @@ export const Inspector = ({
                     transition: 'opacity 0.2s',
                     display: 'block',
                     maxWidth: '100%',
-                    maxHeight: '70vh',
+                    maxHeight: '65vh',
                     objectFit: 'contain',
                   }}
                 />
@@ -270,16 +364,38 @@ export const Inspector = ({
             )}
           </div>
 
-          <div className="inspector-caption">
-            {rotation % 180 === 90 ? image.naturalHeight : image.naturalWidth} ×{' '}
-            {rotation % 180 === 90 ? image.naturalWidth : image.naturalHeight} •{' '}
-            {image.file.type.split('/')[1].toUpperCase()}
+          <div className="inspector-stats">
+            <div className="stat-pill">
+                <Maximize size={10} />
+                <span>{rotation % 180 === 90 ? image.naturalHeight : image.naturalWidth} × {rotation % 180 === 90 ? image.naturalWidth : image.naturalHeight}</span>
+            </div>
+            <div className="stat-pill active">
+                <Layers size={10} />
+                <span>Crop: {currentPixelWidth} × {currentPixelHeight}</span>
+            </div>
           </div>
         </div>
 
         <div className="inspector-controls">
           <section className="control-section">
-            <h3 className="section-label">Aspect Ratio</h3>
+            <div className="section-header">
+                <h3 className="section-label">Aspect Ratio</h3>
+                <div className="custom-dims">
+                    <input 
+                        type="number" 
+                        value={currentPixelWidth} 
+                        onChange={(e) => handleCustomDimChange('w', e.target.value)}
+                        placeholder="W"
+                    />
+                    <span>×</span>
+                    <input 
+                        type="number" 
+                        value={currentPixelHeight} 
+                        onChange={(e) => handleCustomDimChange('h', e.target.value)}
+                        placeholder="H"
+                    />
+                </div>
+            </div>
             <div className="aspect-grid">
               {ASPECT_PRESETS.map(({ label, value, icon: Icon }) => (
                 <button
@@ -295,26 +411,42 @@ export const Inspector = ({
           </section>
 
           <section className="control-section">
-            <h3 className="section-label">Orientation & Transform</h3>
-            <div className="action-row">
-              <button className="btn btn-secondary" onClick={handleRotate}>
-                <RotateCw size={14} />
-                <span>Rotate 90°</span>
+            <h3 className="section-label">Transform</h3>
+            <div className="icon-action-row">
+              <button className="btn-icon-box" title="Rotate 90°" onClick={handleRotate}>
+                <RotateCw size={18} />
               </button>
-              <button
-                className={`btn ${flip.horizontal ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => handleFlip(true)}
-              >
-                <FlipHorizontal size={14} />
-                <span>Mirror H</span>
+              <button className={`btn-icon-box ${flip.horizontal ? 'active' : ''}`} title="Flip Horizontal" onClick={() => handleFlip(true)}>
+                <FlipHorizontal size={18} />
               </button>
-              <button
-                className={`btn ${flip.vertical ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => handleFlip(false)}
-              >
-                <FlipVertical size={14} />
-                <span>Mirror V</span>
+              <button className={`btn-icon-box ${flip.vertical ? 'active' : ''}`} title="Flip Vertical" onClick={() => handleFlip(false)}>
+                <FlipVertical size={18} />
               </button>
+              <button className="btn-icon-box" title="Reset Transforms" onClick={() => {
+                  setRotation(0);
+                  setFlip({ horizontal: false, vertical: false });
+                  setIsDirty(true);
+              }}>
+                <RefreshCcw size={18} />
+              </button>
+            </div>
+          </section>
+
+          <section className="control-section">
+            <h3 className="section-label">Bulk Apply Current Settings</h3>
+            <div className="apply-grid">
+                <button className="btn btn-secondary btn-sm" onClick={() => { if (isDirty) handleSave(); onApplyTo('prev'); }}>
+                    <ArrowLeftCircle size={14} />
+                    <span>Previous</span>
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => { if (isDirty) handleSave(); onApplyTo('rest'); }}>
+                    <span>Rest</span>
+                    <ArrowRightCircle size={14} />
+                </button>
+                <button className="btn btn-primary btn-sm btn-glow" onClick={() => { if (isDirty) handleSave(); onApplyTo('all'); }}>
+                    <Zap size={14} />
+                    <span>All Images</span>
+                </button>
             </div>
           </section>
 
