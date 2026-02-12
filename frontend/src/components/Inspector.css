@@ -76,10 +76,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 400px;
-  max-height: 70vh;
-  padding: 12px;
+  padding: 0; /* Zero padding to hug the image perfectly */
   position: relative;
+  transition: all 0.3s var(--transition-spring);
 }
 
 .custom-cropper {

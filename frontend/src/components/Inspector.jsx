@@ -176,6 +176,33 @@ export const Inspector = ({
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const handleRotate = () => {
+    setRotation((prev) => (prev + 90) % 360);
+    setCrop(undefined); // Reset crop to trigger re-center on next load
+    setIsDirty(true);
+    setSaved(false);
+  };
+
+  const handleFlip = (horizontal) => {
+    setFlip((prev) => ({
+      ...prev,
+      [horizontal ? 'horizontal' : 'vertical']:
+        !prev[horizontal ? 'horizontal' : 'vertical'],
+    }));
+    // We don't necessarily need to reset crop for flips, but it keeps things consistent
+    setIsDirty(true);
+    setSaved(false);
+  };
+
+  const handleReset = () => {
+    setCrop(undefined);
+    setRotation(0);
+    setFlip({ horizontal: false, vertical: false });
+    setAspect(null);
+    setIsDirty(true);
+    setSaved(false);
+  };
+
   if (!image) return null;
 
   return (
@@ -192,12 +219,18 @@ export const Inspector = ({
           <strong>{image.name}</strong>
         </div>
         <div className="header-actions">
-           <button 
-            className={`btn btn-sm ${isDirty ? 'btn-primary' : 'btn-ghost'}`} 
+          <button
+            className={`btn btn-sm ${isDirty ? 'btn-primary' : 'btn-ghost'}`}
             onClick={handleSave}
             disabled={(!isDirty && !saved) || isProcessing}
           >
-            {saved ? <Check size={14} /> : (isProcessing ? <Loader2 size={14} className="spin" /> : <Save size={14} />)}
+            {saved ? (
+              <Check size={14} />
+            ) : isProcessing ? (
+              <Loader2 size={14} className="spin" />
+            ) : (
+              <Save size={14} />
+            )}
             <span>{saved ? 'Saved' : 'Save Changes'}</span>
           </button>
           <div className="toolbar-divider" />
@@ -224,21 +257,23 @@ export const Inspector = ({
                   src={visualUrl || image.objectUrl}
                   onLoad={onImageLoad}
                   alt="editing"
-                  style={{ 
-                    opacity: isProcessing ? 0.3 : 1, 
+                  style={{
+                    opacity: isProcessing ? 0.3 : 1,
                     transition: 'opacity 0.2s',
                     display: 'block',
                     maxWidth: '100%',
                     maxHeight: '70vh',
-                    objectFit: 'contain'
+                    objectFit: 'contain',
                   }}
                 />
               </ReactCrop>
             )}
           </div>
-          
+
           <div className="inspector-caption">
-             {rotation % 180 === 90 ? image.naturalHeight : image.naturalWidth} × {rotation % 180 === 90 ? image.naturalWidth : image.naturalHeight} • {image.file.type.split('/')[1].toUpperCase()}
+            {rotation % 180 === 90 ? image.naturalHeight : image.naturalWidth} ×{' '}
+            {rotation % 180 === 90 ? image.naturalWidth : image.naturalHeight} •{' '}
+            {image.file.type.split('/')[1].toUpperCase()}
           </div>
         </div>
 
@@ -262,15 +297,21 @@ export const Inspector = ({
           <section className="control-section">
             <h3 className="section-label">Orientation & Transform</h3>
             <div className="action-row">
-              <button className="btn btn-secondary" onClick={() => { setRotation((r) => (r + 90) % 360); setIsDirty(true); }}>
+              <button className="btn btn-secondary" onClick={handleRotate}>
                 <RotateCw size={14} />
                 <span>Rotate 90°</span>
               </button>
-              <button className={`btn ${flip.horizontal ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setFlip(f => ({ ...f, horizontal: !f.horizontal })); setIsDirty(true); }}>
+              <button
+                className={`btn ${flip.horizontal ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => handleFlip(true)}
+              >
                 <FlipHorizontal size={14} />
                 <span>Mirror H</span>
               </button>
-              <button className={`btn ${flip.vertical ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setFlip(f => ({ ...f, vertical: !f.vertical })); setIsDirty(true); }}>
+              <button
+                className={`btn ${flip.vertical ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => handleFlip(false)}
+              >
                 <FlipVertical size={14} />
                 <span>Mirror V</span>
               </button>
@@ -281,11 +322,26 @@ export const Inspector = ({
 
           <section className="control-section danger-zone">
             <div className="action-row">
-              <button className="btn btn-ghost btn-sm" onClick={() => { setRotation(0); setFlip({ horizontal: false, vertical: false }); setCrop(undefined); setAspect(null); setIsDirty(true); }}>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  setRotation(0);
+                  setFlip({ horizontal: false, vertical: false });
+                  setCrop(undefined);
+                  setAspect(null);
+                  setIsDirty(true);
+                }}
+              >
                 <RotateCcw size={14} />
                 <span>Reset Draft</span>
               </button>
-              <button className="btn btn-ghost btn-danger-ghost btn-sm" onClick={() => { onDelete(image.id); onClose(); }}>
+              <button
+                className="btn btn-ghost btn-danger-ghost btn-sm"
+                onClick={() => {
+                  onDelete(image.id);
+                  onClose();
+                }}
+              >
                 <Trash2 size={14} />
                 <span>Delete File</span>
               </button>
