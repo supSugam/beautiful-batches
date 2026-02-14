@@ -7,7 +7,7 @@ from typing import List, Optional, Dict
 import os
 import zipfile
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageFilter
 from io import BytesIO
 
 app = FastAPI()
@@ -115,7 +115,7 @@ async def process_bulk(
     try:
         cfg = json.loads(config)
         # cfg: { "format": "png", "quality": 90, "crops": { "id": { coordinates, transforms } } }
-        
+
         output_format = cfg.get("format", "png").upper()
         if output_format == "JPG":
             output_format = "JPEG"
@@ -128,21 +128,21 @@ async def process_bulk(
                 # We use the filename as the key to match with crops data
                 # Frontend should ensure filenames are unique or we use a mapping
                 filename = upload_file.filename
-                
+
                 # Try to find crop data by filename or some ID
                 # In this setup, we'll assume the frontend sends IDs as filenames or we match by index
                 # Let's assume the frontend sends a mapping: { filename: crop_data }
                 img_data = crops.get(filename)
-                
+
                 contents = await upload_file.read()
                 img = Image.open(BytesIO(contents))
-                
+
                 if img_data:
                     coords = img_data.get("coordinates")
                     transforms = img_data.get("transforms", {})
                     rotate = transforms.get("rotate", 0)
                     flip = transforms.get("flip", {"horizontal": False, "vertical": False})
-                    
+
                     # 1. Apply Transforms
                     if rotate != 0:
                         img = img.rotate(-rotate, expand=True) # Pillow rotate is counter-clockwise
@@ -150,7 +150,7 @@ async def process_bulk(
                         img = img.transpose(Image.FLIP_LEFT_RIGHT)
                     if flip.get("vertical"):
                         img = img.transpose(Image.FLIP_TOP_BOTTOM)
-                    
+
                     # 2. Apply Crop
                     if coords:
                         # Pillow crop is (left, top, right, bottom)
@@ -161,14 +161,43 @@ async def process_bulk(
                             coords["top"] + coords["height"]
                         ))
 
+                    # 3. Apply Resize (Separated Logic)
+                    output_width = img_data.get("outputWidth")
+                    if (
+                        output_width
+                        and isinstance(output_width, (int, float))
+                        and output_width > 0
+                    ):
+                        output_width = int(output_width)
+                        w, h = img.size
+                        if w > 0 and h > 0:
+                            aspect = w / h
+                            new_h = int(output_width / aspect)
+                            # Use LANCZOS for high quality (Pillow 9.1+)
+                            resample_filter = (
+                                Image.Resampling.LANCZOS
+                                if hasattr(Image, "Resampling")
+                                else Image.LANCZOS
+                            )
+                            img = img.resize((output_width, new_h), resample_filter)
+
+                            # For downscaling (Top Tier Quality Optimization):
+                            # Apply a very subtle UnsharpMask to prevent mushiness
+                            if output_width < w:
+                                img = img.filter(
+                                    ImageFilter.UnsharpMask(
+                                        radius=1.0, percent=50, threshold=3
+                                    )
+                                )
+
                 # Save to buffer
                 img_buffer = BytesIO()
                 # Handle alpha channel for JPEG
                 if output_format == "JPEG" and img.mode in ("RGBA", "P"):
                     img = img.convert("RGB")
-                
+
                 img.save(img_buffer, format=output_format, quality=quality)
-                
+
                 # Add to ZIP
                 ext = ".jpg" if output_format == "JPEG" else f".{output_format.lower()}"
                 zip_file.writestr(f"{Path(filename).stem}{ext}", img_buffer.getvalue())

@@ -181,7 +181,11 @@ function App() {
         
         cropsMap[uniqueName] = {
           coordinates: cropEntry?.coordinates || null,
-          transforms: cropEntry?.transforms || { rotate: 0, flip: { horizontal: false, vertical: false } }
+          transforms: cropEntry?.transforms || {
+            rotate: 0,
+            flip: { horizontal: false, vertical: false },
+          },
+          outputWidth: cropEntry?.outputWidth || null,
         };
       }
 

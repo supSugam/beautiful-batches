@@ -104,6 +104,17 @@
   justify-content: center;
   min-height: 300px;
   position: relative;
+  transition: min-height 0.3s ease;
+}
+
+/* Hide cropper UI artifacts during active rotation to reduce "messiness" */
+.custom-cropper.dragging-rotation .ReactCrop__child-wrapper {
+  opacity: 0.8;
+}
+
+.custom-cropper.dragging-rotation .ReactCrop__crop-selection,
+.custom-cropper.dragging-rotation .ReactCrop__drag-handle {
+  display: none !important;
 }
 
 .inspector-stats {
@@ -157,27 +168,90 @@
   letter-spacing: 0.1em;
 }
 
-.custom-dims {
+/* Dimensions & Ratio Grid */
+.dims-grid {
     display: flex;
     align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.dim-input-group {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
     gap: 4px;
 }
 
-.custom-dims input {
-    width: 54px;
+.dim-input-group label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-weight: 700;
+    margin-left: 2px;
+}
+
+.dim-input-group input {
+    width: 100%;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 2px 6px;
-    font-size: 0.75rem;
+    border-radius: var(--radius);
+    padding: 6px 8px;
+    font-size: 0.8rem;
     color: var(--text-bright);
     font-family: inherit;
     text-align: center;
+    transition: all 0.2s;
 }
 
-.custom-dims span {
+.dim-input-group input:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.2);
+}
+
+.dim-input-group input.locked {
+    background: rgba(var(--accent-rgb), 0.1);
+    border-color: var(--accent-muted);
+    color: var(--accent-bright);
+}
+
+.dim-link-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 32px;
+    margin-top: 14px; /* Align with inputs */
     color: var(--text-muted);
-    font-size: 0.8rem;
+    opacity: 0.3;
+}
+
+.dim-link-icon .active {
+    color: var(--accent);
+    opacity: 1;
+}
+
+.btn-icon-subtle {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.btn-icon-subtle:hover {
+    color: var(--text-bright);
+    background: var(--bg-overlay);
+}
+
+.btn-icon-subtle.active {
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.1);
 }
 
 .aspect-grid {
@@ -209,6 +283,12 @@
 }
 
 .icon-action-row {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.icon-action-row-inner {
     display: flex;
     gap: 10px;
 }
