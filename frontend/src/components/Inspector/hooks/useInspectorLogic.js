@@ -44,6 +44,30 @@ export const useInspectorLogic = ({
       if (!cropperRef) return;
       const coords = cropperRef.getCoordinates();
       const state = cropperRef.getState();
+
+      // Safety Check: Don't sync if image hasn't loaded yet (ghost fix)
+      // We must ensure the cropper's state matches the CURRENT image's natural dimensions.
+      // If the cropper is still holding the previous image's size, we'll write invalid coords.
+      const cropperW = state?.imageSize?.width;
+      const cropperH = state?.imageSize?.height;
+      const naturalW = image.naturalWidth;
+      const naturalH = image.naturalHeight;
+
+      if (!cropperW || !cropperH) return;
+
+      // Check for stale data. The cropper might rotate internally, but imageSize usually reports the UNROTATED source size?
+      // Actually, react-advanced-cropper imageSize is based on the loaded resource.
+      // We allow a small tolerance or check if it matches either WxH or HxW.
+      const matchNormal =
+        Math.abs(cropperW - naturalW) < 2 && Math.abs(cropperH - naturalH) < 2;
+      const matchSwapped =
+        Math.abs(cropperW - naturalH) < 2 && Math.abs(cropperH - naturalW) < 2;
+
+      if (!matchNormal && !matchSwapped) {
+        // console.warn("Skipping sync: Stale image data detected");
+        return;
+      }
+
       const rotate = state?.transforms?.rotate || 0;
       const currentFlip = state?.transforms?.flip || {
         horizontal: false,
@@ -232,7 +256,7 @@ export const useInspectorLogic = ({
     if (cropperRef) {
       syncToStore();
     }
-  }, [aspect, flip, outputWidth, cropperKey, syncToStore]);
+  }, [aspect, flip, outputWidth, cropperKey, syncToStore]); // syncToStore already checks isReady
 
   // Actions
   const handleRotate = () => {
@@ -412,4 +436,4 @@ export const useInspectorLogic = ({
     onImageLoad: () => {},
     visualUrl: null,
   };
-};;;;;
+};
