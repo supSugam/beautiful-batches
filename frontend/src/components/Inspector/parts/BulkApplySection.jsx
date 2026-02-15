@@ -45,4 +45,4 @@ const BulkApplySection = ({
   );
 };
 
-export default BulkApplySection;
+export default React.memo(BulkApplySection);

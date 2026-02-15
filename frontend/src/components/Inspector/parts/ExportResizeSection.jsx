@@ -60,4 +60,4 @@ const ExportResizeSection = ({
   );
 };
 
-export default ExportResizeSection;
+export default React.memo(ExportResizeSection);

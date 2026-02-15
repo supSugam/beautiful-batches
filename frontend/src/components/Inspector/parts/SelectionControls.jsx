@@ -71,4 +71,4 @@ const SelectionControls = ({
   );
 };
 
-export default SelectionControls;
+export default React.memo(SelectionControls);

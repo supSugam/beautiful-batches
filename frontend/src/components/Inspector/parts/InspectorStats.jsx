@@ -37,4 +37,4 @@ const InspectorStats = ({
   );
 };
 
-export default InspectorStats;
+export default React.memo(InspectorStats);

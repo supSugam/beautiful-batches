@@ -28,4 +28,4 @@ const DangerZone = ({
   );
 };
 
-export default DangerZone;
+export default React.memo(DangerZone);

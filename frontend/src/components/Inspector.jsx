@@ -128,7 +128,10 @@ export const Inspector = ({
 
         <div className="inspector-controls">
           <TransformControls
+            rotation={logic.rotation}
             handleRotate={logic.handleRotate}
+            handleRotateDelta={logic.handleRotateDelta}
+            handleRotateEnd={logic.handleRotateEnd}
             flip={logic.flip}
             handleFlip={logic.handleFlip}
             handleResetTransforms={logic.handleResetDraft}
