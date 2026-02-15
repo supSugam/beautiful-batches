@@ -19,6 +19,7 @@ import DangerZone from './Inspector/parts/DangerZone';
 
 import { useInspectorLogic } from './Inspector/hooks/useInspectorLogic';
 import { useSidebarResize } from './Inspector/hooks/useSidebarResize';
+import useStore from '../store/useStore';
 
 import 'react-image-crop/dist/ReactCrop.css';
 import './Inspector.css';
@@ -33,7 +34,6 @@ const ASPECT_PRESETS = [
 
 export const Inspector = ({
   image,
-  cropState,
   onCropChange,
   onClose,
   onDelete,
@@ -45,6 +45,8 @@ export const Inspector = ({
   width: sidebarWidth,
   onResize,
 }) => {
+  const cropState = useStore((state) => state.cropData.get(image?.id));
+
   const logic = useInspectorLogic({
     image,
     cropState,
@@ -73,11 +75,7 @@ export const Inspector = ({
 
       <InspectorHeader
         imageName={image.name}
-        isDirty={logic.isDirty}
-        saved={logic.saved}
-        isProcessing={logic.isProcessing}
-        handleSave={logic.handleSave}
-        onClose={onClose}
+        onClose={logic.handleClose}
         onPrev={logic.navigatePrev}
         onNext={logic.navigateNext}
         hasPrev={hasPrev}
@@ -148,11 +146,7 @@ export const Inspector = ({
             currentPixelHeight={logic.currentPixelHeight}
           />
 
-          <BulkApplySection
-            isDirty={logic.isDirty}
-            handleSave={logic.handleSave}
-            onApplyTo={onApplyTo}
-          />
+          <BulkApplySection onApplyTo={onApplyTo} />
 
           <div className="inspector-divider" />
 

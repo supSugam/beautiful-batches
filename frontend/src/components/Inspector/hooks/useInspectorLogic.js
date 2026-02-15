@@ -15,8 +15,6 @@ export const useInspectorLogic = ({
   const [cropperKey, setCropperKey] = useState(0); // For hard reset
 
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isDirty, setIsDirty] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   // UI State
   // We use undefined for freeform to match react-advanced-cropper, but UI passes null
@@ -40,65 +38,125 @@ export const useInspectorLogic = ({
     imageHeight: 0, // Track natural size for clamping
   });
 
-  // Callback whenever cropper changes (move, zoom, rotate)
-  const onCropperChange = useCallback((cropper) => {
-    if (!cropper) return;
-    const coords = cropper.getCoordinates(); // { left, top, width, height } relative to original image
-    // Note: react-advanced-cropper coordinates are usually ideal.
-
-    // Get transforms if needed for rotation stat?
-    // cropper.getState() -> { transforms: { rotate, flip... } }
-    // Actually `cropper.getState()` might be internal.
-    // Usually passed in `onChange` event object? No, the arg IS the cropper instance proxy.
-
-    // Let's assume basic coords access first.
-    if (coords) {
-      const state = cropper.getState && cropper.getState();
+  // Sync Helper: Propagate current state to the store immediately
+  const syncToStore = useCallback(
+    (overrideAspect) => {
+      if (!cropperRef) return;
+      const coords = cropperRef.getCoordinates();
+      const state = cropperRef.getState();
       const rotate = state?.transforms?.rotate || 0;
-      const imageSize = state?.imageSize || { width: 0, height: 0 };
-
-      const newCropData = {
-        width: Math.round(coords.width),
-        height: Math.round(coords.height),
-        x: Math.round(coords.left),
-        y: Math.round(coords.top),
-        rotate: rotate,
-        imageWidth: imageSize.width,
-        imageHeight: imageSize.height,
+      const currentFlip = state?.transforms?.flip || {
+        horizontal: false,
+        vertical: false,
       };
 
-      setCropData((prev) => {
-        if (
-          prev.width === newCropData.width &&
-          prev.height === newCropData.height &&
-          prev.x === newCropData.x &&
-          prev.y === newCropData.y &&
-          prev.rotate === newCropData.rotate &&
-          prev.imageWidth === newCropData.imageWidth &&
-          prev.imageHeight === newCropData.imageHeight
-        ) {
-          return prev;
-        }
-        return newCropData;
+      if (!coords) return;
+
+      // Use overrideAspect if provided (for immediate UI response), otherwise use state
+      const currentAspect =
+        overrideAspect !== undefined ? overrideAspect : aspect;
+
+      // Intelligent Output Width
+      const autoOutputWidth =
+        outputWidth ||
+        (coords.width > (state?.imageSize?.width || 0) &&
+        (state?.imageSize?.width || 0) > 0
+          ? state.imageSize.width
+          : null);
+
+      onCropChange(image.id, {
+        coordinates: {
+          left: Math.round(coords.left),
+          top: Math.round(coords.top),
+          width: Math.round(coords.width),
+          height: Math.round(coords.height),
+        },
+        aspect: currentAspect,
+        transforms: {
+          rotate: rotate,
+          flip: currentFlip,
+        },
+        outputWidth: autoOutputWidth,
+        imageWidth: Math.round(state?.imageSize?.width || 0),
+        imageHeight: Math.round(state?.imageSize?.height || 0),
       });
+    },
+    [cropperRef, image.id, onCropChange, aspect, outputWidth],
+  );
 
-      setIsDirty((prev) => (prev ? prev : true));
-      setSaved((prev) => (prev ? false : prev));
-    }
-  }, []);
+  // Callback whenever cropper changes (move, zoom, rotate)
+  const onCropperChange = useCallback(
+    (cropper) => {
+      if (!cropper) return;
+      const coords = cropper.getCoordinates();
 
-  // Initial Sync
+      if (coords) {
+        const state = cropper.getState && cropper.getState();
+        const rotate = state?.transforms?.rotate || 0;
+        const imageSize = state?.imageSize || { width: 0, height: 0 };
+
+        const newCropData = {
+          width: Math.round(coords.width),
+          height: Math.round(coords.height),
+          x: Math.round(coords.left),
+          y: Math.round(coords.top),
+          rotate: rotate,
+          imageWidth: imageSize.width,
+          imageHeight: imageSize.height,
+        };
+
+        setCropData((prev) => {
+          if (
+            prev.width === newCropData.width &&
+            prev.height === newCropData.height &&
+            prev.x === newCropData.x &&
+            prev.y === newCropData.y &&
+            prev.rotate === newCropData.rotate &&
+            prev.imageWidth === newCropData.imageWidth &&
+            prev.imageHeight === newCropData.imageHeight
+          ) {
+            return prev;
+          }
+          return newCropData;
+        });
+
+        // Trigger immediate sync to store for "Live Crop Preview"
+        syncToStore();
+      }
+    },
+    [syncToStore],
+  );
+
+  // Initial Sync & Persistence on Change
   const lastId = useRef(null);
+
+  // We use a ref to track the CURRENT sync function because we need to call it in cleanup
+  // but we don't want the cleanup to re-run constantly if syncToStore changes identity (it shouldn't much, but still).
+  const syncRef = useRef(syncToStore);
+  useEffect(() => {
+    syncRef.current = syncToStore;
+  }, [syncToStore]);
+
+  // Save state before switching images
+  // REMOVED: This was causing a race condition where the new image's default state
+  // was being saved to the old image's ID during the render cycle.
+  // Since we sync immediately on all changes, this explicit save is unnecessary and dangerous.
+
+  useEffect(() => {
+    // This cleanup runs on unmount of the component or if cropperRef itself changes (e.g., becomes null)
+    return () => {
+      if (cropperRef) {
+        // ensuring we capture the final state if component unmounts
+        syncRef.current();
+      }
+    };
+  }, [cropperRef]);
+
   useEffect(() => {
     if (lastId.current !== image.id) {
-      // New image.
-      // Reset internal state.
-      // Cropper ref usually stays, but component might remount or reset source.
-
+      // Prepare new state...
       if (cropState) {
         const { rotate, flip: flipState } = cropState.transforms || {};
-
-        // Restore settings
         setAspect(cropState.aspect || undefined);
         if (flipState) setFlip(flipState);
         else setFlip({ horizontal: false, vertical: false });
@@ -106,22 +164,13 @@ export const useInspectorLogic = ({
         if (cropState.outputWidth) setOutputWidth(cropState.outputWidth);
         else setOutputWidth(null);
 
-        // We need to tell Cropper to set these.
         if (cropperRef) {
-          // Reset first?
           cropperRef.reset();
-
-          // Apply transforms
-          // For flip, we need to be careful. react-advanced-cropper accumulates flips?
-          // Safer to set absolute state if possible, but the API is imperative.
-          // We will rely on resetting then applying.
           if (rotate) cropperRef.rotateImage(rotate);
           if (flipState) {
             if (flipState.horizontal) cropperRef.flipImage(true, false);
             if (flipState.vertical) cropperRef.flipImage(false, true);
           }
-
-          // Apply coords
           if (cropState.coordinates) {
             cropperRef.setCoordinates({
               left: cropState.coordinates.left,
@@ -135,16 +184,11 @@ export const useInspectorLogic = ({
         setAspect(undefined);
         setFlip({ horizontal: false, vertical: false });
         setOutputWidth(null);
-        // Default to full image if no state
         if (cropperRef) {
           cropperRef.reset();
-          // Force full selection?
-          // defaultSize prop on component handles initial, but for reset we might need manual
         }
       }
 
-      setIsDirty(false);
-      setSaved(false);
       lastId.current = image.id;
       setManualW('');
       setManualH('');
@@ -152,61 +196,24 @@ export const useInspectorLogic = ({
     }
   }, [image.id, cropState, cropperRef]);
 
-  // Save
-  const handleSave = useCallback(() => {
-    if (!cropperRef) return;
-    const coords = cropperRef.getCoordinates();
-    const state = cropperRef.getState();
-    const rotate = state?.transforms?.rotate || 0;
-    const currentFlip = state?.transforms?.flip || {
-      horizontal: false,
-      vertical: false,
-    };
-
-    if (!coords) return;
-
-    // Intelligent Output Width:
-    // If zoomed out (crop width > image width), clamp output width to image width (padding effect)
-    // unless user manually set outputWidth.
-    const autoOutputWidth =
-      outputWidth ||
-      (coords.width > (state?.imageSize?.width || 0) &&
-      (state?.imageSize?.width || 0) > 0
-        ? state.imageSize.width
-        : null);
-
-    onCropChange(image.id, {
-      coordinates: {
-        left: Math.round(coords.left),
-        top: Math.round(coords.top),
-        width: Math.round(coords.width),
-        height: Math.round(coords.height),
-      },
-      aspect: aspect,
-      transforms: {
-        rotate: rotate,
-        flip: currentFlip,
-      },
-      outputWidth: autoOutputWidth,
-    });
-
-    setIsDirty(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }, [cropperRef, image.id, onCropChange, aspect, outputWidth]);
-
   const navigateNext = useCallback(() => {
     if (hasNext) {
-      if (isDirty) handleSave();
+      syncToStore();
       onNext();
     }
-  }, [hasNext, isDirty, handleSave, onNext]);
+  }, [hasNext, syncToStore, onNext]);
+
   const navigatePrev = useCallback(() => {
     if (hasPrev) {
-      if (isDirty) handleSave();
+      syncToStore();
       onPrev();
     }
-  }, [hasPrev, isDirty, handleSave, onPrev]);
+  }, [hasPrev, syncToStore, onPrev]);
+
+  const handleClose = useCallback(() => {
+    syncToStore();
+    onClose();
+  }, [syncToStore, onClose]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -214,19 +221,24 @@ export const useInspectorLogic = ({
         return;
       if (e.key === 'ArrowLeft') navigatePrev();
       if (e.key === 'ArrowRight') navigateNext();
-      if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        handleSave();
-      }
+      if (e.key === 'Escape') handleClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigateNext, navigatePrev, handleSave]);
+  }, [navigateNext, navigatePrev, handleClose]);
+
+  // Sync when aspect, flip, outputWidth, or cropper instance resets
+  useEffect(() => {
+    if (cropperRef) {
+      syncToStore();
+    }
+  }, [aspect, flip, outputWidth, cropperKey, syncToStore]);
 
   // Actions
   const handleRotate = () => {
     if (cropperRef) {
       cropperRef.rotateImage(90);
+      // Removed manual syncToStore, the effect above or onCropperChange will handle it
     }
   };
 
@@ -245,15 +257,12 @@ export const useInspectorLogic = ({
 
   const handleFlip = (horizontal) => {
     if (!cropperRef) return;
-    // react-advanced-cropper flipImage(h, v) toggles that axis.
-    // So passed true for the axis we want to toggle.
     if (horizontal) {
       cropperRef.flipImage(true, false);
     } else {
       cropperRef.flipImage(false, true);
     }
 
-    // We also update local state for the UI button highlight
     setFlip((prev) => ({
       ...prev,
       [horizontal ? 'horizontal' : 'vertical']:
@@ -262,9 +271,7 @@ export const useInspectorLogic = ({
   };
 
   const handleResetDraft = () => {
-    // Hard reset: Force component remount
     setCropperKey((prev) => prev + 1);
-
     setAspect(undefined);
     setFlip({ horizontal: false, vertical: false });
     setOutputWidth(null);
@@ -275,10 +282,7 @@ export const useInspectorLogic = ({
 
   const handleAspectClick = useCallback(
     (val) => {
-      // Map null (from UI) to undefined (for Logic/Library)
       const newAspect = val === null ? undefined : val;
-
-      // If clicking Freeform again, reset selection to full image
       if (newAspect === undefined && aspect === undefined && cropperRef) {
         cropperRef.setCoordinates({
           left: -99999,
@@ -287,7 +291,6 @@ export const useInspectorLogic = ({
           height: 999999,
         });
       }
-
       setAspect(newAspect);
     },
     [aspect, cropperRef],
@@ -296,7 +299,6 @@ export const useInspectorLogic = ({
   const handleLockToggle = () => {
     if (!cropperRef) return;
     if (aspect === undefined) {
-      // Lock current
       const coords = cropperRef.getCoordinates();
       if (coords) {
         setAspect(coords.width / coords.height);
@@ -335,56 +337,39 @@ export const useInspectorLogic = ({
   const handleResizeToggle = () => {
     setOutputWidth((prev) => (prev ? null : 1024));
     setManualOutputWidth('');
-    setIsDirty(true);
   };
+
   const handleOutputWidthChange = (val) => {
     setManualOutputWidth(val);
     const num = parseInt(val);
     if (!isNaN(num)) {
       setOutputWidth(num);
-      setIsDirty(true);
     }
   };
+
   const handleOutputWidthBlur = () => {
     setManualOutputWidth('');
   };
 
   // Visual Dims
   const isSideways = cropData.rotate % 180 !== 0;
-
-  // Base visual dims from crop
   const rawW = isSideways ? cropData.height : cropData.width;
   const rawH = isSideways ? cropData.width : cropData.height;
-
-  // Natural dims
   const natW = isSideways ? cropData.imageHeight : cropData.imageWidth;
   const natH = isSideways ? cropData.imageWidth : cropData.imageHeight;
-
-  // Smart Clamp: If zooming out (raw > nat), show natural dim
-  // (implying we scale down to fit original canvas), UNLESS manual output width overrides.
-  // Actually manual output overrides all.
-  // Here we just decide what "currentPixelWidth" means for stats.
-  // If user sees 2000px but export will be 1000px, show 1000px?
-  // Yes, consistent with "intact dimension".
 
   let visualW = rawW;
   let visualH = rawH;
 
   if (natW > 0 && rawW > natW) {
     visualW = natW;
-    // Recalculate H based on aspect of selection?
-    // Or just clamp both? Usually clamp width implies scaling factor.
-    // Scaling factor = natW / rawW.
-    // visualH = rawH * (natW / rawW).
     visualH = Math.round(rawH * (natW / rawW));
   }
 
   return {
     onCropperInit: setCropperRef,
-    onCropperChange, // Passed to Preview
+    onCropperChange,
     isProcessing,
-    isDirty,
-    saved,
 
     // Stats
     currentPixelWidth: visualW,
@@ -394,9 +379,8 @@ export const useInspectorLogic = ({
     rotation: cropData.rotate,
 
     // Controls
-    // UI expects 'null' for freeform to match constant value
     aspect: aspect === undefined ? null : aspect,
-    flip, // We might need to sync this from onChange too if we want UI button to highlight
+    flip,
     outputWidth,
 
     manualW,
@@ -416,8 +400,8 @@ export const useInspectorLogic = ({
     handleResizeToggle,
     handleOutputWidthChange,
     handleOutputWidthBlur,
-    handleSave,
 
+    handleClose,
     navigateNext,
     navigatePrev,
 
@@ -428,4 +412,4 @@ export const useInspectorLogic = ({
     onImageLoad: () => {},
     visualUrl: null,
   };
-};
+};;;;;

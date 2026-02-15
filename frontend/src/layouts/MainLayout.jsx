@@ -7,7 +7,6 @@ import './MainLayout.css';
 const MainLayout = ({
   images,
   rowHeight,
-  cropData,
   showAllFooters,
   selectedId,
   setSelectedId,
@@ -26,7 +25,6 @@ const MainLayout = ({
           images={images}
           targetRowHeight={rowHeight}
           padding={8}
-          cropData={cropData}
           showAllFooters={showAllFooters}
           selectedId={selectedId}
           onSelect={setSelectedId}
@@ -39,7 +37,6 @@ const MainLayout = ({
         {selectedId && (
           <Inspector
             image={images.find((img) => img.id === selectedId)}
-            cropState={cropData.get(selectedId)}
             onCropChange={handleCropChange}
             onClose={() => setSelectedId(null)}
             onDelete={handleDelete}

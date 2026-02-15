@@ -2,27 +2,35 @@ import React, { useMemo } from 'react';
 import { RowsPhotoAlbum } from 'react-photo-album';
 import 'react-photo-album/rows.css';
 import { ImageCard } from './ImageCard';
+import useStore from '../store/useStore';
 
 const JustifiedGrid = ({
   images,
   targetRowHeight,
   padding = 8,
-  cropData,
   showAllFooters,
   selectedId,
   onSelect,
   onCropChange,
   onDelete,
 }) => {
+  const cropData = useStore((state) => state.cropData);
+
+  // Photos for the grid components.
+  // We now include cropData in the dependencies to allow REAL-TIME layout shifts
   const photos = useMemo(() => {
     if (!images || images.length === 0) return [];
 
     return images.map((img) => {
+      const cropEntry = cropData.get(img.id);
       let ratio = img.naturalRatio || 1;
 
-      // Check for rotation in cropData to adjust layout aspect ratio
-      const cropEntry = cropData?.get(img.id);
-      if (cropEntry?.transforms?.rotate) {
+      // 1. If we have active crop coordinates, use them for the aspect ratio of the card
+      if (cropEntry?.coordinates) {
+        ratio = cropEntry.coordinates.width / cropEntry.coordinates.height;
+      }
+      // 2. Otherwise, fall back to rotation-based swap logic if coordinates aren't set yet
+      else if (cropEntry?.transforms?.rotate) {
         const rotation = Math.abs(cropEntry.transforms.rotate);
         if (rotation % 180 === 90) {
           ratio = 1 / ratio;
@@ -31,7 +39,6 @@ const JustifiedGrid = ({
 
       return {
         src: img.objectUrl,
-        // We use a base size and aspect ratio
         width: ratio * 1000,
         height: 1000,
         id: img.id,
@@ -60,7 +67,6 @@ const JustifiedGrid = ({
               <ImageCard
                 image={photo.originalImage}
                 rowHeight={height}
-                cropState={cropData.get(photo.id)}
                 showAllFooters={showAllFooters}
                 selected={selectedId === photo.id}
                 onSelect={() =>
