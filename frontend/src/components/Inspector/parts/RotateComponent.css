@@ -22,20 +22,20 @@
   flex-shrink: 0;
   top: 50%;
   transform: translateY(-50%);
-  background: white; /* Fallback */
-  background: var(--rotate-bar-color, white);
+  background: var(--text-muted);
+  opacity: 0.3;
   border-radius: 1px;
 }
 
 .telegram-rotate-component__bar--highlighted {
-  background-color: currentColor; /* Inherits from parent color */
-  background-color: var(--rotate-active-color, #3b82f6);
+  background-color: var(--accent) !important;
+  opacity: 1;
 }
 
 .telegram-rotate-component__bar--zero {
   height: 20px;
   width: 3px; /* Ensure visibility */
-  background-color: var(--rotate-active-color, #3b82f6);
+  background-color: var(--accent) !important;
 }
 
 .telegram-rotate-component__value {
@@ -44,9 +44,8 @@
   top: 50%;
   transform: translate(-50%, -50%);
   width: 3px;
-  background-color: currentColor;
-  background-color: var(--rotate-active-color, #3b82f6);
-  color: var(--rotate-active-color, #3b82f6);
+  background-color: var(--accent) !important;
+  color: var(--accent) !important;
   height: 25px;
   border-radius: 2px;
   pointer-events: none; /* Let clicks pass through to bars area */

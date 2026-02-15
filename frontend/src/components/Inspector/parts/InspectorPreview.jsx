@@ -1,20 +1,13 @@
 import React, { useRef, useEffect } from 'react';
 import { Cropper, ImageRestriction } from 'react-advanced-cropper';
-import {
-  zoomStencil,
-  fitStencilToImage,
-  resizeCoordinates,
-  transformImage,
-  defaultSize as mobileDefaultSize,
-  stencilConstraints,
-} from 'advanced-cropper/showcase/mobile';
 import 'react-advanced-cropper/dist/style.css';
 import { Loader2 } from 'lucide-react';
+import { fitStencilToImage } from 'advanced-cropper/showcase/mobile';
 
 const InspectorPreview = ({
   isProcessing,
   imageObjectUrl,
-  onCropperInit, 
+  onCropperInit,
   onCropperChange,
   aspect,
 }) => {
@@ -22,10 +15,10 @@ const InspectorPreview = ({
 
   useEffect(() => {
     if (onCropperInit && cropperRef.current) {
-        onCropperInit(cropperRef.current);
+      onCropperInit(cropperRef.current);
     }
   }, [onCropperInit]);
-  
+
   // Default to full image cover
   const defaultSize = ({ imageSize, visibleArea }) => {
     return {
@@ -57,18 +50,16 @@ const InspectorPreview = ({
             aspectRatio: aspect || undefined,
             grid: true,
           }}
-          defaultSize={mobileDefaultSize}
+          defaultSize={defaultSize}
           onChange={onCropperChange}
           onUpdate={onCropperChange}
           background={false}
           minZoom={0.5}
           maxZoom={10}
-          imageRestriction={ImageRestriction.none}
-          postProcess={[fitStencilToImage, zoomStencil]}
-          transformImageAlgorithm={transformImage}
-          resizeCoordinatesAlgorithm={resizeCoordinates}
-          stencilConstraints={stencilConstraints}
+          imageRestriction={ImageRestriction.fitArea}
+          postProcess={[fitStencilToImage]}
           transitions={true}
+          priority="coordinates"
           style={{ height: '100%', width: '100%' }}
         />
       )}

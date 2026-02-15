@@ -273,25 +273,25 @@ export const useInspectorLogic = ({
     setManualOutputWidth('');
   };
 
-  const handleAspectClick = (val) => {
-    // Map null (from UI) to undefined (for Logic/Library)
-    const newAspect = val === null ? undefined : val;
+  const handleAspectClick = useCallback(
+    (val) => {
+      // Map null (from UI) to undefined (for Logic/Library)
+      const newAspect = val === null ? undefined : val;
 
-    // If clicking Freeform again, reset selection to full image
-    if (newAspect === undefined && aspect === undefined && cropperRef) {
-      const state = cropperRef.getState();
-      if (state && state.imageSize) {
+      // If clicking Freeform again, reset selection to full image
+      if (newAspect === undefined && aspect === undefined && cropperRef) {
         cropperRef.setCoordinates({
-          left: 0,
-          top: 0,
-          width: state.imageSize.width,
-          height: state.imageSize.height,
+          left: -99999,
+          top: -99999,
+          width: 999999,
+          height: 999999,
         });
       }
-    }
 
-    setAspect(newAspect);
-  };
+      setAspect(newAspect);
+    },
+    [aspect, cropperRef],
+  );
 
   const handleLockToggle = () => {
     if (!cropperRef) return;
@@ -428,4 +428,4 @@ export const useInspectorLogic = ({
     onImageLoad: () => {},
     visualUrl: null,
   };
-};;;;
+};
