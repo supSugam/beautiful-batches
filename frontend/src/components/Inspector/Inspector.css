@@ -1,5 +1,6 @@
 .inspector {
-  width: 480px;
+  min-width: 40%;
+  max-width: 90%;
   height: 100%;
   background: var(--bg-surface);
   border-left: 1px solid var(--border);
@@ -7,6 +8,24 @@
   flex-direction: column;
   z-index: 100;
   box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+  position: relative;
+}
+
+.resizer-handle {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 101;
+  transition: background 0.2s;
+}
+
+.resizer-handle:hover,
+.inspector.resizing .resizer-handle {
+  background: var(--accent);
+  opacity: 0.5;
 }
 
 .inspector-header {
@@ -102,19 +121,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 560px;
+  height: 460px;
   position: relative;
+  transition: border-color 0.3s ease;
 }
 
-/* Hide cropper UI artifacts during active rotation to reduce "messiness" */
-.custom-cropper.dragging-rotation .ReactCrop__child-wrapper {
-  opacity: 0.8;
+.custom-cropper {
+  max-width: 100%;
+  max-height: 100%;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
 }
 
-.custom-cropper.dragging-rotation .ReactCrop__crop-selection,
-.custom-cropper.dragging-rotation .ReactCrop__drag-handle {
-  display: none !important;
-}
 
 .inspector-stats {
     display: flex;
@@ -283,13 +302,20 @@
 
 .icon-action-row {
     display: flex;
-    flex-direction: column;
-    gap: 16px;
+    gap: 12px;
 }
 
 .icon-action-row-inner {
     display: flex;
-    gap: 10px;
+    gap: 8px;
+    flex: 1;
+}
+
+.icon-action-row .btn-icon-box {
+    gap: 8px;
+    flex: 1.2;
+    font-size: 0.75rem;
+    font-weight: 700;
 }
 
 .btn-icon-box {
@@ -340,75 +366,4 @@
 
 .danger-zone {
   margin-top: 4px;
-}
-
-/* ========== Dashboard Layout (> 750px) ========== */
-.inspector.inspector-dashboard .inspector-scroll {
-  flex-direction: row;
-  align-items: stretch; /* Ensure columns fill height */
-  gap: 0;
-  overflow-y: hidden;
-  height: 100%; /* Force fill */
-}
-
-.inspector.inspector-dashboard .inspector-preview-section {
-  flex: 1;
-  height: 100%;
-  min-width: 0;
-  padding-right: 24px;
-  overflow: hidden; /* Strict containment */
-  display: grid;
-  /* Row 1: Image (shrinks), Row 2: Stats, Row 3: Controls */
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  gap: 12px;
-}
-
-.inspector.inspector-dashboard .inspector-crop-container {
-  overflow: hidden; 
-  position: relative; 
-  display: grid;
-  place-items: center;
-  min-height: 0;
-  width: 100%;
-  background: #09090b; /* Fallback for transparency */
-}
-
-/* Force ReactCrop to fit available space while wrapping image tightly */
-/* Only needed for legacy ReactCrop */
-.inspector.inspector-dashboard .custom-cropper {
-  max-height: 100%;
-  max-width: 100%;
-  display: inline-flex !important; 
-  vertical-align: middle;
-  align-items: center;
-  justify-content: center;
-}
-
-.inspector.inspector-dashboard .ReactCrop__child-wrapper {
-  max-height: 100%;
-  max-width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Ensure images inside specific legacy containers behave */
-.inspector.inspector-dashboard .custom-cropper img {
-  max-height: 100% !important;
-  max-width: 100% !important;
-  width: auto !important;
-  height: auto !important;
-  object-fit: contain !important;
-  display: block;
-  flex-shrink: 0;
-}
-
-.inspector.inspector-dashboard .inspector-controls {
-  width: 320px; /* Fixed width for controls */
-  flex-shrink: 0;
-  height: 100%;
-  overflow-y: auto; 
-  padding-left: 24px; /* Spacing from divider */
-  padding-right: 4px; 
-  border-left: 1px solid var(--border); /* Visual Separation */
 }
