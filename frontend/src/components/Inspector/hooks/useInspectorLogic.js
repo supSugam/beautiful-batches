@@ -1,5 +1,160 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+const COORD_PRECISION = 100;
+const quantizeCoord = (value) =>
+  Math.round(value * COORD_PRECISION) / COORD_PRECISION;
+const DEFAULT_PADDING = Object.freeze({
+  top: 0,
+  right: 0,
+  bottom: 0,
+  left: 0,
+});
+const DEFAULT_CORNER_RADIUS = Object.freeze({
+  topLeft: 0,
+  topRight: 0,
+  bottomRight: 0,
+  bottomLeft: 0,
+});
+const DEFAULT_PADDING_FILL_VALUE = '#ffffff';
+
+const clampPaddingValue = (value) => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
+};
+
+const normalizePadding = (padding) => ({
+  top: clampPaddingValue(Number(padding?.top ?? 0)),
+  right: clampPaddingValue(Number(padding?.right ?? 0)),
+  bottom: clampPaddingValue(Number(padding?.bottom ?? 0)),
+  left: clampPaddingValue(Number(padding?.left ?? 0)),
+});
+
+const parsePaddingInput = (rawValue) => {
+  const tokens = rawValue
+    .trim()
+    .replace(/,/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (tokens.length === 0) {
+    return { ...DEFAULT_PADDING };
+  }
+  if (tokens.length > 4) {
+    return null;
+  }
+
+  const values = tokens.map((token) => {
+    const parsed = Number.parseFloat(token.replace(/px$/i, ''));
+    if (!Number.isFinite(parsed)) return null;
+    return clampPaddingValue(parsed);
+  });
+
+  if (values.some((value) => value === null)) return null;
+
+  if (values.length === 1) {
+    const [all] = values;
+    return { top: all, right: all, bottom: all, left: all };
+  }
+  if (values.length === 2) {
+    const [vertical, horizontal] = values;
+    return {
+      top: vertical,
+      right: horizontal,
+      bottom: vertical,
+      left: horizontal,
+    };
+  }
+  if (values.length === 3) {
+    const [top, horizontal, bottom] = values;
+    return { top, right: horizontal, bottom, left: horizontal };
+  }
+
+  const [top, right, bottom, left] = values;
+  return { top, right, bottom, left };
+};
+
+const normalizeCornerRadius = (radius) => ({
+  topLeft: clampPaddingValue(Number(radius?.topLeft ?? 0)),
+  topRight: clampPaddingValue(Number(radius?.topRight ?? 0)),
+  bottomRight: clampPaddingValue(Number(radius?.bottomRight ?? 0)),
+  bottomLeft: clampPaddingValue(Number(radius?.bottomLeft ?? 0)),
+});
+
+const parseCornerRadiusInput = (rawValue) => {
+  const tokens = rawValue
+    .trim()
+    .replace(/,/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (tokens.length === 0) {
+    return { ...DEFAULT_CORNER_RADIUS };
+  }
+  if (tokens.length > 4) {
+    return null;
+  }
+
+  const values = tokens.map((token) => {
+    const parsed = Number.parseFloat(token.replace(/px$/i, ''));
+    if (!Number.isFinite(parsed)) return null;
+    return clampPaddingValue(parsed);
+  });
+
+  if (values.some((value) => value === null)) return null;
+
+  if (values.length === 1) {
+    const [all] = values;
+    return {
+      topLeft: all,
+      topRight: all,
+      bottomRight: all,
+      bottomLeft: all,
+    };
+  }
+  if (values.length === 2) {
+    const [vertical, horizontal] = values;
+    return {
+      topLeft: vertical,
+      topRight: horizontal,
+      bottomRight: vertical,
+      bottomLeft: horizontal,
+    };
+  }
+  if (values.length === 3) {
+    const [topLeft, horizontal, bottomRight] = values;
+    return {
+      topLeft,
+      topRight: horizontal,
+      bottomRight,
+      bottomLeft: horizontal,
+    };
+  }
+
+  const [topLeft, topRight, bottomRight, bottomLeft] = values;
+  return { topLeft, topRight, bottomRight, bottomLeft };
+};
+
+const formatPaddingInput = (padding) =>
+  `${padding.top} ${padding.right} ${padding.bottom} ${padding.left}`;
+const formatCornerRadiusInput = (radius) =>
+  `${radius.topLeft} ${radius.topRight} ${radius.bottomRight} ${radius.bottomLeft}`;
+
+const paddingEquals = (a, b) =>
+  a.top === b.top &&
+  a.right === b.right &&
+  a.bottom === b.bottom &&
+  a.left === b.left;
+const cornerRadiusEquals = (a, b) =>
+  a.topLeft === b.topLeft &&
+  a.topRight === b.topRight &&
+  a.bottomRight === b.bottomRight &&
+  a.bottomLeft === b.bottomLeft;
+
+const normalizePaddingFillType = (value) => {
+  if (value === 'color' || value === 'image') return value;
+  return 'empty';
+};
+
 export const useInspectorLogic = ({
   image,
   cropState,
@@ -59,6 +214,22 @@ export const useInspectorLogic = ({
   const [manualW, setManualW] = useState('');
   const [manualH, setManualH] = useState('');
   const [manualOutputWidth, setManualOutputWidth] = useState('');
+  const [paddingInput, setPaddingInput] = useState(
+    formatPaddingInput(DEFAULT_PADDING),
+  );
+  const [paddingMode, setPaddingMode] = useState('inner');
+  const [paddingValues, setPaddingValues] = useState({ ...DEFAULT_PADDING });
+  const [cornerRadiusInput, setCornerRadiusInput] = useState(
+    formatCornerRadiusInput(DEFAULT_CORNER_RADIUS),
+  );
+  const [cornerRadiusValues, setCornerRadiusValues] = useState({
+    ...DEFAULT_CORNER_RADIUS,
+  });
+  const [paddingFillType, setPaddingFillType] = useState('empty');
+  const [paddingFillValue, setPaddingFillValue] = useState(
+    DEFAULT_PADDING_FILL_VALUE,
+  );
+  const [paddingImageUrl, setPaddingImageUrl] = useState('');
 
   // Stats Data
   const [cropData, setCropData] = useState({
@@ -86,18 +257,19 @@ export const useInspectorLogic = ({
     prevLeft: null,
     prevTop: null,
     prevTime: 0,
-    prevDeltaX: null,
-    prevDeltaY: null,
     cooldownXUntil: 0,
     cooldownYUntil: 0,
   });
+  const syncFrameRef = useRef(0);
+  const queuedSyncRef = useRef(null);
+  const lastSyncedRef = useRef(null);
 
   // Sync Helper: Propagate current state to the store immediately
   const syncToStore = useCallback(
-    (overrideAspect) => {
+    (overrideAspect, snapshot) => {
       if (!cropperRef) return;
-      const coords = cropperRef.getCoordinates();
-      const state = cropperRef.getState();
+      const coords = snapshot?.coords || cropperRef.getCoordinates();
+      const state = snapshot?.state || cropperRef.getState();
 
       // Safety Check: Don't sync if image hasn't loaded yet (ghost fix)
       // We must ensure the cropper's state matches the CURRENT image's natural dimensions.
@@ -142,12 +314,12 @@ export const useInspectorLogic = ({
           ? state.imageSize.width
           : null);
 
-      onCropChange(image.id, {
+      const nextPayload = {
         coordinates: {
-          left: Math.round(coords.left),
-          top: Math.round(coords.top),
-          width: Math.round(coords.width),
-          height: Math.round(coords.height),
+          left: quantizeCoord(coords.left),
+          top: quantizeCoord(coords.top),
+          width: quantizeCoord(coords.width),
+          height: quantizeCoord(coords.height),
         },
         aspect: currentAspect,
         transforms: {
@@ -155,11 +327,83 @@ export const useInspectorLogic = ({
           flip: currentFlip,
         },
         outputWidth: autoOutputWidth,
+        paddingMode,
+        padding: { ...paddingValues },
+        cornerRadius: { ...cornerRadiusValues },
+        paddingFillType,
+        paddingFillValue,
+        paddingImageUrl,
         imageWidth: Math.round(state?.imageSize?.width || 0),
         imageHeight: Math.round(state?.imageSize?.height || 0),
+      };
+
+      const prevPayload = lastSyncedRef.current;
+      if (
+        prevPayload &&
+        prevPayload.aspect === nextPayload.aspect &&
+        prevPayload.outputWidth === nextPayload.outputWidth &&
+        prevPayload.imageWidth === nextPayload.imageWidth &&
+        prevPayload.imageHeight === nextPayload.imageHeight &&
+        prevPayload.transforms.rotate === nextPayload.transforms.rotate &&
+        prevPayload.transforms.flip.horizontal ===
+          nextPayload.transforms.flip.horizontal &&
+        prevPayload.transforms.flip.vertical ===
+          nextPayload.transforms.flip.vertical &&
+        prevPayload.coordinates.left === nextPayload.coordinates.left &&
+        prevPayload.coordinates.top === nextPayload.coordinates.top &&
+        prevPayload.coordinates.width === nextPayload.coordinates.width &&
+        prevPayload.coordinates.height === nextPayload.coordinates.height &&
+        prevPayload.paddingMode === nextPayload.paddingMode &&
+        prevPayload.padding?.top === nextPayload.padding.top &&
+        prevPayload.padding?.right === nextPayload.padding.right &&
+        prevPayload.padding?.bottom === nextPayload.padding.bottom &&
+        prevPayload.padding?.left === nextPayload.padding.left &&
+        prevPayload.cornerRadius?.topLeft === nextPayload.cornerRadius.topLeft &&
+        prevPayload.cornerRadius?.topRight === nextPayload.cornerRadius.topRight &&
+        prevPayload.cornerRadius?.bottomRight ===
+          nextPayload.cornerRadius.bottomRight &&
+        prevPayload.cornerRadius?.bottomLeft ===
+          nextPayload.cornerRadius.bottomLeft &&
+        prevPayload.paddingFillType === nextPayload.paddingFillType &&
+        prevPayload.paddingFillValue === nextPayload.paddingFillValue &&
+        prevPayload.paddingImageUrl === nextPayload.paddingImageUrl
+      ) {
+        return;
+      }
+
+      lastSyncedRef.current = nextPayload;
+      onCropChange(image.id, nextPayload);
+    },
+    [
+      cropperRef,
+      image.id,
+      onCropChange,
+      aspect,
+      outputWidth,
+      paddingMode,
+      paddingValues,
+      cornerRadiusValues,
+      paddingFillType,
+      paddingFillValue,
+      paddingImageUrl,
+    ],
+  );
+
+  // Throttle sync writes to once per animation frame to avoid drag-time jank.
+  const scheduleSyncToStore = useCallback(
+    (snapshot, overrideAspect) => {
+      queuedSyncRef.current = { snapshot, overrideAspect };
+      if (syncFrameRef.current) return;
+
+      syncFrameRef.current = requestAnimationFrame(() => {
+        syncFrameRef.current = 0;
+        const next = queuedSyncRef.current;
+        queuedSyncRef.current = null;
+        if (!next) return;
+        syncToStore(next.overrideAspect, next.snapshot);
       });
     },
-    [cropperRef, image.id, onCropChange, aspect, outputWidth],
+    [syncToStore],
   );
 
   // Callback whenever cropper changes (move, zoom, rotate)
@@ -187,62 +431,47 @@ export const useInspectorLogic = ({
           dragMetricsRef.current.prevTop === null
             ? 0
             : coords.top - dragMetricsRef.current.prevTop;
-        const dt = Math.max(
-          1,
-          dragMetricsRef.current.prevTime
-            ? now - dragMetricsRef.current.prevTime
-            : 16,
-        );
         const absMoveX = Math.abs(moveDx);
         const absMoveY = Math.abs(moveDy);
-        const speedX = absMoveX / dt;
-        const speedY = absMoveY / dt;
         const cropCenterX = coords.left + coords.width / 2;
         const cropCenterY = coords.top + coords.height / 2;
         const imageCenterX = centerRef.left + centerRef.width / 2;
         const imageCenterY = centerRef.top + centerRef.height / 2;
+        const offsetX = cropCenterX - imageCenterX;
+        const offsetY = cropCenterY - imageCenterY;
         const deltaX = Math.abs(cropCenterX - imageCenterX);
         const deltaY = Math.abs(cropCenterY - imageCenterY);
-        const hintThreshold = Math.max(
-          10,
-          Math.min(centerRef.width, centerRef.height) * 0.02,
+        const guideBase = Math.min(centerRef.width, centerRef.height);
+        const hintThreshold = Math.max(9, Math.min(20, guideBase * 0.018));
+        const snapThreshold = Math.max(4, Math.min(11, guideBase * 0.009));
+        const releaseThreshold = Math.max(
+          snapThreshold + 0.75,
+          snapThreshold * 1.35,
         );
-        const snapThreshold = Math.max(2, hintThreshold * 0.4);
-        const releaseThreshold = Math.max(4, hintThreshold * 0.8);
         const centerStatusThreshold = Math.max(
           2.5,
           Math.min(centerRef.width, centerRef.height) * 0.004,
         );
-        const maxHintSpeed = 0.9;
-        const maxSnapSpeed = 0.6;
         const minBreakMove = 0.1;
-        const cooldownMs = 240;
-        const approachingX =
-          dragMetricsRef.current.prevDeltaX === null ||
-          deltaX < dragMetricsRef.current.prevDeltaX - 0.08;
-        const approachingY =
-          dragMetricsRef.current.prevDeltaY === null ||
-          deltaY < dragMetricsRef.current.prevDeltaY - 0.08;
-        const towardCenterX =
-          moveDx === 0 ? true : Math.sign(moveDx) === Math.sign(imageCenterX - cropCenterX);
-        const towardCenterY =
-          moveDy === 0 ? true : Math.sign(moveDy) === Math.sign(imageCenterY - cropCenterY);
+        const cooldownMs = 70;
         const targetLeft = imageCenterX - coords.width / 2;
         const targetTop = imageCenterY - coords.height / 2;
 
-        // Release snap immediately when user steers away, then cooldown to avoid re-catching.
+        // Hysteresis: easy enter, easier exit, short cooldown to avoid sticky re-catching.
         if (
           snapAxisRef.current.x &&
-          ((deltaX > releaseThreshold && absMoveX > minBreakMove) ||
-            (deltaX > 1 && !approachingX && absMoveX > minBreakMove))
+          deltaX > releaseThreshold &&
+          absMoveX > minBreakMove &&
+          Math.sign(moveDx || 0) === Math.sign(offsetX || 0)
         ) {
           snapAxisRef.current.x = false;
           dragMetricsRef.current.cooldownXUntil = now + cooldownMs;
         }
         if (
           snapAxisRef.current.y &&
-          ((deltaY > releaseThreshold && absMoveY > minBreakMove) ||
-            (deltaY > 1 && !approachingY && absMoveY > minBreakMove))
+          deltaY > releaseThreshold &&
+          absMoveY > minBreakMove &&
+          Math.sign(moveDy || 0) === Math.sign(offsetY || 0)
         ) {
           snapAxisRef.current.y = false;
           dragMetricsRef.current.cooldownYUntil = now + cooldownMs;
@@ -252,32 +481,22 @@ export const useInspectorLogic = ({
         const canSnapY = now >= dragMetricsRef.current.cooldownYUntil;
         const shouldHintX =
           isMoveGesture &&
-          towardCenterX &&
-          approachingX &&
           deltaX <= hintThreshold &&
-          speedX <= maxHintSpeed;
+          !snapAxisRef.current.x;
         const shouldHintY =
           isMoveGesture &&
-          towardCenterY &&
-          approachingY &&
           deltaY <= hintThreshold &&
-          speedY <= maxHintSpeed;
+          !snapAxisRef.current.y;
         const shouldSnapX =
           isMoveGesture &&
           !snapAxisRef.current.x &&
           canSnapX &&
-          towardCenterX &&
-          approachingX &&
-          deltaX <= snapThreshold &&
-          speedX <= maxSnapSpeed;
+          deltaX <= snapThreshold;
         const shouldSnapY =
           isMoveGesture &&
           !snapAxisRef.current.y &&
           canSnapY &&
-          towardCenterY &&
-          approachingY &&
-          deltaY <= snapThreshold &&
-          speedY <= maxSnapSpeed;
+          deltaY <= snapThreshold;
 
         if (shouldSnapX || shouldSnapY) {
           const snappedLeft = shouldSnapX ? targetLeft : coords.left;
@@ -303,12 +522,6 @@ export const useInspectorLogic = ({
             dragMetricsRef.current.prevLeft = snappedLeft;
             dragMetricsRef.current.prevTop = snappedTop;
             dragMetricsRef.current.prevTime = now;
-            dragMetricsRef.current.prevDeltaX = Math.abs(
-              snappedLeft + coords.width / 2 - imageCenterX,
-            );
-            dragMetricsRef.current.prevDeltaY = Math.abs(
-              snappedTop + coords.height / 2 - imageCenterY,
-            );
             setCenterStatus({
               horizontal:
                 Math.abs(snappedLeft + coords.width / 2 - imageCenterX) <=
@@ -317,6 +530,17 @@ export const useInspectorLogic = ({
                 Math.abs(snappedTop + coords.height / 2 - imageCenterY) <=
                 centerStatusThreshold,
             });
+            scheduleSyncToStore(
+              {
+                coords: {
+                  ...coords,
+                  left: snappedLeft,
+                  top: snappedTop,
+                },
+                state,
+              },
+              undefined,
+            );
             return;
           }
         }
@@ -364,13 +588,11 @@ export const useInspectorLogic = ({
           return newCropData;
         });
 
-        // Trigger immediate sync to store for "Live Crop Preview"
-        syncToStore();
+        // Trigger throttled sync to store for "Live Crop Preview"
+        scheduleSyncToStore({ coords, state }, undefined);
         dragMetricsRef.current.prevLeft = coords.left;
         dragMetricsRef.current.prevTop = coords.top;
         dragMetricsRef.current.prevTime = now;
-        dragMetricsRef.current.prevDeltaX = deltaX;
-        dragMetricsRef.current.prevDeltaY = deltaY;
         setCenterStatus((prev) => {
           const next = {
             horizontal: deltaX <= centerStatusThreshold,
@@ -386,7 +608,7 @@ export const useInspectorLogic = ({
         });
       }
     },
-    [getCenterReference, isCropDragging, syncToStore],
+    [getCenterReference, isCropDragging, scheduleSyncToStore],
   );
 
   // Initial Sync & Persistence on Change
@@ -398,6 +620,21 @@ export const useInspectorLogic = ({
   useEffect(() => {
     syncRef.current = syncToStore;
   }, [syncToStore]);
+
+  useEffect(
+    () => () => {
+      if (syncFrameRef.current) {
+        cancelAnimationFrame(syncFrameRef.current);
+        syncFrameRef.current = 0;
+      }
+      queuedSyncRef.current = null;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    lastSyncedRef.current = null;
+  }, [image.id]);
 
   // Save state before switching images
   // REMOVED: This was causing a race condition where the new image's default state
@@ -419,12 +656,31 @@ export const useInspectorLogic = ({
       // Prepare new state...
       if (cropState) {
         const { rotate, flip: flipState } = cropState.transforms || {};
+        const nextPadding = normalizePadding(cropState.padding);
+        const nextCornerRadius = normalizeCornerRadius(cropState.cornerRadius);
         setAspect(cropState.aspect || undefined);
         if (flipState) setFlip(flipState);
         else setFlip({ horizontal: false, vertical: false });
 
         if (cropState.outputWidth) setOutputWidth(cropState.outputWidth);
         else setOutputWidth(null);
+        setPaddingMode(cropState.paddingMode === 'outer' ? 'outer' : 'inner');
+        setPaddingValues(nextPadding);
+        setPaddingInput(formatPaddingInput(nextPadding));
+        setCornerRadiusValues(nextCornerRadius);
+        setCornerRadiusInput(formatCornerRadiusInput(nextCornerRadius));
+        setPaddingFillType(normalizePaddingFillType(cropState.paddingFillType));
+        setPaddingFillValue(
+          typeof cropState.paddingFillValue === 'string' &&
+            cropState.paddingFillValue.trim() !== ''
+            ? cropState.paddingFillValue
+            : DEFAULT_PADDING_FILL_VALUE,
+        );
+        setPaddingImageUrl(
+          typeof cropState.paddingImageUrl === 'string'
+            ? cropState.paddingImageUrl
+            : '',
+        );
 
         if (cropperRef) {
           cropperRef.reset();
@@ -446,6 +702,14 @@ export const useInspectorLogic = ({
         setAspect(undefined);
         setFlip({ horizontal: false, vertical: false });
         setOutputWidth(null);
+        setPaddingMode('inner');
+        setPaddingValues({ ...DEFAULT_PADDING });
+        setPaddingInput(formatPaddingInput(DEFAULT_PADDING));
+        setCornerRadiusValues({ ...DEFAULT_CORNER_RADIUS });
+        setCornerRadiusInput(formatCornerRadiusInput(DEFAULT_CORNER_RADIUS));
+        setPaddingFillType('empty');
+        setPaddingFillValue(DEFAULT_PADDING_FILL_VALUE);
+        setPaddingImageUrl('');
         if (cropperRef) {
           cropperRef.reset();
         }
@@ -455,25 +719,23 @@ export const useInspectorLogic = ({
       setManualW('');
       setManualH('');
       setManualOutputWidth('');
-    setIsCropDragging(false);
-    snapAxisRef.current = { x: false, y: false };
-    dragMetricsRef.current = {
-      prevLeft: null,
-      prevTop: null,
-      prevTime: 0,
-      prevDeltaX: null,
-      prevDeltaY: null,
-      cooldownXUntil: 0,
-      cooldownYUntil: 0,
-    };
-    setCenterGuide({
-      hintX: false,
-      hintY: false,
-      snapX: false,
-      snapY: false,
-    });
-    setCenterStatus({
-      horizontal: false,
+      setIsCropDragging(false);
+      snapAxisRef.current = { x: false, y: false };
+      dragMetricsRef.current = {
+        prevLeft: null,
+        prevTop: null,
+        prevTime: 0,
+        cooldownXUntil: 0,
+        cooldownYUntil: 0,
+      };
+      setCenterGuide({
+        hintX: false,
+        hintY: false,
+        snapX: false,
+        snapY: false,
+      });
+      setCenterStatus({
+        horizontal: false,
         vertical: false,
       });
     }
@@ -510,12 +772,24 @@ export const useInspectorLogic = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [navigateNext, navigatePrev, handleClose]);
 
-  // Sync when aspect, flip, outputWidth, or cropper instance resets
+  // Sync when aspect, flip, outputWidth, padding, or cropper instance resets
   useEffect(() => {
     if (cropperRef) {
       syncToStore();
     }
-  }, [aspect, flip, outputWidth, cropperKey, syncToStore]); // syncToStore already checks isReady
+  }, [
+    aspect,
+    flip,
+    outputWidth,
+    paddingValues,
+    cornerRadiusValues,
+    paddingMode,
+    paddingFillType,
+    paddingFillValue,
+    paddingImageUrl,
+    cropperKey,
+    syncToStore,
+  ]); // syncToStore already checks isReady
 
   // Actions
   const handleRotate = () => {
@@ -558,6 +832,14 @@ export const useInspectorLogic = ({
     setAspect(undefined);
     setFlip({ horizontal: false, vertical: false });
     setOutputWidth(null);
+    setPaddingMode('inner');
+    setPaddingValues({ ...DEFAULT_PADDING });
+    setPaddingInput(formatPaddingInput(DEFAULT_PADDING));
+    setCornerRadiusValues({ ...DEFAULT_CORNER_RADIUS });
+    setCornerRadiusInput(formatCornerRadiusInput(DEFAULT_CORNER_RADIUS));
+    setPaddingFillType('empty');
+    setPaddingFillValue(DEFAULT_PADDING_FILL_VALUE);
+    setPaddingImageUrl('');
     setManualW('');
     setManualH('');
     setManualOutputWidth('');
@@ -654,6 +936,60 @@ export const useInspectorLogic = ({
     setManualOutputWidth('');
   };
 
+  const handlePaddingInputChange = (value) => {
+    setPaddingInput(value);
+    const parsed = parsePaddingInput(value);
+    if (!parsed) return;
+    setPaddingValues((prev) => (paddingEquals(prev, parsed) ? prev : parsed));
+  };
+
+  const handlePaddingInputBlur = () => {
+    setPaddingInput(formatPaddingInput(paddingValues));
+  };
+
+  const handlePaddingModeChange = (mode) => {
+    setPaddingMode(mode === 'outer' ? 'outer' : 'inner');
+  };
+
+  const handleCornerRadiusInputChange = (value) => {
+    setCornerRadiusInput(value);
+    const parsed = parseCornerRadiusInput(value);
+    if (!parsed) return;
+    setCornerRadiusValues((prev) =>
+      cornerRadiusEquals(prev, parsed) ? prev : parsed,
+    );
+  };
+
+  const handleCornerRadiusInputBlur = () => {
+    setCornerRadiusInput(formatCornerRadiusInput(cornerRadiusValues));
+  };
+
+  const handlePaddingFillTypeChange = (type) => {
+    setPaddingFillType(normalizePaddingFillType(type));
+  };
+
+  const handlePaddingFillValueChange = (value) => {
+    if (typeof value !== 'string' || value.trim() === '') return;
+    setPaddingFillValue(value);
+  };
+
+  const handlePaddingImageFileChange = (file) => {
+    if (!file) {
+      setPaddingImageUrl('');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const nextValue = typeof reader.result === 'string' ? reader.result : '';
+      setPaddingImageUrl(nextValue);
+      if (nextValue) {
+        setPaddingFillType('image');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleCropDragStart = useCallback((mode = 'unknown') => {
     setIsCropDragging(mode === 'move');
     snapAxisRef.current = { x: false, y: false };
@@ -661,8 +997,6 @@ export const useInspectorLogic = ({
       prevLeft: null,
       prevTop: null,
       prevTime: 0,
-      prevDeltaX: null,
-      prevDeltaY: null,
       cooldownXUntil: 0,
       cooldownYUntil: 0,
     };
@@ -683,8 +1017,6 @@ export const useInspectorLogic = ({
       prevLeft: null,
       prevTop: null,
       prevTime: 0,
-      prevDeltaX: null,
-      prevDeltaY: null,
       cooldownXUntil: 0,
       cooldownYUntil: 0,
     };
@@ -705,8 +1037,6 @@ export const useInspectorLogic = ({
         prevLeft: null,
         prevTop: null,
         prevTime: 0,
-        prevDeltaX: null,
-        prevDeltaY: null,
         cooldownXUntil: 0,
         cooldownYUntil: 0,
       };
@@ -760,6 +1090,12 @@ export const useInspectorLogic = ({
     aspect: aspect === undefined ? null : aspect,
     flip,
     outputWidth,
+    paddingMode,
+    paddingInput,
+    cornerRadiusInput,
+    paddingFillType,
+    paddingFillValue,
+    paddingImageUrl,
 
     manualW,
     manualH,
@@ -779,6 +1115,14 @@ export const useInspectorLogic = ({
     handleResizeToggle,
     handleOutputWidthChange,
     handleOutputWidthBlur,
+    handlePaddingInputChange,
+    handlePaddingInputBlur,
+    handlePaddingModeChange,
+    handleCornerRadiusInputChange,
+    handleCornerRadiusInputBlur,
+    handlePaddingFillTypeChange,
+    handlePaddingFillValueChange,
+    handlePaddingImageFileChange,
 
     handleClose,
     navigateNext,

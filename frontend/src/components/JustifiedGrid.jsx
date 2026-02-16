@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useDeferredValue, useMemo } from 'react';
 import { RowsPhotoAlbum } from 'react-photo-album';
 import 'react-photo-album/rows.css';
 import { ImageCard } from './ImageCard';
@@ -8,21 +8,20 @@ const JustifiedGrid = ({
   images,
   targetRowHeight,
   padding = 8,
-  showAllFooters,
   selectedId,
   onSelect,
-  onCropChange,
   onDelete,
 }) => {
   const cropData = useStore((state) => state.cropData);
+  const deferredCropData = useDeferredValue(cropData);
 
   // Photos for the grid components.
-  // We now include cropData in the dependencies to allow REAL-TIME layout shifts
+  // Defer layout recalculation under drag pressure to keep pointer interactions smooth.
   const photos = useMemo(() => {
     if (!images || images.length === 0) return [];
 
     return images.map((img) => {
-      const cropEntry = cropData.get(img.id);
+      const cropEntry = deferredCropData.get(img.id);
       let ratio = img.naturalRatio || 1;
 
       // 1. If we have active crop coordinates, use them for the aspect ratio of the card
@@ -45,7 +44,7 @@ const JustifiedGrid = ({
         originalImage: img,
       };
     });
-  }, [images, cropData]);
+  }, [images, deferredCropData]);
 
   return (
     <div className="justified-grid-container" style={{ width: '100%' }}>
@@ -67,12 +66,10 @@ const JustifiedGrid = ({
               <ImageCard
                 image={photo.originalImage}
                 rowHeight={height}
-                showAllFooters={showAllFooters}
                 selected={selectedId === photo.id}
                 onSelect={() =>
                   onSelect(photo.id === selectedId ? null : photo.id)
                 }
-                onCropChange={onCropChange}
                 onDelete={onDelete}
               />
             </div>

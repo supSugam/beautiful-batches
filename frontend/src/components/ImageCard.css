@@ -1,9 +1,9 @@
 .image-card {
   position: relative;
+  isolation: isolate;
   background: var(--bg-surface);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius);
   overflow: hidden;
-  border: 1px solid var(--border);
   transition: all var(--transition-spring);
   cursor: pointer;
   user-select: none;
@@ -11,12 +11,10 @@
 
 .image-card:hover {
   transform: translateY(-2px);
-  border-color: var(--border-hover);
   box-shadow: var(--shadow-md);
 }
 
 .image-card.selected {
-  border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-dim), var(--shadow-glow);
 }
 
@@ -25,9 +23,54 @@
   width: 100%;
   background: var(--bg-base);
   overflow: hidden;
+  border-radius: calc(var(--radius) - 2px);
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.preview-padding-shell {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+}
+
+.preview-padding-shell.has-padding {
+  background: var(--bg-elevated);
+}
+
+.preview-padding-content {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.preview-image {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  display: block;
+  object-fit: cover;
+}
+
+.preview-image--fallback {
+  z-index: 1;
+}
+
+.preview-image--canvas {
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.preview-image--canvas.visible {
+  opacity: 1;
+}
+
+.preview-image--fallback.hidden {
+  opacity: 0;
 }
 
 .card-overlay {
@@ -36,6 +79,7 @@
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 40;
   background: rgba(0, 0, 0, 0);
   transition: background 0.2s ease;
   pointer-events: none;
@@ -53,6 +97,7 @@
   position: absolute;
   top: 8px;
   right: 8px;
+  z-index: 41;
   width: 28px;
   height: 28px;
   border-radius: 50%;
@@ -82,6 +127,7 @@
   position: absolute;
   top: 8px;
   left: 8px;
+  z-index: 41;
   width: 22px;
   height: 22px;
   border-radius: 50%;
@@ -98,26 +144,4 @@
 @keyframes slideIn {
   from { transform: scale(0) rotate(-45deg); opacity: 0; }
   to { transform: scale(1) rotate(0); opacity: 1; }
-}
-
-.card-info {
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.card-filename {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-dimensions {
-  font-size: 0.65rem;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
 }

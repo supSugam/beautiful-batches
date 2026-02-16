@@ -77,13 +77,12 @@ const InspectorPreview = ({
             }}
             defaultSize={defaultSize}
             onChange={onCropperChange}
-            onUpdate={onCropperChange}
             background={false}
             minZoom={0.5}
             maxZoom={10}
             imageRestriction={ImageRestriction.fitArea}
             postProcess={[fitStencilToImage]}
-            transitions={true}
+            transitions={false}
             priority="coordinates"
             style={{ height: '100%', width: '100%' }}
           />

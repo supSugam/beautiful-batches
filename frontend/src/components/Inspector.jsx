@@ -13,6 +13,7 @@ import InspectorPreview from './Inspector/parts/InspectorPreview';
 import InspectorStats from './Inspector/parts/InspectorStats';
 import SelectionControls from './Inspector/parts/SelectionControls';
 import TransformControls from './Inspector/parts/TransformControls';
+import PaddingSection from './Inspector/parts/PaddingSection';
 import ExportResizeSection from './Inspector/parts/ExportResizeSection';
 import BulkApplySection from './Inspector/parts/BulkApplySection';
 import DangerZone from './Inspector/parts/DangerZone';
@@ -138,6 +139,23 @@ export const Inspector = ({
             flip={logic.flip}
             handleFlip={logic.handleFlip}
             handleResetTransforms={logic.handleResetDraft}
+          />
+
+          <PaddingSection
+            paddingInput={logic.paddingInput}
+            paddingMode={logic.paddingMode}
+            cornerRadiusInput={logic.cornerRadiusInput}
+            paddingFillType={logic.paddingFillType}
+            paddingFillValue={logic.paddingFillValue}
+            paddingImageUrl={logic.paddingImageUrl}
+            handlePaddingInputChange={logic.handlePaddingInputChange}
+            handlePaddingInputBlur={logic.handlePaddingInputBlur}
+            handlePaddingModeChange={logic.handlePaddingModeChange}
+            handleCornerRadiusInputChange={logic.handleCornerRadiusInputChange}
+            handleCornerRadiusInputBlur={logic.handleCornerRadiusInputBlur}
+            handlePaddingFillTypeChange={logic.handlePaddingFillTypeChange}
+            handlePaddingFillValueChange={logic.handlePaddingFillValueChange}
+            handlePaddingImageFileChange={logic.handlePaddingImageFileChange}
           />
 
           <ExportResizeSection
