@@ -96,6 +96,9 @@ export const Inspector = ({
             onCropperInit={logic.onCropperInit}
             onCropperChange={logic.onCropperChange}
             aspect={logic.aspect}
+            centerGuide={logic.centerGuide}
+            onCropDragStart={logic.handleCropDragStart}
+            onCropDragEnd={logic.handleCropDragEnd}
           />
 
           <InspectorStats
@@ -113,6 +116,8 @@ export const Inspector = ({
           <SelectionControls
             aspect={logic.aspect}
             handleLockToggle={logic.handleLockToggle}
+            handleCenterCrop={logic.handleCenterCrop}
+            centerStatus={logic.centerStatus}
             manualW={logic.manualW}
             currentPixelWidth={logic.currentPixelWidth}
             handleSelectionDimChange={logic.handleSelectionDimChange}

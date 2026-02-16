@@ -10,6 +10,39 @@ export const useInspectorLogic = ({
   hasNext,
   hasPrev,
 }) => {
+  const getCenterReference = useCallback((state) => {
+    const visibleArea = state?.visibleArea;
+    if (
+      visibleArea &&
+      Number.isFinite(visibleArea.left) &&
+      Number.isFinite(visibleArea.top) &&
+      Number.isFinite(visibleArea.width) &&
+      Number.isFinite(visibleArea.height) &&
+      visibleArea.width > 0 &&
+      visibleArea.height > 0
+    ) {
+      return visibleArea;
+    }
+
+    const imageSize = state?.imageSize;
+    if (
+      imageSize &&
+      Number.isFinite(imageSize.width) &&
+      Number.isFinite(imageSize.height) &&
+      imageSize.width > 0 &&
+      imageSize.height > 0
+    ) {
+      return {
+        left: 0,
+        top: 0,
+        width: imageSize.width,
+        height: imageSize.height,
+      };
+    }
+
+    return null;
+  }, []);
+
   // Ref to the Cropper instance (react-advanced-cropper)
   const [cropperRef, setCropperRef] = useState(null);
   const [cropperKey, setCropperKey] = useState(0); // For hard reset
@@ -36,6 +69,27 @@ export const useInspectorLogic = ({
     rotate: 0,
     imageWidth: 0,
     imageHeight: 0, // Track natural size for clamping
+  });
+  const [centerGuide, setCenterGuide] = useState({
+    hintX: false,
+    hintY: false,
+    snapX: false,
+    snapY: false,
+  });
+  const [centerStatus, setCenterStatus] = useState({
+    horizontal: false,
+    vertical: false,
+  });
+  const [isCropDragging, setIsCropDragging] = useState(false);
+  const snapAxisRef = useRef({ x: false, y: false });
+  const dragMetricsRef = useRef({
+    prevLeft: null,
+    prevTop: null,
+    prevTime: 0,
+    prevDeltaX: null,
+    prevDeltaY: null,
+    cooldownXUntil: 0,
+    cooldownYUntil: 0,
   });
 
   // Sync Helper: Propagate current state to the store immediately
@@ -118,6 +172,172 @@ export const useInspectorLogic = ({
         const state = cropper.getState && cropper.getState();
         const rotate = state?.transforms?.rotate || 0;
         const imageSize = state?.imageSize || { width: 0, height: 0 };
+        const centerRef = getCenterReference(state);
+        if (!centerRef) return;
+        const isMoveGesture = isCropDragging;
+        const now =
+          typeof performance !== 'undefined' && performance.now
+            ? performance.now()
+            : Date.now();
+        const moveDx =
+          dragMetricsRef.current.prevLeft === null
+            ? 0
+            : coords.left - dragMetricsRef.current.prevLeft;
+        const moveDy =
+          dragMetricsRef.current.prevTop === null
+            ? 0
+            : coords.top - dragMetricsRef.current.prevTop;
+        const dt = Math.max(
+          1,
+          dragMetricsRef.current.prevTime
+            ? now - dragMetricsRef.current.prevTime
+            : 16,
+        );
+        const absMoveX = Math.abs(moveDx);
+        const absMoveY = Math.abs(moveDy);
+        const speedX = absMoveX / dt;
+        const speedY = absMoveY / dt;
+        const cropCenterX = coords.left + coords.width / 2;
+        const cropCenterY = coords.top + coords.height / 2;
+        const imageCenterX = centerRef.left + centerRef.width / 2;
+        const imageCenterY = centerRef.top + centerRef.height / 2;
+        const deltaX = Math.abs(cropCenterX - imageCenterX);
+        const deltaY = Math.abs(cropCenterY - imageCenterY);
+        const hintThreshold = Math.max(
+          10,
+          Math.min(centerRef.width, centerRef.height) * 0.02,
+        );
+        const snapThreshold = Math.max(2, hintThreshold * 0.4);
+        const releaseThreshold = Math.max(4, hintThreshold * 0.8);
+        const centerStatusThreshold = Math.max(
+          2.5,
+          Math.min(centerRef.width, centerRef.height) * 0.004,
+        );
+        const maxHintSpeed = 0.9;
+        const maxSnapSpeed = 0.6;
+        const minBreakMove = 0.1;
+        const cooldownMs = 240;
+        const approachingX =
+          dragMetricsRef.current.prevDeltaX === null ||
+          deltaX < dragMetricsRef.current.prevDeltaX - 0.08;
+        const approachingY =
+          dragMetricsRef.current.prevDeltaY === null ||
+          deltaY < dragMetricsRef.current.prevDeltaY - 0.08;
+        const towardCenterX =
+          moveDx === 0 ? true : Math.sign(moveDx) === Math.sign(imageCenterX - cropCenterX);
+        const towardCenterY =
+          moveDy === 0 ? true : Math.sign(moveDy) === Math.sign(imageCenterY - cropCenterY);
+        const targetLeft = imageCenterX - coords.width / 2;
+        const targetTop = imageCenterY - coords.height / 2;
+
+        // Release snap immediately when user steers away, then cooldown to avoid re-catching.
+        if (
+          snapAxisRef.current.x &&
+          ((deltaX > releaseThreshold && absMoveX > minBreakMove) ||
+            (deltaX > 1 && !approachingX && absMoveX > minBreakMove))
+        ) {
+          snapAxisRef.current.x = false;
+          dragMetricsRef.current.cooldownXUntil = now + cooldownMs;
+        }
+        if (
+          snapAxisRef.current.y &&
+          ((deltaY > releaseThreshold && absMoveY > minBreakMove) ||
+            (deltaY > 1 && !approachingY && absMoveY > minBreakMove))
+        ) {
+          snapAxisRef.current.y = false;
+          dragMetricsRef.current.cooldownYUntil = now + cooldownMs;
+        }
+
+        const canSnapX = now >= dragMetricsRef.current.cooldownXUntil;
+        const canSnapY = now >= dragMetricsRef.current.cooldownYUntil;
+        const shouldHintX =
+          isMoveGesture &&
+          towardCenterX &&
+          approachingX &&
+          deltaX <= hintThreshold &&
+          speedX <= maxHintSpeed;
+        const shouldHintY =
+          isMoveGesture &&
+          towardCenterY &&
+          approachingY &&
+          deltaY <= hintThreshold &&
+          speedY <= maxHintSpeed;
+        const shouldSnapX =
+          isMoveGesture &&
+          !snapAxisRef.current.x &&
+          canSnapX &&
+          towardCenterX &&
+          approachingX &&
+          deltaX <= snapThreshold &&
+          speedX <= maxSnapSpeed;
+        const shouldSnapY =
+          isMoveGesture &&
+          !snapAxisRef.current.y &&
+          canSnapY &&
+          towardCenterY &&
+          approachingY &&
+          deltaY <= snapThreshold &&
+          speedY <= maxSnapSpeed;
+
+        if (shouldSnapX || shouldSnapY) {
+          const snappedLeft = shouldSnapX ? targetLeft : coords.left;
+          const snappedTop = shouldSnapY ? targetTop : coords.top;
+          if (
+            Math.abs(snappedLeft - coords.left) > 0.01 ||
+            Math.abs(snappedTop - coords.top) > 0.01
+          ) {
+            cropper.setCoordinates({
+              left: snappedLeft,
+              top: snappedTop,
+            });
+            snapAxisRef.current = {
+              x: snapAxisRef.current.x || shouldSnapX,
+              y: snapAxisRef.current.y || shouldSnapY,
+            };
+            setCenterGuide({
+              hintX: false,
+              hintY: false,
+              snapX: snapAxisRef.current.x,
+              snapY: snapAxisRef.current.y,
+            });
+            dragMetricsRef.current.prevLeft = snappedLeft;
+            dragMetricsRef.current.prevTop = snappedTop;
+            dragMetricsRef.current.prevTime = now;
+            dragMetricsRef.current.prevDeltaX = Math.abs(
+              snappedLeft + coords.width / 2 - imageCenterX,
+            );
+            dragMetricsRef.current.prevDeltaY = Math.abs(
+              snappedTop + coords.height / 2 - imageCenterY,
+            );
+            setCenterStatus({
+              horizontal:
+                Math.abs(snappedLeft + coords.width / 2 - imageCenterX) <=
+                centerStatusThreshold,
+              vertical:
+                Math.abs(snappedTop + coords.height / 2 - imageCenterY) <=
+                centerStatusThreshold,
+            });
+            return;
+          }
+        }
+
+        setCenterGuide((prev) => {
+          const next = {
+            hintX: shouldHintX && !snapAxisRef.current.x,
+            hintY: shouldHintY && !snapAxisRef.current.y,
+            snapX: isMoveGesture && snapAxisRef.current.x,
+            snapY: isMoveGesture && snapAxisRef.current.y,
+          };
+          if (
+            prev.hintX === next.hintX &&
+            prev.hintY === next.hintY &&
+            prev.snapX === next.snapX &&
+            prev.snapY === next.snapY
+          ) {
+            return prev;
+          }
+          return next;
+        });
 
         const newCropData = {
           width: Math.round(coords.width),
@@ -146,9 +366,27 @@ export const useInspectorLogic = ({
 
         // Trigger immediate sync to store for "Live Crop Preview"
         syncToStore();
+        dragMetricsRef.current.prevLeft = coords.left;
+        dragMetricsRef.current.prevTop = coords.top;
+        dragMetricsRef.current.prevTime = now;
+        dragMetricsRef.current.prevDeltaX = deltaX;
+        dragMetricsRef.current.prevDeltaY = deltaY;
+        setCenterStatus((prev) => {
+          const next = {
+            horizontal: deltaX <= centerStatusThreshold,
+            vertical: deltaY <= centerStatusThreshold,
+          };
+          if (
+            prev.horizontal === next.horizontal &&
+            prev.vertical === next.vertical
+          ) {
+            return prev;
+          }
+          return next;
+        });
       }
     },
-    [syncToStore],
+    [getCenterReference, isCropDragging, syncToStore],
   );
 
   // Initial Sync & Persistence on Change
@@ -217,6 +455,27 @@ export const useInspectorLogic = ({
       setManualW('');
       setManualH('');
       setManualOutputWidth('');
+    setIsCropDragging(false);
+    snapAxisRef.current = { x: false, y: false };
+    dragMetricsRef.current = {
+      prevLeft: null,
+      prevTop: null,
+      prevTime: 0,
+      prevDeltaX: null,
+      prevDeltaY: null,
+      cooldownXUntil: 0,
+      cooldownYUntil: 0,
+    };
+    setCenterGuide({
+      hintX: false,
+      hintY: false,
+      snapX: false,
+      snapY: false,
+    });
+    setCenterStatus({
+      horizontal: false,
+        vertical: false,
+      });
     }
   }, [image.id, cropState, cropperRef]);
 
@@ -332,6 +591,26 @@ export const useInspectorLogic = ({
     }
   };
 
+  const handleCenterCrop = useCallback(() => {
+    if (!cropperRef) return;
+    const coords = cropperRef.getCoordinates();
+    const state = cropperRef.getState && cropperRef.getState();
+    const centerRef = getCenterReference(state);
+    if (!coords || !centerRef) return;
+
+    const left = centerRef.left + (centerRef.width - coords.width) / 2;
+    const top = centerRef.top + (centerRef.height - coords.height) / 2;
+
+    cropperRef.setCoordinates({
+      left,
+      top,
+    });
+    setCenterStatus({
+      horizontal: true,
+      vertical: true,
+    });
+  }, [cropperRef, getCenterReference]);
+
   const handleSelectionDimChange = (dim, val) => {
     if (dim === 'w') setManualW(val);
     else setManualH(val);
@@ -375,6 +654,77 @@ export const useInspectorLogic = ({
     setManualOutputWidth('');
   };
 
+  const handleCropDragStart = useCallback((mode = 'unknown') => {
+    setIsCropDragging(mode === 'move');
+    snapAxisRef.current = { x: false, y: false };
+    dragMetricsRef.current = {
+      prevLeft: null,
+      prevTop: null,
+      prevTime: 0,
+      prevDeltaX: null,
+      prevDeltaY: null,
+      cooldownXUntil: 0,
+      cooldownYUntil: 0,
+    };
+    if (mode !== 'move') {
+      setCenterGuide({
+        hintX: false,
+        hintY: false,
+        snapX: false,
+        snapY: false,
+      });
+    }
+  }, []);
+
+  const handleCropDragEnd = useCallback(() => {
+    setIsCropDragging(false);
+    snapAxisRef.current = { x: false, y: false };
+    dragMetricsRef.current = {
+      prevLeft: null,
+      prevTop: null,
+      prevTime: 0,
+      prevDeltaX: null,
+      prevDeltaY: null,
+      cooldownXUntil: 0,
+      cooldownYUntil: 0,
+    };
+    setCenterGuide({
+      hintX: false,
+      hintY: false,
+      snapX: false,
+      snapY: false,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isCropDragging) return undefined;
+    const stopDrag = () => {
+      setIsCropDragging(false);
+      snapAxisRef.current = { x: false, y: false };
+      dragMetricsRef.current = {
+        prevLeft: null,
+        prevTop: null,
+        prevTime: 0,
+        prevDeltaX: null,
+        prevDeltaY: null,
+        cooldownXUntil: 0,
+        cooldownYUntil: 0,
+      };
+      setCenterGuide({
+        hintX: false,
+        hintY: false,
+        snapX: false,
+        snapY: false,
+      });
+    };
+    window.addEventListener('pointerup', stopDrag);
+    window.addEventListener('pointercancel', stopDrag);
+    return () => {
+      window.removeEventListener('pointerup', stopDrag);
+      window.removeEventListener('pointercancel', stopDrag);
+    };
+  }, [isCropDragging]);
+
   // Visual Dims
   const isSideways = cropData.rotate % 180 !== 0;
   const rawW = isSideways ? cropData.height : cropData.width;
@@ -393,6 +743,10 @@ export const useInspectorLogic = ({
   return {
     onCropperInit: setCropperRef,
     onCropperChange,
+    centerGuide,
+    centerStatus,
+    handleCropDragStart,
+    handleCropDragEnd,
     isProcessing,
 
     // Stats
@@ -418,6 +772,7 @@ export const useInspectorLogic = ({
     handleFlip,
     handleResetDraft,
     handleAspectClick,
+    handleCenterCrop,
     handleLockToggle,
     handleSelectionDimChange,
     handleDimBlur,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Lock, Unlock, Link } from 'lucide-react';
+import { Lock, Unlock, Link, Crosshair } from 'lucide-react';
 
 const SelectionControls = ({
   aspect,
@@ -11,19 +11,38 @@ const SelectionControls = ({
   manualH,
   currentPixelHeight,
   aspectPresets,
-  handleAspectClick
+  handleAspectClick,
+  handleCenterCrop,
+  centerStatus,
 }) => {
+  const centerStateClass = centerStatus?.horizontal && centerStatus?.vertical
+    ? 'center-both'
+    : centerStatus?.horizontal
+      ? 'center-x'
+      : centerStatus?.vertical
+        ? 'center-y'
+        : '';
+
   return (
     <section className="control-section" style={{ marginTop: 'auto' }}>
       <div className="section-header">
         <h3 className="section-label">Selection (Crop)</h3>
-        <button
-          className={`btn-icon-subtle ${aspect ? 'active' : ''}`}
-          onClick={handleLockToggle}
-          title={aspect ? 'Unlock Ratio' : 'Lock Ratio'}
-        >
-          {aspect ? <Lock size={12} /> : <Unlock size={12} />}
-        </button>
+        <div className="section-header-tools">
+          <button
+            className={`btn-icon-subtle center-align-btn ${centerStateClass}`}
+            onClick={handleCenterCrop}
+            title="Center Crop Box"
+          >
+            <Crosshair size={12} />
+          </button>
+          <button
+            className={`btn-icon-subtle ${aspect ? 'active' : ''}`}
+            onClick={handleLockToggle}
+            title={aspect ? 'Unlock Ratio' : 'Lock Ratio'}
+          >
+            {aspect ? <Lock size={12} /> : <Unlock size={12} />}
+          </button>
+        </div>
       </div>
 
       <div className="dims-grid">

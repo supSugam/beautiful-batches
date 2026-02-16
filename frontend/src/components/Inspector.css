@@ -106,6 +106,110 @@
   position: relative;
 }
 
+.center-guide-line {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  background: var(--accent);
+  z-index: 8;
+}
+
+.center-guide-line.visible {
+  opacity: 1;
+}
+
+.center-guide-line.hint.center-guide-line--vertical {
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(129, 140, 248, 0.55) 0px,
+    rgba(129, 140, 248, 0.55) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  width: 1px;
+}
+
+.center-guide-line.hint.center-guide-line--horizontal {
+  background: repeating-linear-gradient(
+    to right,
+    rgba(129, 140, 248, 0.55) 0px,
+    rgba(129, 140, 248, 0.55) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  height: 1px;
+}
+
+.center-guide-line.snapped.center-guide-line--vertical {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--accent) 0px,
+    var(--accent) 6px,
+    transparent 6px,
+    transparent 10px
+  );
+  width: 2px;
+  box-shadow: 0 0 0 1px var(--accent-dim), 0 0 10px rgba(129, 140, 248, 0.45);
+  animation: centerGuideDashY 0.9s linear infinite, centerGuidePulse 0.22s ease-out;
+}
+
+.center-guide-line.snapped.center-guide-line--horizontal {
+  background: repeating-linear-gradient(
+    to right,
+    var(--accent) 0px,
+    var(--accent) 6px,
+    transparent 6px,
+    transparent 10px
+  );
+  height: 2px;
+  box-shadow: 0 0 0 1px var(--accent-dim), 0 0 10px rgba(129, 140, 248, 0.45);
+  animation: centerGuideDashX 0.9s linear infinite, centerGuidePulse 0.22s ease-out;
+}
+
+.center-guide-line--vertical {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.center-guide-line--horizontal {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+@keyframes centerGuideDashY {
+  from {
+    background-position-y: 0;
+  }
+  to {
+    background-position-y: 10px;
+  }
+}
+
+@keyframes centerGuideDashX {
+  from {
+    background-position-x: 0;
+  }
+  to {
+    background-position-x: 10px;
+  }
+}
+
+@keyframes centerGuidePulse {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* Hide cropper UI artifacts during active rotation to reduce "messiness" */
 .custom-cropper.dragging-rotation .ReactCrop__child-wrapper {
   opacity: 0.8;
@@ -157,6 +261,12 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+}
+
+.section-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .section-label {
@@ -251,6 +361,66 @@
 .btn-icon-subtle.active {
     color: var(--accent);
     background: rgba(var(--accent-rgb), 0.1);
+}
+
+.center-align-btn {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.center-align-btn::before,
+.center-align-btn::after {
+  content: '';
+  position: absolute;
+  background: rgba(129, 140, 248, 0.26);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 0;
+}
+
+.center-align-btn::before {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+}
+
+.center-align-btn::after {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 50%;
+}
+
+.center-align-btn.center-y::before {
+  opacity: 1;
+}
+
+.center-align-btn.center-x::after {
+  opacity: 1;
+}
+
+.center-align-btn.center-x,
+.center-align-btn.center-y {
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+}
+
+.center-align-btn.center-both {
+  color: var(--accent);
+  background: rgba(129, 140, 248, 0.2);
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+}
+
+.center-align-btn.center-both::before,
+.center-align-btn.center-both::after {
+  opacity: 0;
+}
+
+.center-align-btn > * {
+  position: relative;
+  z-index: 1;
 }
 
 .aspect-grid {
