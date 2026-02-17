@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DropZone } from './components/DropZone';
 import Toolbar from './components/Toolbar/Toolbar';
 import ProgressBar from './components/common/ProgressBar';
@@ -6,32 +6,315 @@ import MainLayout from './layouts/MainLayout';
 import useStore from './store/useStore';
 import { useImageUpload } from './hooks/useImageUpload';
 import { useExportLogic } from './hooks/useExportLogic';
+import {
+  ACCEPTED_IMAGE_TYPES,
+  clearSavedDirectoryHandle,
+  clearSavedDirectoryHandleIfMatches,
+} from './utils/directoryPicker';
 import './App.css';
+
+const EXPLORER_OPEN_STORAGE_KEY = 'bb-explorer-open';
+const ACTIVE_FOLDER_STORAGE_KEY = 'bb-active-folder-path';
+const ALL_FOLDERS_VALUE = '__all__';
+const nameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+});
+
+const normalizePath = (value) => String(value || '').replace(/\\/g, '/');
+
+const readStoredBoolean = (key, fallback) => {
+  if (typeof window === 'undefined') return fallback;
+  const stored = window.localStorage.getItem(key);
+  if (stored === null) return fallback;
+  return stored === '1';
+};
+
+const readStoredString = (key, fallback) => {
+  if (typeof window === 'undefined') return fallback;
+  return window.localStorage.getItem(key) ?? fallback;
+};
+
+const persistStorageValue = (key, value) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(key, value);
+};
+
+const buildFolderNodes = (images) => {
+  const folders = new Map();
+
+  images.forEach((image) => {
+    const relativePath = normalizePath(image?.relativePath);
+    const parts = relativePath.split('/').filter(Boolean);
+    if (parts.length < 2) return;
+
+    const directoryParts = parts.slice(0, -1);
+    for (let index = 0; index < directoryParts.length; index += 1) {
+      const path = directoryParts.slice(0, index + 1).join('/');
+      const existing = folders.get(path);
+      if (existing) {
+        existing.count += 1;
+        continue;
+      }
+      folders.set(path, {
+        path,
+        name: directoryParts[index],
+        depth: index,
+        count: 1,
+      });
+    }
+  });
+
+  return Array.from(folders.values()).sort((a, b) =>
+    a.path.localeCompare(b.path),
+  );
+};
+
+const getRootFolderPathFromResult = (result) => {
+  const fromName = normalizePath(result?.directoryName || '');
+  if (fromName) return fromName;
+
+  const firstPath = normalizePath(result?.images?.[0]?.relativePath || '');
+  const firstPart = firstPath.split('/').filter(Boolean)[0];
+  return firstPart || '';
+};
+
+const areSameDirectoryHandles = async (a, b) => {
+  if (!a || !b || typeof a.isSameEntry !== 'function') return false;
+  try {
+    return await a.isSameEntry(b);
+  } catch {
+    return false;
+  }
+};
+
+const isDirectoryAncestor = async (ancestor, descendant) => {
+  if (!ancestor || !descendant || typeof ancestor.resolve !== 'function') {
+    return false;
+  }
+  try {
+    const relative = await ancestor.resolve(descendant);
+    return Array.isArray(relative);
+  } catch {
+    return false;
+  }
+};
+
+const getEffectiveModifiedTimestamp = (image, sessionModifiedAt) => {
+  const sessionTs = Number(sessionModifiedAt.get(image.id) || 0) || 0;
+  const sourceTs = Number(image?.sourceLastModified || 0) || 0;
+  const loadedTs = Number(image?.loadedAt || 0) || 0;
+  const baseTs = sourceTs || loadedTs;
+  return Math.max(sessionTs, baseTs);
+};
 
 function App() {
   const images = useStore((state) => state.images);
   const rowHeight = useStore((state) => state.rowHeight);
-  const format = useStore((state) => state.format);
-  const quality = useStore((state) => state.quality);
   const showAllFooters = useStore((state) => state.showAllFooters);
   const selectedId = useStore((state) => state.selectedId);
   const inspectorWidth = useStore((state) => state.inspectorWidth);
   const setSelectedId = useStore((state) => state.setSelectedId);
-  const selectNext = useStore((state) => state.selectNext);
-  const selectPrev = useStore((state) => state.selectPrev);
   const setCropChange = useStore((state) => state.setCropChange);
   const applyCropToImages = useStore((state) => state.applyCropToImages);
   const setRowHeight = useStore((state) => state.setRowHeight);
-  const setFormat = useStore((state) => state.setFormat);
-  const setQuality = useStore((state) => state.setQuality);
-  const setShowAllFooters = useStore((state) => state.setShowAllFooters);
   const setInspectorWidth = useStore((state) => state.setInspectorWidth);
-  const clearAll = useStore((state) => state.clearAll);
+  const sortOption = useStore((state) => state.sortOption);
+  const setSortOption = useStore((state) => state.setSortOption);
+  const sessionModifiedAt = useStore((state) => state.sessionModifiedAt);
+  const deleteFolder = useStore((state) => state.deleteFolder);
   const processing = useStore((state) => state.processing);
 
   const addMoreRef = useRef(null);
-  const { handleImagesLoaded, handleAddMore } = useImageUpload();
+  const {
+    handleImagesLoaded,
+    handleAddMore,
+    handlePickFolderViaDirectoryPicker,
+    restoreLastDirectoryIfAvailable,
+  } = useImageUpload();
   const { handleExport } = useExportLogic();
+  const restoreAttemptedRef = useRef(false);
+  const rowHeightRafRef = useRef(0);
+  const pendingRowHeightRef = useRef(rowHeight);
+  const directoryRootsRef = useRef([]);
+  const [explorerOpen, setExplorerOpen] = useState(() =>
+    readStoredBoolean(EXPLORER_OPEN_STORAGE_KEY, true),
+  );
+  const [activeFolderPath, setActiveFolderPath] = useState(() =>
+    readStoredString(ACTIVE_FOLDER_STORAGE_KEY, ALL_FOLDERS_VALUE),
+  );
+
+  const handleRowHeightChange = useCallback(
+    (nextValue) => {
+      pendingRowHeightRef.current = nextValue;
+      if (rowHeightRafRef.current) return;
+      rowHeightRafRef.current = requestAnimationFrame(() => {
+        rowHeightRafRef.current = 0;
+        setRowHeight(pendingRowHeightRef.current);
+      });
+    },
+    [setRowHeight],
+  );
+
+  useEffect(() => {
+    pendingRowHeightRef.current = rowHeight;
+  }, [rowHeight]);
+
+  useEffect(() => {
+    if (images.length !== 0) return;
+    directoryRootsRef.current = [];
+  }, [images.length]);
+
+  useEffect(() => {
+    if (restoreAttemptedRef.current) return;
+    if (images.length > 0) return;
+    restoreAttemptedRef.current = true;
+
+    restoreLastDirectoryIfAvailable().then((result) => {
+      if (!result?.restored) return;
+      const restoredRoot = getRootFolderPathFromResult(result);
+      if (result.directoryHandle && restoredRoot) {
+        directoryRootsRef.current = [
+          { rootPath: restoredRoot, handle: result.directoryHandle },
+        ];
+      }
+      if (restoredRoot) {
+        setActiveFolderPath(restoredRoot);
+      }
+    });
+  }, [images.length, restoreLastDirectoryIfAvailable, setActiveFolderPath]);
+
+  useEffect(
+    () => () => {
+      if (!rowHeightRafRef.current) return;
+      cancelAnimationFrame(rowHeightRafRef.current);
+      rowHeightRafRef.current = 0;
+    },
+    [],
+  );
+
+  const folderNodes = useMemo(() => buildFolderNodes(images), [images]);
+
+  const filteredImages = useMemo(() => {
+    if (activeFolderPath === ALL_FOLDERS_VALUE) return images;
+    const prefix = `${activeFolderPath}/`;
+    return images.filter((image) =>
+      normalizePath(image.relativePath).startsWith(prefix),
+    );
+  }, [activeFolderPath, images]);
+
+  const visibleImages = useMemo(() => {
+    const next = filteredImages.map((image, originalIndex) => ({
+      image,
+      originalIndex,
+    }));
+
+    next.sort((entryA, entryB) => {
+      const a = entryA.image;
+      const b = entryB.image;
+
+      if (sortOption === 'name_asc') {
+        const byName = nameCollator.compare(a.name || '', b.name || '');
+        if (byName !== 0) return byName;
+      } else if (sortOption === 'name_desc') {
+        const byName = nameCollator.compare(b.name || '', a.name || '');
+        if (byName !== 0) return byName;
+      } else if (sortOption === 'size_desc') {
+        const bySize = (b.sourceSize || 0) - (a.sourceSize || 0);
+        if (bySize !== 0) return bySize;
+      } else if (sortOption === 'size_asc') {
+        const bySize = (a.sourceSize || 0) - (b.sourceSize || 0);
+        if (bySize !== 0) return bySize;
+      } else if (sortOption === 'last_modified_oldest') {
+        const byModified =
+          getEffectiveModifiedTimestamp(a, sessionModifiedAt) -
+          getEffectiveModifiedTimestamp(b, sessionModifiedAt);
+        if (byModified !== 0) return byModified;
+      } else {
+        const byModified =
+          getEffectiveModifiedTimestamp(b, sessionModifiedAt) -
+          getEffectiveModifiedTimestamp(a, sessionModifiedAt);
+        if (byModified !== 0) return byModified;
+      }
+
+      const byPath = nameCollator.compare(
+        a.relativePath || a.name || '',
+        b.relativePath || b.name || '',
+      );
+      if (byPath !== 0) return byPath;
+
+      const byId = nameCollator.compare(a.id || '', b.id || '');
+      if (byId !== 0) return byId;
+
+      return entryA.originalIndex - entryB.originalIndex;
+    });
+
+    return next.map((entry) => entry.image);
+  }, [filteredImages, sessionModifiedAt, sortOption]);
+
+  const visibleImageIds = useMemo(
+    () => new Set(visibleImages.map((image) => image.id)),
+    [visibleImages],
+  );
+
+  const handleSelectNext = useCallback(() => {
+    if (!selectedId) return;
+    const index = visibleImages.findIndex((image) => image.id === selectedId);
+    if (index < 0 || index >= visibleImages.length - 1) return;
+    setSelectedId(visibleImages[index + 1].id);
+  }, [selectedId, setSelectedId, visibleImages]);
+
+  const handleSelectPrev = useCallback(() => {
+    if (!selectedId) return;
+    const index = visibleImages.findIndex((image) => image.id === selectedId);
+    if (index <= 0) return;
+    setSelectedId(visibleImages[index - 1].id);
+  }, [selectedId, setSelectedId, visibleImages]);
+
+  useEffect(() => {
+    persistStorageValue(
+      EXPLORER_OPEN_STORAGE_KEY,
+      explorerOpen ? '1' : '0',
+    );
+  }, [explorerOpen]);
+
+  useEffect(() => {
+    if (activeFolderPath === ALL_FOLDERS_VALUE) return;
+    const pathExists = folderNodes.some((folder) => folder.path === activeFolderPath);
+    if (!pathExists) {
+      setActiveFolderPath(ALL_FOLDERS_VALUE);
+    }
+  }, [activeFolderPath, folderNodes]);
+
+  useEffect(() => {
+    persistStorageValue(ACTIVE_FOLDER_STORAGE_KEY, activeFolderPath);
+  }, [activeFolderPath]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    if (visibleImageIds.has(selectedId)) return;
+    setSelectedId(null);
+  }, [selectedId, setSelectedId, visibleImageIds]);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.altKey || event.shiftKey) return;
+      if (String(event.key || '').toLowerCase() !== 'b') return;
+
+      const target = event.target;
+      const tagName = String(target?.tagName || '').toLowerCase();
+      if (tagName === 'input' || tagName === 'textarea' || target?.isContentEditable) {
+        return;
+      }
+
+      event.preventDefault();
+      setExplorerOpen((previous) => !previous);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const folderName = useMemo(() => {
     if (images.length === 0) return '';
@@ -39,6 +322,99 @@ function App() {
     const parts = first.split('/');
     return parts.length > 1 ? parts[0] : 'Selected Files';
   }, [images]);
+
+  const activeFolderLabel = useMemo(() => {
+    if (activeFolderPath === ALL_FOLDERS_VALUE) return 'All Images';
+    const parts = activeFolderPath.split('/');
+    return parts[parts.length - 1] || activeFolderPath;
+  }, [activeFolderPath]);
+
+  const handleAddFolder = useCallback(async () => {
+    const result = await handlePickFolderViaDirectoryPicker();
+    if (!result.handled) {
+      addMoreRef.current?.click();
+      return;
+    }
+    if (!Array.isArray(result.images) || result.images.length === 0) {
+      return;
+    }
+
+    const rootPath = getRootFolderPathFromResult(result);
+    const nextHandle = result.directoryHandle;
+
+    if (nextHandle) {
+      const currentRoots = directoryRootsRef.current;
+      let skipByRoot = '';
+      const replaceRoots = [];
+
+      for (const root of currentRoots) {
+        if (!root?.handle) continue;
+
+        if (await areSameDirectoryHandles(root.handle, nextHandle)) {
+          skipByRoot = root.rootPath;
+          break;
+        }
+
+        if (await isDirectoryAncestor(root.handle, nextHandle)) {
+          skipByRoot = root.rootPath;
+          break;
+        }
+
+        if (await isDirectoryAncestor(nextHandle, root.handle)) {
+          replaceRoots.push(root.rootPath);
+        }
+      }
+
+      if (skipByRoot) {
+        setActiveFolderPath(skipByRoot);
+        return;
+      }
+
+      if (replaceRoots.length > 0) {
+        replaceRoots.forEach((folderPath) => deleteFolder(folderPath));
+        directoryRootsRef.current = currentRoots.filter(
+          (root) => !replaceRoots.includes(root.rootPath),
+        );
+      }
+
+      if (rootPath) {
+        directoryRootsRef.current = [
+          ...directoryRootsRef.current.filter((root) => root.rootPath !== rootPath),
+          { rootPath, handle: nextHandle },
+        ];
+      }
+    }
+
+    await handleImagesLoaded(result.images);
+    if (rootPath) {
+      setActiveFolderPath(rootPath);
+    }
+  }, [
+    deleteFolder,
+    handleImagesLoaded,
+    handlePickFolderViaDirectoryPicker,
+    setActiveFolderPath,
+  ]);
+
+  const handleRemoveFolder = useCallback(
+    async (folderPath) => {
+      const previousRoots = directoryRootsRef.current;
+      const removedRoot = previousRoots.find((root) => root.rootPath === folderPath);
+
+      deleteFolder(folderPath);
+      directoryRootsRef.current = previousRoots.filter(
+        (root) => root.rootPath !== folderPath,
+      );
+
+      if (removedRoot?.handle) {
+        await clearSavedDirectoryHandleIfMatches(removedRoot.handle);
+      }
+      if (directoryRootsRef.current.length === 0) {
+        await clearSavedDirectoryHandle();
+      }
+    },
+    [deleteFolder],
+  );
 
   if (images.length === 0) {
     return (
@@ -52,17 +428,13 @@ function App() {
     <div className="app">
       <Toolbar
         folderName={folderName}
-        imageCount={images.length}
-        format={format}
-        setFormat={setFormat}
-        quality={quality}
-        setQuality={setQuality}
+        sortOption={sortOption}
+        setSortOption={setSortOption}
+        explorerOpen={explorerOpen}
+        onToggleExplorer={() => setExplorerOpen((previous) => !previous)}
+        activeFolderLabel={activeFolderLabel}
         rowHeight={rowHeight}
-        setRowHeight={setRowHeight}
-        showAllFooters={showAllFooters}
-        setShowAllFooters={setShowAllFooters}
-        onAddMore={() => addMoreRef.current?.click()}
-        onClearAll={clearAll}
+        setRowHeight={handleRowHeightChange}
         onExport={handleExport}
         processing={processing}
       />
@@ -70,7 +442,7 @@ function App() {
       <ProgressBar current={processing?.current} total={processing?.total} />
 
       <MainLayout
-        images={images}
+        images={visibleImages}
         rowHeight={rowHeight}
         showAllFooters={showAllFooters}
         selectedId={selectedId}
@@ -79,9 +451,17 @@ function App() {
         handleDelete={(id) => useStore.getState().deleteImage(id)}
         inspectorWidth={inspectorWidth}
         setInspectorWidth={setInspectorWidth}
-        selectNext={selectNext}
-        selectPrev={selectPrev}
+        selectNext={handleSelectNext}
+        selectPrev={handleSelectPrev}
         handleApplyCropToImages={applyCropToImages}
+        explorerOpen={explorerOpen}
+        folderNodes={folderNodes}
+        activeFolderPath={activeFolderPath}
+        onSelectFolder={setActiveFolderPath}
+        totalImageCount={images.length}
+        onResetFolderFilter={() => setActiveFolderPath(ALL_FOLDERS_VALUE)}
+        onAddFolder={handleAddFolder}
+        onRemoveFolder={handleRemoveFolder}
       />
 
       <input
@@ -90,6 +470,7 @@ function App() {
         webkitdirectory=""
         directory=""
         multiple
+        accept={ACCEPTED_IMAGE_TYPES}
         style={{ display: 'none' }}
         onChange={handleAddMore}
       />

@@ -1,8 +1,7 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { Cropper, ImageRestriction } from 'react-advanced-cropper';
 import 'react-advanced-cropper/dist/style.css';
 import { Loader2 } from 'lucide-react';
-import { fitStencilToImage } from 'advanced-cropper/showcase/mobile';
 
 const InspectorPreview = ({
   isProcessing,
@@ -15,6 +14,8 @@ const InspectorPreview = ({
   onCropDragEnd,
 }) => {
   const cropperRef = useRef(null);
+  const containerRef = useRef(null);
+  const refreshFrameRef = useRef(0);
 
   const resolveDragMode = (target) => {
     if (!(target instanceof Element)) return 'unknown';
@@ -38,6 +39,46 @@ const InspectorPreview = ({
     }
   }, [onCropperInit]);
 
+  const scheduleRefresh = useCallback(() => {
+    if (refreshFrameRef.current) {
+      cancelAnimationFrame(refreshFrameRef.current);
+    }
+    refreshFrameRef.current = requestAnimationFrame(() => {
+      refreshFrameRef.current = 0;
+      const cropper = cropperRef.current;
+      if (!cropper) return;
+      cropper.refresh?.();
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current) return undefined;
+
+    if (typeof ResizeObserver === 'undefined') {
+      const onResize = () => scheduleRefresh();
+      window.addEventListener('resize', onResize);
+      return () => window.removeEventListener('resize', onResize);
+    }
+
+    const observer = new ResizeObserver(() => scheduleRefresh());
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [scheduleRefresh]);
+
+  useEffect(() => {
+    scheduleRefresh();
+  }, [imageObjectUrl, aspect, scheduleRefresh]);
+
+  useEffect(
+    () => () => {
+      if (refreshFrameRef.current) {
+        cancelAnimationFrame(refreshFrameRef.current);
+        refreshFrameRef.current = 0;
+      }
+    },
+    [],
+  );
+
   // Default to full image cover
   const defaultSize = ({ imageSize, visibleArea }) => {
     return {
@@ -48,6 +89,7 @@ const InspectorPreview = ({
 
   return (
     <div
+      ref={containerRef}
       className="inspector-crop-container"
       onPointerDownCapture={(event) =>
         onCropDragStart?.(resolveDragMode(event.target))
@@ -81,7 +123,6 @@ const InspectorPreview = ({
             minZoom={0.5}
             maxZoom={10}
             imageRestriction={ImageRestriction.fitArea}
-            postProcess={[fitStencilToImage]}
             transitions={false}
             priority="coordinates"
             style={{ height: '100%', width: '100%' }}

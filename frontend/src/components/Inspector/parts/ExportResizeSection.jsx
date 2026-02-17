@@ -9,12 +9,25 @@ const ExportResizeSection = ({
   handleOutputWidthBlur,
   aspect,
   currentPixelWidth,
-  currentPixelHeight
+  currentPixelHeight,
+  ifFileExists,
+  onIfFileExistsChange,
+  showSectionLabel = true,
 }) => {
+  const fileExistModes = [
+    { value: 'skip', label: 'Skip' },
+    { value: 'append', label: 'Append' },
+    { value: 'overwrite', label: 'Overwrite' },
+  ];
+
   return (
     <section className="control-section">
       <div className="section-header">
-        <h3 className="section-label">Export Resize</h3>
+        {showSectionLabel ? (
+          <h3 className="section-label">Export Resize</h3>
+        ) : (
+          <h4 className="subsection-label">Resize</h4>
+        )}
         <button
           className={`btn-icon-subtle ${outputWidth ? 'active' : ''}`}
           onClick={handleResizeToggle}
@@ -56,6 +69,24 @@ const ExportResizeSection = ({
           </div>
         </div>
       )}
+
+      <div className="if-exists-control">
+        <div className="if-exists-label">If file exists -&gt;</div>
+        <div className="if-exists-mode-grid" role="radiogroup" aria-label="If file exists behavior">
+          {fileExistModes.map((mode) => (
+            <button
+              key={mode.value}
+              type="button"
+              role="radio"
+              aria-checked={ifFileExists === mode.value}
+              className={`if-exists-mode-btn ${ifFileExists === mode.value ? 'active' : ''}`}
+              onClick={() => onIfFileExistsChange(mode.value)}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+      </div>
     </section>
   );
 };

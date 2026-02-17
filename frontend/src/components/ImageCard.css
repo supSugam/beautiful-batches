@@ -9,11 +9,6 @@
   user-select: none;
 }
 
-.image-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-
 .image-card.selected {
   box-shadow: 0 0 0 2px var(--accent-dim), var(--shadow-glow);
 }
@@ -109,18 +104,15 @@
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transform: scale(0.8);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .image-card:hover .card-delete {
   opacity: 1;
-  transform: scale(1);
 }
 
 .card-delete:hover {
   background: var(--danger);
-  transform: scale(1.1) !important;
 }
 
 .selection-badge {

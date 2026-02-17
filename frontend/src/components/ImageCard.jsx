@@ -11,7 +11,7 @@ import { X, Check } from 'lucide-react';
 import useStore from '../store/useStore';
 import './ImageCard.css';
 
-const MAX_TRANSFORM_PREVIEW_DIM = 2048;
+const MAX_TRANSFORM_PREVIEW_DIM = 1536;
 const EMPTY_PADDING = Object.freeze({
   top: 0,
   right: 0,
@@ -25,6 +25,11 @@ const EMPTY_CORNER_RADIUS = Object.freeze({
   bottomLeft: 0,
 });
 const DEFAULT_PADDING_FILL_VALUE = '#ffffff';
+const PREVIEW_ROTATE_STEP = 0.5;
+const MAX_PADDING_PX = 640;
+const MAX_CORNER_RADIUS_PX = 360;
+const INNER_PADDING_SIDE_RATIO = 0.4;
+const OUTER_PADDING_SIDE_RATIO = 0.75;
 
 const normalizePaddingFillType = (value) => {
   if (value === 'color' || value === 'image') return value;
@@ -43,6 +48,29 @@ const normalizePadding = (padding) => ({
   left: clampPaddingValue(Number(padding?.left ?? 0)),
 });
 
+const clampPaddingByMode = (padding, mode, referenceWidth, referenceHeight) => {
+  const normalized = normalizePadding(padding);
+  const safeWidth = Math.max(1, Number(referenceWidth) || 1);
+  const safeHeight = Math.max(1, Number(referenceHeight) || 1);
+  const ratio =
+    mode === 'outer' ? OUTER_PADDING_SIDE_RATIO : INNER_PADDING_SIDE_RATIO;
+  const horizontalCap = Math.max(
+    0,
+    Math.min(MAX_PADDING_PX, Math.round(safeWidth * ratio)),
+  );
+  const verticalCap = Math.max(
+    0,
+    Math.min(MAX_PADDING_PX, Math.round(safeHeight * ratio)),
+  );
+
+  return {
+    top: Math.min(normalized.top, verticalCap),
+    right: Math.min(normalized.right, horizontalCap),
+    bottom: Math.min(normalized.bottom, verticalCap),
+    left: Math.min(normalized.left, horizontalCap),
+  };
+};
+
 const normalizeCornerRadius = (radius) => ({
   topLeft: clampPaddingValue(Number(radius?.topLeft ?? 0)),
   topRight: clampPaddingValue(Number(radius?.topRight ?? 0)),
@@ -50,19 +78,49 @@ const normalizeCornerRadius = (radius) => ({
   bottomLeft: clampPaddingValue(Number(radius?.bottomLeft ?? 0)),
 });
 
+const clampCornerRadiusByReference = (radius, referenceWidth, referenceHeight) => {
+  const normalized = normalizeCornerRadius(radius);
+  const safeWidth = Math.max(1, Number(referenceWidth) || 1);
+  const safeHeight = Math.max(1, Number(referenceHeight) || 1);
+  const maxRadius = Math.max(
+    0,
+    Math.min(
+      MAX_CORNER_RADIUS_PX,
+      Math.round(Math.min(safeWidth, safeHeight) * 0.5),
+    ),
+  );
+
+  return {
+    topLeft: Math.min(normalized.topLeft, maxRadius),
+    topRight: Math.min(normalized.topRight, maxRadius),
+    bottomRight: Math.min(normalized.bottomRight, maxRadius),
+    bottomLeft: Math.min(normalized.bottomLeft, maxRadius),
+  };
+};
+
 export const ImageCard = memo(
-  ({ image, onDelete, rowHeight, selected, onSelect }) => {
+  ({
+    image,
+    onDelete,
+    rowHeight,
+    selected,
+    onSelect,
+    disableLayoutAnimation = false,
+  }) => {
     const cropState = useStore((state) => state.cropData.get(image.id));
     const previewCanvasRef = useRef(null);
     const transformedCanvasRef = useRef(null);
+    const sourceImageRef = useRef(null);
     const transformedMetaRef = useRef({
       scale: 1,
       boxW: image.naturalWidth || 1,
       boxH: image.naturalHeight || 1,
     });
     const drawRafRef = useRef(0);
+    const transformRafRef = useRef(0);
     const drawPreviewRef = useRef(() => {});
     const [isCanvasReady, setIsCanvasReady] = useState(false);
+    const [sourceImageVersion, setSourceImageVersion] = useState(0);
 
     const transforms = cropState?.transforms || {
       rotate: 0,
@@ -74,14 +132,35 @@ export const ImageCard = memo(
       onDelete(image.id);
     };
 
+    const handleSelect = useCallback(() => {
+      onSelect(selected ? null : image.id);
+    }, [image.id, onSelect, selected]);
+
     // Live Crop Visuals
     const coords = cropState?.coordinates;
     const cw = coords?.width;
     const ch = coords?.height;
-    const previewPadding = normalizePadding(cropState?.padding || EMPTY_PADDING);
+    const previewPaddingMode =
+      cropState?.paddingMode === 'outer' ? 'outer' : 'inner';
+    const previewReferenceWidth = Math.max(
+      1,
+      Number(cw ?? image.naturalWidth ?? 1) || 1,
+    );
+    const previewReferenceHeight = Math.max(
+      1,
+      Number(ch ?? image.naturalHeight ?? 1) || 1,
+    );
+    const previewPadding = clampPaddingByMode(
+      cropState?.padding || EMPTY_PADDING,
+      previewPaddingMode,
+      previewReferenceWidth,
+      previewReferenceHeight,
+    );
     const previewPaddingCss = `${previewPadding.top}px ${previewPadding.right}px ${previewPadding.bottom}px ${previewPadding.left}px`;
-    const previewCornerRadius = normalizeCornerRadius(
+    const previewCornerRadius = clampCornerRadiusByReference(
       cropState?.cornerRadius || EMPTY_CORNER_RADIUS,
+      previewReferenceWidth,
+      previewReferenceHeight,
     );
     const previewCornerRadiusCss = `${previewCornerRadius.topLeft}px ${previewCornerRadius.topRight}px ${previewCornerRadius.bottomRight}px ${previewCornerRadius.bottomLeft}px`;
     const hasPreviewPadding =
@@ -135,13 +214,20 @@ export const ImageCard = memo(
     const nw = image.naturalWidth;
     const nh = image.naturalHeight;
     const rotate = transforms.rotate || 0;
-    const angle = (rotate * Math.PI) / 180;
+    const previewRotate =
+      Math.round(rotate / PREVIEW_ROTATE_STEP) * PREVIEW_ROTATE_STEP;
+    const hasTransformPreview =
+      Math.abs(previewRotate) > 0.0001 ||
+      transforms.flip.horizontal ||
+      transforms.flip.vertical;
+    const angle = (previewRotate * Math.PI) / 180;
     const transformedW =
       Math.abs(nw * Math.cos(angle)) + Math.abs(nh * Math.sin(angle));
     const transformedH =
       Math.abs(nw * Math.sin(angle)) + Math.abs(nh * Math.cos(angle));
 
     const hasCoords = Boolean(coords && cw > 0 && ch > 0);
+    const requiresCanvasPreview = hasCoords || hasTransformPreview;
     const previewAspectRatio = useMemo(() => {
       if (hasCoords) return `${cw} / ${ch}`;
       const safeW = Math.max(1, transformedW || nw || 1);
@@ -153,7 +239,7 @@ export const ImageCard = memo(
       const previewCanvas = previewCanvasRef.current;
       const transformedCanvas = transformedCanvasRef.current;
       const meta = transformedMetaRef.current;
-      if (!previewCanvas || !transformedCanvas) return;
+      if (!requiresCanvasPreview || !previewCanvas || !transformedCanvas) return;
 
       const sourceW = hasCoords ? cw : meta.boxW || transformedW || nw || 1;
       const sourceH = hasCoords ? ch : meta.boxH || transformedH || nh || 1;
@@ -163,7 +249,8 @@ export const ImageCard = memo(
         typeof window !== 'undefined' && window.devicePixelRatio
           ? window.devicePixelRatio
           : 1;
-      const targetH = Math.max(1, Math.round(rowHeight * dpr));
+      const effectiveDpr = Math.min(1.5, dpr);
+      const targetH = Math.max(1, Math.round(rowHeight * effectiveDpr));
       const targetW = Math.max(1, Math.round((sourceW / sourceH) * targetH));
 
       if (
@@ -202,39 +289,45 @@ export const ImageCard = memo(
 
       ctx.drawImage(transformedCanvas, sx, sy, sw, sh, 0, 0, targetW, targetH);
       setIsCanvasReady(true);
-    }, [coords, hasCoords, cw, ch, rowHeight, transformedW, transformedH, nw, nh]);
+    }, [
+      coords,
+      hasCoords,
+      cw,
+      ch,
+      rowHeight,
+      transformedW,
+      transformedH,
+      nw,
+      nh,
+      requiresCanvasPreview,
+    ]);
 
     useEffect(() => {
       drawPreviewRef.current = drawPreview;
     }, [drawPreview]);
 
     useEffect(() => {
-      let cancelled = false;
-      setIsCanvasReady(false);
+      if (!requiresCanvasPreview) {
+        setIsCanvasReady(false);
+        sourceImageRef.current = null;
+        transformedCanvasRef.current = null;
+        return undefined;
+      }
 
-      const buildTransformedCanvas = async () => {
+      const sourceImage = sourceImageRef.current;
+      if (!sourceImage) return undefined;
+
+      if (transformRafRef.current) {
+        cancelAnimationFrame(transformRafRef.current);
+      }
+
+      transformRafRef.current = requestAnimationFrame(() => {
+        transformRafRef.current = 0;
+
         try {
-          const img = new Image();
-          await new Promise((resolve, reject) => {
-            img.onload = resolve;
-            img.onerror = reject;
-            img.src = image.objectUrl;
-            if (img.complete && img.naturalWidth > 0) {
-              resolve();
-            }
-          });
-          if (img.decode) {
-            try {
-              await img.decode();
-            } catch {
-              // ignore decode errors; onload already guarantees drawable pixels
-            }
-          }
-          if (cancelled) return;
-
-          const baseW = img.naturalWidth || nw || 1;
-          const baseH = img.naturalHeight || nh || 1;
-          const rads = (rotate * Math.PI) / 180;
+          const baseW = sourceImage.naturalWidth || nw || 1;
+          const baseH = sourceImage.naturalHeight || nh || 1;
+          const rads = (previewRotate * Math.PI) / 180;
           const boxW =
             Math.abs(baseW * Math.cos(rads)) + Math.abs(baseH * Math.sin(rads));
           const boxH =
@@ -244,7 +337,7 @@ export const ImageCard = memo(
             Math.min(1, MAX_TRANSFORM_PREVIEW_DIM / Math.max(1, boxW, boxH)),
           );
 
-          const canvas = document.createElement('canvas');
+          const canvas = transformedCanvasRef.current || document.createElement('canvas');
           canvas.width = Math.max(1, Math.round(boxW * scale));
           canvas.height = Math.max(1, Math.round(boxH * scale));
           const ctx = canvas.getContext('2d');
@@ -258,7 +351,7 @@ export const ImageCard = memo(
             transforms.flip.vertical ? -1 : 1,
           );
           ctx.drawImage(
-            img,
+            sourceImage,
             -((baseW * scale) / 2),
             -((baseH * scale) / 2),
             baseW * scale,
@@ -280,23 +373,69 @@ export const ImageCard = memo(
           transformedCanvasRef.current = null;
           setIsCanvasReady(false);
         }
-      };
-
-      buildTransformedCanvas();
+      });
 
       return () => {
-        cancelled = true;
+        if (transformRafRef.current) {
+          cancelAnimationFrame(transformRafRef.current);
+          transformRafRef.current = 0;
+        }
       };
     }, [
-      image.objectUrl,
-      rotate,
+      previewRotate,
       transforms.flip.horizontal,
       transforms.flip.vertical,
       nw,
       nh,
+      sourceImageVersion,
+      requiresCanvasPreview,
     ]);
 
     useEffect(() => {
+      if (!requiresCanvasPreview) return undefined;
+
+      let cancelled = false;
+      setIsCanvasReady(false);
+      sourceImageRef.current = null;
+      transformedCanvasRef.current = null;
+
+      const loadSourceImage = async () => {
+        try {
+          const img = new Image();
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = image.objectUrl;
+            if (img.complete && img.naturalWidth > 0) {
+              resolve();
+            }
+          });
+          if (img.decode) {
+            try {
+              await img.decode();
+            } catch {
+              // ignore decode errors; onload already guarantees drawable pixels
+            }
+          }
+          if (cancelled) return;
+          sourceImageRef.current = img;
+          setSourceImageVersion((prev) => prev + 1);
+        } catch {
+          transformedCanvasRef.current = null;
+          setIsCanvasReady(false);
+        }
+      };
+
+      loadSourceImage();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [image.objectUrl, requiresCanvasPreview]);
+
+    useEffect(() => {
+      if (!requiresCanvasPreview) return undefined;
+
       if (drawRafRef.current) {
         cancelAnimationFrame(drawRafRef.current);
       }
@@ -310,7 +449,7 @@ export const ImageCard = memo(
           drawRafRef.current = 0;
         }
       };
-    }, [drawPreview]);
+    }, [drawPreview, requiresCanvasPreview]);
 
     useEffect(
       () => () => {
@@ -318,6 +457,11 @@ export const ImageCard = memo(
           cancelAnimationFrame(drawRafRef.current);
           drawRafRef.current = 0;
         }
+        if (transformRafRef.current) {
+          cancelAnimationFrame(transformRafRef.current);
+          transformRafRef.current = 0;
+        }
+        sourceImageRef.current = null;
         transformedCanvasRef.current = null;
       },
       [],
@@ -325,13 +469,13 @@ export const ImageCard = memo(
 
     return (
       <motion.div
-        layout
+        layout={!disableLayoutAnimation}
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.9 }}
         transition={{ duration: 0.3, ease: 'easeOut' }}
         className={`image-card ${selected ? 'selected' : ''}`}
-        onClick={onSelect}
+        onClick={handleSelect}
       >
         <div
           className="card-preview"
@@ -356,16 +500,18 @@ export const ImageCard = memo(
                 src={image.objectUrl}
                 alt={image.name}
                 className={`preview-image preview-image--fallback ${
-                  isCanvasReady ? 'hidden' : ''
+                  requiresCanvasPreview && isCanvasReady ? 'hidden' : ''
                 }`}
               />
-              <canvas
-                ref={previewCanvasRef}
-                className={`preview-image preview-image--canvas ${
-                  isCanvasReady ? 'visible' : ''
-                }`}
-                aria-label={image.name}
-              />
+              {requiresCanvasPreview && (
+                <canvas
+                  ref={previewCanvasRef}
+                  className={`preview-image preview-image--canvas ${
+                    isCanvasReady ? 'visible' : ''
+                  }`}
+                  aria-label={image.name}
+                />
+              )}
             </div>
           </div>
 

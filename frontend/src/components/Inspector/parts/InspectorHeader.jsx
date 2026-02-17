@@ -1,12 +1,13 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
-import useStore from '../../../store/useStore';
+import { ChevronLeft, ChevronRight, RotateCcw, Trash2, X } from 'lucide-react';
 
 const InspectorHeader = ({
   imageName,
   onClose,
   onPrev,
   onNext,
+  onReset,
+  onDelete,
   hasPrev,
   hasNext,
 }) => {
@@ -26,6 +27,22 @@ const InspectorHeader = ({
           </button>
         </div>
         <div className="toolbar-divider" />
+        <div className="header-tools">
+          <button
+            className="btn-icon"
+            onClick={onReset}
+            title="Reset current draft"
+          >
+            <RotateCcw size={16} />
+          </button>
+          <button
+            className="btn-icon btn-icon-danger"
+            onClick={onDelete}
+            title="Delete current file"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
         <div className="toolbar-divider" />
         <button className="btn-icon" onClick={onClose}>
           <X size={18} />

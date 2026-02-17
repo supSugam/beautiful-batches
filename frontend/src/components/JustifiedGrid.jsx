@@ -3,6 +3,7 @@ import { RowsPhotoAlbum } from 'react-photo-album';
 import 'react-photo-album/rows.css';
 import { ImageCard } from './ImageCard';
 import useStore from '../store/useStore';
+import './JustifiedGrid.css';
 
 const JustifiedGrid = ({
   images,
@@ -12,16 +13,18 @@ const JustifiedGrid = ({
   onSelect,
   onDelete,
 }) => {
-  const cropData = useStore((state) => state.cropData);
-  const deferredCropData = useDeferredValue(cropData);
+  const cropLayoutVersion = useStore((state) => state.cropLayoutVersion);
+  const deferredLayoutVersion = useDeferredValue(cropLayoutVersion);
+  const deferredRowHeight = useDeferredValue(targetRowHeight);
 
   // Photos for the grid components.
-  // Defer layout recalculation under drag pressure to keep pointer interactions smooth.
+  // Recalculate row layout only when a crop change affects visual card ratio.
   const photos = useMemo(() => {
     if (!images || images.length === 0) return [];
+    const cropData = useStore.getState().cropData;
 
     return images.map((img) => {
-      const cropEntry = deferredCropData.get(img.id);
+      const cropEntry = cropData.get(img.id);
       let ratio = img.naturalRatio || 1;
 
       // 1. If we have active crop coordinates, use them for the aspect ratio of the card
@@ -35,22 +38,33 @@ const JustifiedGrid = ({
           ratio = 1 / ratio;
         }
       }
+      const stableRatio =
+        Number.isFinite(ratio) && ratio > 0
+          ? Math.round(ratio * 200) / 200
+          : 1;
 
       return {
         src: img.objectUrl,
-        width: ratio * 1000,
+        width: stableRatio * 1000,
         height: 1000,
         id: img.id,
         originalImage: img,
       };
     });
-  }, [images, deferredCropData]);
+  }, [images, deferredLayoutVersion]);
+
+  // Disable per-card layout animation to avoid large reflow spikes on selection/open.
+  const disableLayoutAnimation = true;
 
   return (
-    <div className="justified-grid-container" style={{ width: '100%' }}>
+    <div
+      className="justified-grid-container"
+      style={{ width: '100%' }}
+      dir="ltr"
+    >
       <RowsPhotoAlbum
         photos={photos}
-        targetRowHeight={targetRowHeight}
+        targetRowHeight={deferredRowHeight}
         spacing={padding}
         padding={0} // Outer padding
         render={{
@@ -67,10 +81,9 @@ const JustifiedGrid = ({
                 image={photo.originalImage}
                 rowHeight={height}
                 selected={selectedId === photo.id}
-                onSelect={() =>
-                  onSelect(photo.id === selectedId ? null : photo.id)
-                }
+                onSelect={onSelect}
                 onDelete={onDelete}
+                disableLayoutAnimation={disableLayoutAnimation}
               />
             </div>
           ),

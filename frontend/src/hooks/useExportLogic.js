@@ -2,7 +2,15 @@ import { useCallback } from 'react';
 import useStore from '../store/useStore';
 
 export const useExportLogic = () => {
-  const { images, cropData, format, quality, processing, setProcessing } = useStore();
+  const {
+    images,
+    cropData,
+    format,
+    quality,
+    ifFileExists,
+    processing,
+    setProcessing,
+  } = useStore();
 
   const handleExport = useCallback(async () => {
     if (images.length === 0) return;
@@ -19,6 +27,7 @@ export const useExportLogic = () => {
         formData.append('files', img.file, uniqueName);
 
         cropsMap[uniqueName] = {
+          originalName: img.name,
           coordinates: cropEntry?.coordinates || null,
           transforms: cropEntry?.transforms || {
             rotate: 0,
@@ -33,6 +42,7 @@ export const useExportLogic = () => {
         JSON.stringify({
           format,
           quality,
+          ifFileExists,
           crops: cropsMap,
         }),
       );
@@ -62,7 +72,7 @@ export const useExportLogic = () => {
     } finally {
       setProcessing(null);
     }
-  }, [images, cropData, format, quality, setProcessing]);
+  }, [images, cropData, format, quality, ifFileExists, setProcessing]);
 
   return { handleExport, processing };
 };

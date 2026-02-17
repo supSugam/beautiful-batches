@@ -1,7 +1,12 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 
-export const useSidebarResize = (onResize) => {
+export const useSidebarResize = (initialWidth, onResizeCommit) => {
   const [isResizing, setIsResizing] = useState(false);
+  const [liveWidth, setLiveWidth] = useState(() => Math.max(360, initialWidth || 360));
+  const liveWidthRef = useRef(Math.max(360, initialWidth || 360));
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    Math.max(1, typeof window !== 'undefined' ? window.innerWidth : 1440),
+  );
 
   const startResizing = useCallback((e) => {
     e.preventDefault();
@@ -9,29 +14,92 @@ export const useSidebarResize = (onResize) => {
   }, []);
 
   useEffect(() => {
+    const onWindowResize = () => {
+      setViewportWidth(Math.max(1, window.innerWidth || 1));
+    };
+
+    window.addEventListener('resize', onWindowResize);
+    return () => window.removeEventListener('resize', onWindowResize);
+  }, []);
+
+  useEffect(() => {
+    if (isResizing) return;
+    const minW = Math.max(360, window.innerWidth * 0.32);
+    const maxW = window.innerWidth * 0.94;
+    const next = Math.max(minW, Math.min(Math.max(360, Number(initialWidth) || 360), maxW));
+    liveWidthRef.current = next;
+    setLiveWidth((prev) => (Math.abs(prev - next) < 0.5 ? prev : next));
+  }, [initialWidth, isResizing]);
+
+  useEffect(() => {
+    if (isResizing) return;
+    const minW = Math.max(360, window.innerWidth * 0.32);
+    const maxW = window.innerWidth * 0.94;
+    const clamped = Math.max(minW, Math.min(liveWidthRef.current, maxW));
+    if (Math.abs(clamped - liveWidthRef.current) < 0.5) return;
+    liveWidthRef.current = clamped;
+    setLiveWidth(clamped);
+    onResizeCommit(Math.round(clamped));
+  }, [viewportWidth, isResizing, onResizeCommit]);
+
+  useEffect(() => {
     if (!isResizing) return;
 
-    const doResize = (e) => {
-      const newWidth = window.innerWidth - e.clientX;
-      const minW = window.innerWidth * 0.4;
-      const maxW = window.innerWidth * 0.9;
-      onResize(Math.max(minW, Math.min(newWidth, maxW)));
+    let rafId = 0;
+    let latestX = null;
+
+    const clampWidth = (value) => {
+      const minW = Math.max(360, window.innerWidth * 0.32);
+      const maxW = window.innerWidth * 0.94;
+      return Math.max(minW, Math.min(value, maxW));
+    };
+
+    const doResize = (clientX) => {
+      const nextWidth = clampWidth(window.innerWidth - clientX);
+      liveWidthRef.current = nextWidth;
+      setLiveWidth((prev) => (Math.abs(prev - nextWidth) < 0.5 ? prev : nextWidth));
+    };
+
+    const handlePointerMove = (e) => {
+      latestX = e.clientX;
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        if (latestX === null) return;
+        doResize(latestX);
+      });
     };
 
     const stopResize = () => {
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
       setIsResizing(false);
+      const committedWidth = Math.round(clampWidth(liveWidthRef.current));
+      liveWidthRef.current = committedWidth;
+      setLiveWidth(committedWidth);
+      onResizeCommit(committedWidth);
       document.body.style.cursor = 'default';
+      document.body.style.userSelect = '';
     };
 
     document.body.style.cursor = 'col-resize';
-    window.addEventListener('mousemove', doResize);
-    window.addEventListener('mouseup', stopResize);
+    document.body.style.userSelect = 'none';
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
 
     return () => {
-      window.removeEventListener('mousemove', doResize);
-      window.removeEventListener('mouseup', stopResize);
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+      document.body.style.userSelect = '';
     };
-  }, [isResizing, onResize]);
+  }, [isResizing, onResizeCommit]);
 
-  return { isResizing, startResizing };
+  return { isResizing, startResizing, viewportWidth, liveWidth };
 };

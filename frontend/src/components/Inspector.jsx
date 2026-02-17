@@ -14,9 +14,9 @@ import InspectorStats from './Inspector/parts/InspectorStats';
 import SelectionControls from './Inspector/parts/SelectionControls';
 import TransformControls from './Inspector/parts/TransformControls';
 import PaddingSection from './Inspector/parts/PaddingSection';
+import CaptionSection from './Inspector/parts/CaptionSection';
 import ExportResizeSection from './Inspector/parts/ExportResizeSection';
 import BulkApplySection from './Inspector/parts/BulkApplySection';
-import DangerZone from './Inspector/parts/DangerZone';
 
 import { useInspectorLogic } from './Inspector/hooks/useInspectorLogic';
 import { useSidebarResize } from './Inspector/hooks/useSidebarResize';
@@ -47,6 +47,8 @@ export const Inspector = ({
   onResize,
 }) => {
   const cropState = useStore((state) => state.cropData.get(image?.id));
+  const ifFileExists = useStore((state) => state.ifFileExists);
+  const setIfFileExists = useStore((state) => state.setIfFileExists);
 
   const logic = useInspectorLogic({
     image,
@@ -59,7 +61,9 @@ export const Inspector = ({
     hasPrev,
   });
 
-  const { isResizing, startResizing } = useSidebarResize(onResize);
+  const { isResizing, startResizing, viewportWidth, liveWidth } =
+    useSidebarResize(sidebarWidth, onResize);
+  const isSingleColumn = liveWidth <= viewportWidth * 0.5;
 
   if (!image) return null;
 
@@ -68,17 +72,28 @@ export const Inspector = ({
       initial={{ x: '100%', opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: '100%', opacity: 0 }}
-      transition={{ type: 'spring', damping: 30, stiffness: 200 }}
-      className={`inspector ${isResizing ? 'resizing' : ''} ${sidebarWidth > 750 ? 'inspector-dashboard' : ''}`}
-      style={{ width: sidebarWidth }}
+      transition={{ type: 'tween', duration: 0.16, ease: 'easeOut' }}
+      className={`inspector ${isResizing ? 'resizing' : ''} ${isSingleColumn ? '' : 'inspector-dashboard'}`}
+      style={{ width: liveWidth }}
     >
-      <div className="resizer-handle" onMouseDown={startResizing} />
+      <div
+        className="resizer-handle"
+        role="separator"
+        aria-orientation="vertical"
+        title="Drag to resize settings panel"
+        onPointerDown={startResizing}
+      />
 
       <InspectorHeader
         imageName={image.name}
         onClose={logic.handleClose}
         onPrev={logic.navigatePrev}
         onNext={logic.navigateNext}
+        onReset={logic.handleResetDraft}
+        onDelete={() => {
+          onDelete(image.id);
+          onClose();
+        }}
         hasPrev={hasPrev}
         hasNext={hasNext}
       />
@@ -131,56 +146,58 @@ export const Inspector = ({
         </div>
 
         <div className="inspector-controls">
-          <TransformControls
-            rotation={logic.rotation}
-            handleRotate={logic.handleRotate}
-            handleRotateDelta={logic.handleRotateDelta}
-            handleRotateEnd={logic.handleRotateEnd}
-            flip={logic.flip}
-            handleFlip={logic.handleFlip}
-            handleResetTransforms={logic.handleResetDraft}
-          />
+          <section className="settings-section-card settings-section-card--transform">
+            <TransformControls
+              rotation={logic.rotation}
+              handleRotate={logic.handleRotate}
+              handleRotateDelta={logic.handleRotateDelta}
+              handleRotateEnd={logic.handleRotateEnd}
+              flip={logic.flip}
+              handleFlip={logic.handleFlip}
+              handleResetTransforms={logic.handleResetTransforms}
+            />
+          </section>
 
-          <PaddingSection
-            paddingInput={logic.paddingInput}
-            paddingMode={logic.paddingMode}
-            cornerRadiusInput={logic.cornerRadiusInput}
-            paddingFillType={logic.paddingFillType}
-            paddingFillValue={logic.paddingFillValue}
-            paddingImageUrl={logic.paddingImageUrl}
-            handlePaddingInputChange={logic.handlePaddingInputChange}
-            handlePaddingInputBlur={logic.handlePaddingInputBlur}
-            handlePaddingModeChange={logic.handlePaddingModeChange}
-            handleCornerRadiusInputChange={logic.handleCornerRadiusInputChange}
-            handleCornerRadiusInputBlur={logic.handleCornerRadiusInputBlur}
-            handlePaddingFillTypeChange={logic.handlePaddingFillTypeChange}
-            handlePaddingFillValueChange={logic.handlePaddingFillValueChange}
-            handlePaddingImageFileChange={logic.handlePaddingImageFileChange}
-          />
+          <section className="settings-section-card settings-section-card--tweaks">
+            <PaddingSection
+              paddingInput={logic.paddingInput}
+              paddingMode={logic.paddingMode}
+              cornerRadiusInput={logic.cornerRadiusInput}
+              paddingFillType={logic.paddingFillType}
+              paddingFillValue={logic.paddingFillValue}
+              paddingImageUrl={logic.paddingImageUrl}
+              handlePaddingInputChange={logic.handlePaddingInputChange}
+              handlePaddingInputBlur={logic.handlePaddingInputBlur}
+              handlePaddingModeChange={logic.handlePaddingModeChange}
+              handleCornerRadiusInputChange={logic.handleCornerRadiusInputChange}
+              handleCornerRadiusInputBlur={logic.handleCornerRadiusInputBlur}
+              handlePaddingFillTypeChange={logic.handlePaddingFillTypeChange}
+              handlePaddingFillValueChange={logic.handlePaddingFillValueChange}
+              handlePaddingImageFileChange={logic.handlePaddingImageFileChange}
+            />
+          </section>
 
-          <ExportResizeSection
-            outputWidth={logic.outputWidth}
-            handleResizeToggle={logic.handleResizeToggle}
-            manualOutputWidth={logic.manualOutputWidth}
-            handleOutputWidthChange={logic.handleOutputWidthChange}
-            handleOutputWidthBlur={logic.handleOutputWidthBlur}
-            aspect={logic.aspect}
-            currentPixelWidth={logic.currentPixelWidth}
-            currentPixelHeight={logic.currentPixelHeight}
-          />
+          <section className="settings-section-card settings-section-card--caption">
+            <CaptionSection imageId={image.id} />
+          </section>
 
-          <BulkApplySection onApplyTo={onApplyTo} />
-
-          <div className="inspector-divider" />
-
-          <DangerZone
-            handleResetDraft={logic.handleResetDraft}
-            handleDelete={() => {
-              onDelete(image.id);
-              onClose();
-            }}
-            imageName={image.name}
-          />
+          <section className="settings-section-card settings-section-card--export">
+            <h3 className="settings-card-title">Export</h3>
+            <ExportResizeSection
+              outputWidth={logic.outputWidth}
+              handleResizeToggle={logic.handleResizeToggle}
+              manualOutputWidth={logic.manualOutputWidth}
+              handleOutputWidthChange={logic.handleOutputWidthChange}
+              handleOutputWidthBlur={logic.handleOutputWidthBlur}
+              aspect={logic.aspect}
+              currentPixelWidth={logic.currentPixelWidth}
+              currentPixelHeight={logic.currentPixelHeight}
+              ifFileExists={ifFileExists}
+              onIfFileExistsChange={setIfFileExists}
+              showSectionLabel={false}
+            />
+            <BulkApplySection onApplyTo={onApplyTo} showSectionLabel={false} />
+          </section>
         </div>
       </div>
     </motion.div>

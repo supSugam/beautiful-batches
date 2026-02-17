@@ -16,10 +16,53 @@ const DEFAULT_CORNER_RADIUS = Object.freeze({
   bottomLeft: 0,
 });
 const DEFAULT_PADDING_FILL_VALUE = '#ffffff';
+const MAX_PADDING_PX = 640;
+const MAX_CORNER_RADIUS_PX = 360;
+const INNER_PADDING_SIDE_RATIO = 0.4;
+const OUTER_PADDING_SIDE_RATIO = 0.75;
 
 const clampPaddingValue = (value) => {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.round(value));
+};
+
+const clampPaddingByMode = (padding, mode, referenceWidth, referenceHeight) => {
+  const normalized = normalizePadding(padding);
+  const safeWidth = Math.max(1, Number(referenceWidth) || 1);
+  const safeHeight = Math.max(1, Number(referenceHeight) || 1);
+  const ratio = mode === 'outer' ? OUTER_PADDING_SIDE_RATIO : INNER_PADDING_SIDE_RATIO;
+  const horizontalCap = Math.max(
+    0,
+    Math.min(MAX_PADDING_PX, Math.round(safeWidth * ratio)),
+  );
+  const verticalCap = Math.max(
+    0,
+    Math.min(MAX_PADDING_PX, Math.round(safeHeight * ratio)),
+  );
+
+  return {
+    top: Math.min(normalized.top, verticalCap),
+    right: Math.min(normalized.right, horizontalCap),
+    bottom: Math.min(normalized.bottom, verticalCap),
+    left: Math.min(normalized.left, horizontalCap),
+  };
+};
+
+const clampCornerRadiusByReference = (radius, referenceWidth, referenceHeight) => {
+  const normalized = normalizeCornerRadius(radius);
+  const safeWidth = Math.max(1, Number(referenceWidth) || 1);
+  const safeHeight = Math.max(1, Number(referenceHeight) || 1);
+  const maxRadius = Math.max(
+    0,
+    Math.min(MAX_CORNER_RADIUS_PX, Math.round(Math.min(safeWidth, safeHeight) * 0.5)),
+  );
+
+  return {
+    topLeft: Math.min(normalized.topLeft, maxRadius),
+    topRight: Math.min(normalized.topRight, maxRadius),
+    bottomRight: Math.min(normalized.bottomRight, maxRadius),
+    bottomLeft: Math.min(normalized.bottomLeft, maxRadius),
+  };
 };
 
 const normalizePadding = (padding) => ({
@@ -263,6 +306,54 @@ export const useInspectorLogic = ({
   const syncFrameRef = useRef(0);
   const queuedSyncRef = useRef(null);
   const lastSyncedRef = useRef(null);
+  const rotateFrameRef = useRef(0);
+  const queuedRotateRef = useRef({
+    delta: 0,
+    options: null,
+  });
+
+  const getReferenceSize = useCallback(() => {
+    const liveCoordinates = cropperRef?.getCoordinates?.();
+    const width = Number(
+      cropState?.coordinates?.width ??
+        liveCoordinates?.width ??
+        image?.naturalWidth ??
+        1,
+    );
+    const height = Number(
+      cropState?.coordinates?.height ??
+        liveCoordinates?.height ??
+        image?.naturalHeight ??
+        1,
+    );
+
+    return {
+      width: Math.max(1, Number.isFinite(width) ? width : 1),
+      height: Math.max(1, Number.isFinite(height) ? height : 1),
+    };
+  }, [
+    cropperRef,
+    cropState?.coordinates?.width,
+    cropState?.coordinates?.height,
+    image?.naturalWidth,
+    image?.naturalHeight,
+  ]);
+
+  const clampPaddingInputValues = useCallback(
+    (padding, mode) => {
+      const { width, height } = getReferenceSize();
+      return clampPaddingByMode(padding, mode, width, height);
+    },
+    [getReferenceSize],
+  );
+
+  const clampCornerRadiusInputValues = useCallback(
+    (radius) => {
+      const { width, height } = getReferenceSize();
+      return clampCornerRadiusByReference(radius, width, height);
+    },
+    [getReferenceSize],
+  );
 
   // Sync Helper: Propagate current state to the store immediately
   const syncToStore = useCallback(
@@ -405,6 +496,49 @@ export const useInspectorLogic = ({
     },
     [syncToStore],
   );
+
+  const applyQueuedRotateDelta = useCallback(() => {
+    if (!cropperRef) {
+      queuedRotateRef.current = { delta: 0, options: null };
+      return;
+    }
+
+    const { delta, options } = queuedRotateRef.current;
+    queuedRotateRef.current = { delta: 0, options: null };
+    if (!Number.isFinite(delta) || Math.abs(delta) < 0.0001) return;
+
+    if (options) {
+      cropperRef.rotateImage(delta, options);
+    } else {
+      cropperRef.rotateImage(delta);
+    }
+  }, [cropperRef]);
+
+  const scheduleRotateDelta = useCallback(
+    (delta, options) => {
+      if (!Number.isFinite(delta) || Math.abs(delta) < 0.0001) return;
+
+      queuedRotateRef.current.delta += delta;
+      if (options) {
+        queuedRotateRef.current.options = options;
+      }
+      if (rotateFrameRef.current) return;
+
+      rotateFrameRef.current = requestAnimationFrame(() => {
+        rotateFrameRef.current = 0;
+        applyQueuedRotateDelta();
+      });
+    },
+    [applyQueuedRotateDelta],
+  );
+
+  const flushRotateDelta = useCallback(() => {
+    if (rotateFrameRef.current) {
+      cancelAnimationFrame(rotateFrameRef.current);
+      rotateFrameRef.current = 0;
+    }
+    applyQueuedRotateDelta();
+  }, [applyQueuedRotateDelta]);
 
   // Callback whenever cropper changes (move, zoom, rotate)
   const onCropperChange = useCallback(
@@ -627,7 +761,12 @@ export const useInspectorLogic = ({
         cancelAnimationFrame(syncFrameRef.current);
         syncFrameRef.current = 0;
       }
+      if (rotateFrameRef.current) {
+        cancelAnimationFrame(rotateFrameRef.current);
+        rotateFrameRef.current = 0;
+      }
       queuedSyncRef.current = null;
+      queuedRotateRef.current = { delta: 0, options: null };
     },
     [],
   );
@@ -656,15 +795,16 @@ export const useInspectorLogic = ({
       // Prepare new state...
       if (cropState) {
         const { rotate, flip: flipState } = cropState.transforms || {};
-        const nextPadding = normalizePadding(cropState.padding);
-        const nextCornerRadius = normalizeCornerRadius(cropState.cornerRadius);
+        const nextMode = cropState.paddingMode === 'outer' ? 'outer' : 'inner';
+        const nextPadding = clampPaddingInputValues(cropState.padding, nextMode);
+        const nextCornerRadius = clampCornerRadiusInputValues(cropState.cornerRadius);
         setAspect(cropState.aspect || undefined);
         if (flipState) setFlip(flipState);
         else setFlip({ horizontal: false, vertical: false });
 
         if (cropState.outputWidth) setOutputWidth(cropState.outputWidth);
         else setOutputWidth(null);
-        setPaddingMode(cropState.paddingMode === 'outer' ? 'outer' : 'inner');
+        setPaddingMode(nextMode);
         setPaddingValues(nextPadding);
         setPaddingInput(formatPaddingInput(nextPadding));
         setCornerRadiusValues(nextCornerRadius);
@@ -739,26 +879,35 @@ export const useInspectorLogic = ({
         vertical: false,
       });
     }
-  }, [image.id, cropState, cropperRef]);
+  }, [
+    image.id,
+    cropState,
+    cropperRef,
+    clampPaddingInputValues,
+    clampCornerRadiusInputValues,
+  ]);
 
   const navigateNext = useCallback(() => {
     if (hasNext) {
+      flushRotateDelta();
       syncToStore();
       onNext();
     }
-  }, [hasNext, syncToStore, onNext]);
+  }, [hasNext, flushRotateDelta, syncToStore, onNext]);
 
   const navigatePrev = useCallback(() => {
     if (hasPrev) {
+      flushRotateDelta();
       syncToStore();
       onPrev();
     }
-  }, [hasPrev, syncToStore, onPrev]);
+  }, [hasPrev, flushRotateDelta, syncToStore, onPrev]);
 
   const handleClose = useCallback(() => {
+    flushRotateDelta();
     syncToStore();
     onClose();
-  }, [syncToStore, onClose]);
+  }, [flushRotateDelta, syncToStore, onClose]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -794,6 +943,7 @@ export const useInspectorLogic = ({
   // Actions
   const handleRotate = () => {
     if (cropperRef) {
+      flushRotateDelta();
       cropperRef.rotateImage(90);
       // Removed manual syncToStore, the effect above or onCropperChange will handle it
     }
@@ -801,19 +951,20 @@ export const useInspectorLogic = ({
 
   // For Slider
   const handleRotateDelta = (delta, options) => {
-    if (cropperRef) {
-      cropperRef.rotateImage(delta, options);
-    }
+    if (!cropperRef) return;
+    scheduleRotateDelta(delta, options);
   };
 
   const handleRotateEnd = () => {
-    if (cropperRef) {
-      cropperRef.transformImageEnd();
-    }
+    if (!cropperRef) return;
+    flushRotateDelta();
+    cropperRef.transformImageEnd();
+    requestAnimationFrame(() => syncToStore());
   };
 
   const handleFlip = (horizontal) => {
     if (!cropperRef) return;
+    flushRotateDelta();
     if (horizontal) {
       cropperRef.flipImage(true, false);
     } else {
@@ -827,7 +978,42 @@ export const useInspectorLogic = ({
     }));
   };
 
+  const handleResetTransforms = () => {
+    if (!cropperRef) return;
+    flushRotateDelta();
+
+    const state = cropperRef.getState?.();
+    const rotate = state?.transforms?.rotate || 0;
+    const currentFlip = state?.transforms?.flip || {
+      horizontal: false,
+      vertical: false,
+    };
+
+    if (Number.isFinite(rotate) && Math.abs(rotate) > 0.0001) {
+      cropperRef.rotateImage(-rotate, {
+        transitions: false,
+        interaction: false,
+        immediately: true,
+      });
+    }
+    if (currentFlip.horizontal) {
+      cropperRef.flipImage(true, false);
+    }
+    if (currentFlip.vertical) {
+      cropperRef.flipImage(false, true);
+    }
+
+    cropperRef.transformImageEnd();
+    setFlip({ horizontal: false, vertical: false });
+    requestAnimationFrame(() => syncToStore());
+  };
+
   const handleResetDraft = () => {
+    if (rotateFrameRef.current) {
+      cancelAnimationFrame(rotateFrameRef.current);
+      rotateFrameRef.current = 0;
+    }
+    queuedRotateRef.current = { delta: 0, options: null };
     setCropperKey((prev) => prev + 1);
     setAspect(undefined);
     setFlip({ horizontal: false, vertical: false });
@@ -940,7 +1126,8 @@ export const useInspectorLogic = ({
     setPaddingInput(value);
     const parsed = parsePaddingInput(value);
     if (!parsed) return;
-    setPaddingValues((prev) => (paddingEquals(prev, parsed) ? prev : parsed));
+    const clamped = clampPaddingInputValues(parsed, paddingMode);
+    setPaddingValues((prev) => (paddingEquals(prev, clamped) ? prev : clamped));
   };
 
   const handlePaddingInputBlur = () => {
@@ -948,15 +1135,20 @@ export const useInspectorLogic = ({
   };
 
   const handlePaddingModeChange = (mode) => {
-    setPaddingMode(mode === 'outer' ? 'outer' : 'inner');
+    const nextMode = mode === 'outer' ? 'outer' : 'inner';
+    setPaddingMode(nextMode);
+    const clamped = clampPaddingInputValues(paddingValues, nextMode);
+    setPaddingValues((prev) => (paddingEquals(prev, clamped) ? prev : clamped));
+    setPaddingInput(formatPaddingInput(clamped));
   };
 
   const handleCornerRadiusInputChange = (value) => {
     setCornerRadiusInput(value);
     const parsed = parseCornerRadiusInput(value);
     if (!parsed) return;
+    const clamped = clampCornerRadiusInputValues(parsed);
     setCornerRadiusValues((prev) =>
-      cornerRadiusEquals(prev, parsed) ? prev : parsed,
+      cornerRadiusEquals(prev, clamped) ? prev : clamped,
     );
   };
 
@@ -1106,6 +1298,7 @@ export const useInspectorLogic = ({
     handleRotateDelta,
     handleRotateEnd,
     handleFlip,
+    handleResetTransforms,
     handleResetDraft,
     handleAspectClick,
     handleCenterCrop,

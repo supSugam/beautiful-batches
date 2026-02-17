@@ -1,8 +1,8 @@
 /* ========== Toolbar ========== */
 .toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   padding: 0 1rem;
   min-height: 52px;
   background: var(--bg-surface);
@@ -15,41 +15,62 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-shrink: 0;
+  min-width: 0;
+}
+
+.toolbar-meta {
+  width: 100%;
+  max-width: 460px;
+  overflow: hidden;
+  justify-self: start;
 }
 
 .toolbar-controls {
-  flex: 1;
   justify-content: center;
   gap: 1.25rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  justify-self: center;
 }
 
 .toolbar-actions {
   gap: 0.4rem;
+  justify-self: end;
+  margin-left: auto;
 }
 
 .toolbar-dim {
   color: var(--text-muted);
 }
 
-.toolbar-title {
-  font-weight: 600;
-  font-size: 0.85rem;
-  color: var(--text-bright);
-  white-space: nowrap;
+.toolbar-explorer-toggle {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  background: transparent;
 }
 
-.toolbar-badge-muted {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  padding: 2px 8px;
-  background: var(--bg-elevated);
-  border-radius: 100px;
-  font-weight: 500;
+.toolbar-explorer-toggle:hover {
+  border-color: var(--border-hover);
+}
+
+.toolbar-explorer-toggle.is-active {
+  color: #c6ccff;
+  border-color: rgba(129, 140, 248, 0.45);
+  background: rgba(129, 140, 248, 0.14);
+}
+
+.toolbar-folder-path {
+  display: block;
+  min-width: 0;
+  max-width: 240px;
+  font-size: 0.77rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toolbar-divider {
@@ -57,6 +78,138 @@
   height: 24px;
   background: var(--border);
   margin: 0 0.25rem;
+}
+
+.toolbar-sort-wrap {
+  position: relative;
+  width: 214px;
+  flex-shrink: 0;
+}
+
+.toolbar-sort-trigger {
+  width: 100%;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: rgba(20, 20, 24, 0.76);
+  color: var(--text-secondary);
+  backdrop-filter: blur(8px);
+  transition: all var(--transition-fast);
+}
+
+.toolbar-sort-trigger:hover,
+.toolbar-sort-wrap.is-open .toolbar-sort-trigger {
+  color: var(--text-bright);
+  border-color: var(--border-hover);
+  background: rgba(24, 24, 29, 0.84);
+}
+
+.toolbar-sort-trigger-prefix {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.toolbar-sort-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.toolbar-sort-chevron {
+  margin-left: auto;
+  opacity: 0.72;
+  transition: transform var(--transition-fast);
+}
+
+.toolbar-sort-wrap.is-open .toolbar-sort-chevron {
+  transform: rotate(180deg);
+}
+
+.toolbar-sort-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 240px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: rgba(14, 14, 18, 0.9);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
+  z-index: 160;
+}
+
+.toolbar-sort-option {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.toolbar-sort-option:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-bright);
+}
+
+.toolbar-sort-option.is-active {
+  border-color: rgba(129, 140, 248, 0.35);
+  background: rgba(129, 140, 248, 0.1);
+  color: #b7c0ff;
+}
+
+.toolbar-sort-option-main {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-sort-option-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.toolbar-sort-option-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 170px;
+}
+
+.toolbar-sort-option-state {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #b7c0ff;
+  flex-shrink: 0;
 }
 
 /* Control Groups */

@@ -1,16 +1,12 @@
 import React, { useRef, useState } from 'react';
 import { Upload, FolderOpen, Images } from 'lucide-react';
+import {
+  ACCEPTED_IMAGE_TYPES,
+  imagesFromFileList,
+  loadImagesFromSavedDirectory,
+  pickImagesFromDirectory,
+} from '../utils/directoryPicker';
 import './DropZone.css';
-
-const IMAGE_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif', '.tiff', '.tif'
-]);
-
-function isImageFile(file) {
-  if (file.type && file.type.startsWith('image/')) return true;
-  const ext = '.' + file.name.split('.').pop().toLowerCase();
-  return IMAGE_EXTENSIONS.has(ext);
-}
 
 export function DropZone({ onImagesLoaded }) {
   const [dragOver, setDragOver] = useState(false);
@@ -18,23 +14,11 @@ export function DropZone({ onImagesLoaded }) {
   const folderInputRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  const processFiles = (fileList) => {
+  const processFiles = (fileList, prefix = 'drop') => {
     setStatus('Scanning files...');
     // Use requestAnimationFrame to avoid blocking the UI during large scans
     requestAnimationFrame(() => {
-      const images = [];
-      for (let i = 0; i < fileList.length; i++) {
-        const file = fileList[i];
-        if (isImageFile(file)) {
-          images.push({
-            id: `${file.webkitRelativePath || file.name}-${i}`,
-            name: file.name,
-            relativePath: file.webkitRelativePath || file.name,
-            objectUrl: URL.createObjectURL(file),
-            file,
-          });
-        }
-      }
+      const images = imagesFromFileList(fileList, prefix);
       setStatus('');
       if (images.length > 0) {
         onImagesLoaded(images);
@@ -42,6 +26,43 @@ export function DropZone({ onImagesLoaded }) {
         setStatus('No image files found.');
       }
     });
+  };
+
+  const handleSelectFolder = async () => {
+    setStatus('Opening folder...');
+    try {
+      const saved = await loadImagesFromSavedDirectory({
+        promptForPermission: true,
+      });
+      if (saved.supported && saved.available && saved.granted) {
+        if (saved.images.length > 0) {
+          setStatus('');
+          onImagesLoaded(saved.images);
+          return;
+        }
+      }
+
+      const result = await pickImagesFromDirectory();
+      if (!result.supported) {
+        setStatus('');
+        folderInputRef.current?.click();
+        return;
+      }
+      if (result.aborted) {
+        setStatus('');
+        return;
+      }
+      if (result.images.length === 0) {
+        setStatus('No image files found.');
+        return;
+      }
+      setStatus('');
+      onImagesLoaded(result.images);
+    } catch (error) {
+      console.error('Directory picker error:', error);
+      setStatus('Could not open folder picker. Falling back...');
+      requestAnimationFrame(() => folderInputRef.current?.click());
+    }
   };
 
   const handleDrop = (e) => {
@@ -65,14 +86,14 @@ export function DropZone({ onImagesLoaded }) {
           <Upload size={48} strokeWidth={1.5} />
         </div>
         <h2>Drop images or a folder here</h2>
-        <p className="dropzone-sub">Supports JPG, PNG, WebP, BMP, GIF, TIFF</p>
+        <p className="dropzone-sub">Supports PNG, JPG, JPEG, WebP, AVIF</p>
         <div className="dropzone-divider">
           <span>or</span>
         </div>
         <div className="dropzone-actions">
           <button
             className="btn btn-primary btn-lg"
-            onClick={() => folderInputRef.current?.click()}
+            onClick={handleSelectFolder}
           >
             <FolderOpen size={18} />
             <span>Select Folder</span>
@@ -94,16 +115,17 @@ export function DropZone({ onImagesLoaded }) {
         webkitdirectory=""
         directory=""
         multiple
+        accept={ACCEPTED_IMAGE_TYPES}
         style={{ display: 'none' }}
-        onChange={(e) => processFiles(e.target.files)}
+        onChange={(e) => processFiles(e.target.files, 'folder-input')}
       />
       <input
         ref={fileInputRef}
         type="file"
         multiple
-        accept="image/*"
+        accept={ACCEPTED_IMAGE_TYPES}
         style={{ display: 'none' }}
-        onChange={(e) => processFiles(e.target.files)}
+        onChange={(e) => processFiles(e.target.files, 'file-input')}
       />
     </div>
   );

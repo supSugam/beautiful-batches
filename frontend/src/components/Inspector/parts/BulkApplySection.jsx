@@ -1,10 +1,14 @@
 import React from 'react';
 import { ArrowLeftCircle, ArrowRightCircle, Zap } from 'lucide-react';
 
-const BulkApplySection = ({ onApplyTo }) => {
+const BulkApplySection = ({ onApplyTo, showSectionLabel = true }) => {
   return (
     <section className="control-section">
-      <h3 className="section-label">Bulk Apply Current Settings</h3>
+      {showSectionLabel ? (
+        <h3 className="section-label">Bulk Apply Current Settings</h3>
+      ) : (
+        <h4 className="subsection-label">Bulk Apply</h4>
+      )}
       <div className="apply-grid">
         <button
           className="btn btn-secondary btn-sm"

@@ -1,0 +1,8 @@
+.justified-grid-container {
+  direction: ltr;
+}
+
+.justified-grid-container .react-photo-album--rows,
+.justified-grid-container .react-photo-album--track {
+  direction: ltr;
+}

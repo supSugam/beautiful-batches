@@ -2,6 +2,7 @@ import React from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { JustifiedGrid } from '../components/JustifiedGrid';
 import { Inspector } from '../components/Inspector';
+import FolderExplorer from '../components/FolderExplorer';
 import './MainLayout.css';
 
 const MainLayout = ({
@@ -17,26 +18,59 @@ const MainLayout = ({
   selectNext,
   selectPrev,
   handleApplyCropToImages,
+  explorerOpen,
+  folderNodes,
+  activeFolderPath,
+  onSelectFolder,
+  totalImageCount,
+  onResetFolderFilter,
+  onAddFolder,
+  onRemoveFolder,
 }) => {
+  const selectedImage = images.find((img) => img.id === selectedId);
+
   return (
     <div className="main-layout">
+      <FolderExplorer
+        open={explorerOpen}
+        folders={folderNodes}
+        activeFolderPath={activeFolderPath}
+        onSelectFolder={onSelectFolder}
+        totalImageCount={totalImageCount}
+        onAddFolder={onAddFolder}
+        onRemoveFolder={onRemoveFolder}
+      />
+
       <div className="image-grid-scroll">
-        <JustifiedGrid
-          images={images}
-          targetRowHeight={rowHeight}
-          padding={8}
-          showAllFooters={showAllFooters}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onCropChange={handleCropChange}
-          onDelete={handleDelete}
-        />
+        {images.length > 0 ? (
+          <JustifiedGrid
+            images={images}
+            targetRowHeight={rowHeight}
+            padding={8}
+            showAllFooters={showAllFooters}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onCropChange={handleCropChange}
+            onDelete={handleDelete}
+          />
+        ) : (
+          <div className="grid-empty-state">
+            <p>No images in this folder selection.</p>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={onResetFolderFilter}
+            >
+              Show All Images
+            </button>
+          </div>
+        )}
       </div>
 
       <AnimatePresence>
-        {selectedId && (
+        {selectedId && selectedImage && (
           <Inspector
-            image={images.find((img) => img.id === selectedId)}
+            image={selectedImage}
             onCropChange={handleCropChange}
             onClose={() => setSelectedId(null)}
             onDelete={handleDelete}

@@ -354,10 +354,6 @@
     box-shadow: 0 0 15px rgba(var(--accent-rgb), 0.2);
 }
 
-.btn-glow:hover {
-    box-shadow: 0 0 25px rgba(var(--accent-rgb), 0.4);
-}
-
 .inspector-divider {
   height: 1px;
   background: var(--border);

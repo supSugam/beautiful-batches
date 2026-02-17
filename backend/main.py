@@ -50,7 +50,7 @@ def list_images(
         raise HTTPException(status_code=404, detail="Directory not found")
 
     images = []
-    valid_ext = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
+    valid_ext = {".jpg", ".jpeg", ".png", ".webp", ".avif"}
 
     try:
         if recursive:
@@ -120,87 +120,119 @@ async def process_bulk(
         if output_format == "JPG":
             output_format = "JPEG"
         quality = cfg.get("quality", 90)
+        if_file_exists = str(cfg.get("ifFileExists", "append")).lower()
+        if if_file_exists not in {"skip", "append", "overwrite"}:
+            if_file_exists = "append"
         crops = cfg.get("crops", {})
 
+        output_entries: Dict[str, bytes] = {}
+        output_order: List[str] = []
+
+        def append_suffix_name(stem: str, ext: str) -> str:
+            index = 2
+            candidate = f"{stem}{ext}"
+            while candidate in output_entries:
+                candidate = f"{stem} ({index}){ext}"
+                index += 1
+            return candidate
+
         zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-            for upload_file in files:
-                # We use the filename as the key to match with crops data
-                # Frontend should ensure filenames are unique or we use a mapping
-                filename = upload_file.filename
+        for upload_file in files:
+            # We use the filename as the key to match with crops data.
+            filename = upload_file.filename
+            img_data = crops.get(filename)
 
-                # Try to find crop data by filename or some ID
-                # In this setup, we'll assume the frontend sends IDs as filenames or we match by index
-                # Let's assume the frontend sends a mapping: { filename: crop_data }
-                img_data = crops.get(filename)
+            contents = await upload_file.read()
+            img = Image.open(BytesIO(contents))
 
-                contents = await upload_file.read()
-                img = Image.open(BytesIO(contents))
+            if img_data:
+                coords = img_data.get("coordinates")
+                transforms = img_data.get("transforms", {})
+                rotate = transforms.get("rotate", 0)
+                flip = transforms.get("flip", {"horizontal": False, "vertical": False})
 
-                if img_data:
-                    coords = img_data.get("coordinates")
-                    transforms = img_data.get("transforms", {})
-                    rotate = transforms.get("rotate", 0)
-                    flip = transforms.get("flip", {"horizontal": False, "vertical": False})
+                # 1. Apply Transforms
+                if rotate != 0:
+                    img = img.rotate(-rotate, expand=True) # Pillow rotate is counter-clockwise
+                if flip.get("horizontal"):
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                if flip.get("vertical"):
+                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
-                    # 1. Apply Transforms
-                    if rotate != 0:
-                        img = img.rotate(-rotate, expand=True) # Pillow rotate is counter-clockwise
-                    if flip.get("horizontal"):
-                        img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                    if flip.get("vertical"):
-                        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+                # 2. Apply Crop
+                if coords:
+                    # Pillow crop is (left, top, right, bottom)
+                    img = img.crop((
+                        coords["left"],
+                        coords["top"],
+                        coords["left"] + coords["width"],
+                        coords["top"] + coords["height"]
+                    ))
 
-                    # 2. Apply Crop
-                    if coords:
-                        # Pillow crop is (left, top, right, bottom)
-                        img = img.crop((
-                            coords["left"],
-                            coords["top"],
-                            coords["left"] + coords["width"],
-                            coords["top"] + coords["height"]
-                        ))
+                # 3. Apply Resize (Separated Logic)
+                output_width = img_data.get("outputWidth")
+                if (
+                    output_width
+                    and isinstance(output_width, (int, float))
+                    and output_width > 0
+                ):
+                    output_width = int(output_width)
+                    w, h = img.size
+                    if w > 0 and h > 0:
+                        aspect = w / h
+                        new_h = int(output_width / aspect)
+                        # Use LANCZOS for high quality (Pillow 9.1+)
+                        resample_filter = (
+                            Image.Resampling.LANCZOS
+                            if hasattr(Image, "Resampling")
+                            else Image.LANCZOS
+                        )
+                        img = img.resize((output_width, new_h), resample_filter)
 
-                    # 3. Apply Resize (Separated Logic)
-                    output_width = img_data.get("outputWidth")
-                    if (
-                        output_width
-                        and isinstance(output_width, (int, float))
-                        and output_width > 0
-                    ):
-                        output_width = int(output_width)
-                        w, h = img.size
-                        if w > 0 and h > 0:
-                            aspect = w / h
-                            new_h = int(output_width / aspect)
-                            # Use LANCZOS for high quality (Pillow 9.1+)
-                            resample_filter = (
-                                Image.Resampling.LANCZOS
-                                if hasattr(Image, "Resampling")
-                                else Image.LANCZOS
-                            )
-                            img = img.resize((output_width, new_h), resample_filter)
-
-                            # For downscaling (Top Tier Quality Optimization):
-                            # Apply a very subtle UnsharpMask to prevent mushiness
-                            if output_width < w:
-                                img = img.filter(
-                                    ImageFilter.UnsharpMask(
-                                        radius=1.0, percent=50, threshold=3
-                                    )
+                        # For downscaling (Top Tier Quality Optimization):
+                        # Apply a very subtle UnsharpMask to prevent mushiness
+                        if output_width < w:
+                            img = img.filter(
+                                ImageFilter.UnsharpMask(
+                                    radius=1.0, percent=50, threshold=3
                                 )
+                            )
 
-                # Save to buffer
-                img_buffer = BytesIO()
-                # Handle alpha channel for JPEG
-                if output_format == "JPEG" and img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
+            # Save to buffer
+            img_buffer = BytesIO()
+            # Handle alpha channel for JPEG
+            if output_format == "JPEG" and img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
 
-                img.save(img_buffer, format=output_format, quality=quality)
+            img.save(img_buffer, format=output_format, quality=quality)
+            img_bytes = img_buffer.getvalue()
 
-                # Add to ZIP
-                ext = ".jpg" if output_format == "JPEG" else f".{output_format.lower()}"
-                zip_file.writestr(f"{Path(filename).stem}{ext}", img_buffer.getvalue())
+            ext = ".jpg" if output_format == "JPEG" else f".{output_format.lower()}"
+            original_name = (
+                img_data.get("originalName")
+                if isinstance(img_data, dict)
+                else None
+            )
+            base_stem = Path(original_name).stem if original_name else Path(filename).stem
+            target_name = f"{base_stem}{ext}"
+
+            if target_name in output_entries:
+                if if_file_exists == "skip":
+                    continue
+                if if_file_exists == "overwrite":
+                    output_entries[target_name] = img_bytes
+                    continue
+                target_name = append_suffix_name(base_stem, ext)
+
+            output_entries[target_name] = img_bytes
+            output_order.append(target_name)
+
+        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+            for output_name in output_order:
+                file_bytes = output_entries.get(output_name)
+                if file_bytes is None:
+                    continue
+                zip_file.writestr(output_name, file_bytes)
 
         zip_buffer.seek(0)
         return StreamingResponse(
