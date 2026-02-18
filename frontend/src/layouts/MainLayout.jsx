@@ -70,6 +70,7 @@ const MainLayout = ({
       <AnimatePresence>
         {selectedId && selectedImage && (
           <Inspector
+            key={selectedImage.id}
             image={selectedImage}
             onCropChange={handleCropChange}
             onClose={() => setSelectedId(null)}

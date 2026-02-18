@@ -6,4 +6,88 @@
   background: var(--bg-base);
 }
 
+.draft-restore-banner {
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: linear-gradient(
+      160deg,
+      rgba(129, 140, 248, 0.08),
+      rgba(129, 140, 248, 0.02)
+    ),
+    var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.draft-restore-heading {
+  font-size: 0.73rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.draft-restore-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.draft-restore-item {
+  min-height: 28px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+}
+
+.draft-restore-item input[type='checkbox'] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.draft-restore-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 0.74rem;
+  font-weight: 500;
+}
+
+.draft-restore-count {
+  min-width: 20px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  font-size: 0.56rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.draft-restore-date {
+  color: var(--text-muted);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
+.draft-restore-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
 

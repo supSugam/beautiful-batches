@@ -203,6 +203,7 @@ const useStore = create((set, get) => ({
   // --- Global State ---
   images: [],
   cropData: new Map(),
+  captionById: new Map(),
   sessionModifiedAt: new Map(),
   cropLayoutVersion: 0,
   selectedId: null,
@@ -218,10 +219,10 @@ const useStore = create((set, get) => ({
   sortOption: 'last_modified',
 
   // --- Actions ---
-  
+
   // Images
   setImages: (images) => set({ images }),
-  
+
   addImages: async (rawImages) => {
     if (!Array.isArray(rawImages) || rawImages.length === 0) return;
 
@@ -234,12 +235,15 @@ const useStore = create((set, get) => ({
         ),
       );
       set((state) => ({
-        images: [...state.images, ...withDims.map((image) => ({
-          ...image,
-          sourceLastModified: Number(image?.file?.lastModified || 0) || 0,
-          sourceSize: Number(image?.file?.size || 0) || 0,
-          loadedAt: getNowTs(),
-        }))],
+        images: [
+          ...state.images,
+          ...withDims.map((image) => ({
+            ...image,
+            sourceLastModified: Number(image?.file?.lastModified || 0) || 0,
+            sourceSize: Number(image?.file?.size || 0) || 0,
+            loadedAt: getNowTs(),
+          })),
+        ],
       }));
 
       if (index + CHUNK_SIZE < rawImages.length) {
@@ -249,20 +253,24 @@ const useStore = create((set, get) => ({
   },
 
   deleteImage: (id) => {
-    const { images, cropData, selectedId, sessionModifiedAt } = get();
+    const { images, cropData, captionById, selectedId, sessionModifiedAt } =
+      get();
     const img = images.find((i) => i.id === id);
     if (img?.objectUrl) URL.revokeObjectURL(img.objectUrl);
-    
+
     const newCropData = new Map(cropData);
     newCropData.delete(id);
+    const nextCaptionById = new Map(captionById);
+    nextCaptionById.delete(id);
     const nextSessionModifiedAt = new Map(sessionModifiedAt);
     nextSessionModifiedAt.delete(id);
-    
+
     set({
       images: images.filter((i) => i.id !== id),
       cropData: newCropData,
+      captionById: nextCaptionById,
       sessionModifiedAt: nextSessionModifiedAt,
-      selectedId: selectedId === id ? null : selectedId
+      selectedId: selectedId === id ? null : selectedId,
     });
   },
 
@@ -274,6 +282,7 @@ const useStore = create((set, get) => ({
     set({
       images: [],
       cropData: new Map(),
+      captionById: new Map(),
       sessionModifiedAt: new Map(),
       selectedId: null,
     });
@@ -286,9 +295,12 @@ const useStore = create((set, get) => ({
       ? normalizedFolderPath
       : `${normalizedFolderPath}/`;
 
-    const { images, cropData, selectedId, sessionModifiedAt } = get();
+    const { images, cropData, captionById, selectedId, sessionModifiedAt } =
+      get();
     const toRemove = images.filter((img) =>
-      String(img.relativePath || '').replace(/\\/g, '/').startsWith(folderPrefix),
+      String(img.relativePath || '')
+        .replace(/\\/g, '/')
+        .startsWith(folderPrefix),
     );
     if (toRemove.length === 0) return;
 
@@ -299,12 +311,15 @@ const useStore = create((set, get) => ({
 
     const nextCropData = new Map(cropData);
     removeIds.forEach((id) => nextCropData.delete(id));
+    const nextCaptionById = new Map(captionById);
+    removeIds.forEach((id) => nextCaptionById.delete(id));
     const nextSessionModifiedAt = new Map(sessionModifiedAt);
     removeIds.forEach((id) => nextSessionModifiedAt.delete(id));
 
     set({
       images: images.filter((img) => !removeIds.has(img.id)),
       cropData: nextCropData,
+      captionById: nextCaptionById,
       sessionModifiedAt: nextSessionModifiedAt,
       selectedId: selectedId && removeIds.has(selectedId) ? null : selectedId,
     });
@@ -312,7 +327,7 @@ const useStore = create((set, get) => ({
 
   // Selection
   setSelectedId: (id) => set({ selectedId: id }),
-  
+
   selectNext: () => {
     const { images, selectedId } = get();
     if (!selectedId) return;
@@ -349,8 +364,11 @@ const useStore = create((set, get) => ({
           nextSessionModifiedAt.set(id, now);
         }
       } else if (previousModifiedAt > 0) {
-        nextSessionModifiedAt = new Map(state.sessionModifiedAt);
-        nextSessionModifiedAt.delete(id);
+        const caption = String(state.captionById.get(id) || '').trim();
+        if (caption === '') {
+          nextSessionModifiedAt = new Map(state.sessionModifiedAt);
+          nextSessionModifiedAt.delete(id);
+        }
       }
       const shouldBumpLayoutVersion = hasGridLayoutAffectingChange(
         previousEntry,
@@ -384,8 +402,12 @@ const useStore = create((set, get) => ({
     };
     const { rotate } = transforms;
     const isRotated90 = rotate % 180 === 90;
-    const sourceW = isRotated90 ? sourceImg.naturalHeight : sourceImg.naturalWidth;
-    const sourceH = isRotated90 ? sourceImg.naturalWidth : sourceImg.naturalHeight;
+    const sourceW = isRotated90
+      ? sourceImg.naturalHeight
+      : sourceImg.naturalWidth;
+    const sourceH = isRotated90
+      ? sourceImg.naturalWidth
+      : sourceImg.naturalHeight;
 
     const relLeft = sourceData.coordinates.left / sourceW;
     const relTop = sourceData.coordinates.top / sourceH;
@@ -401,8 +423,12 @@ const useStore = create((set, get) => ({
         const targetImg = images.find((img) => img.id === id);
         if (!targetImg) return;
 
-        const targetW = isRotated90 ? targetImg.naturalHeight : targetImg.naturalWidth;
-        const targetH = isRotated90 ? targetImg.naturalWidth : targetImg.naturalHeight;
+        const targetW = isRotated90
+          ? targetImg.naturalHeight
+          : targetImg.naturalWidth;
+        const targetH = isRotated90
+          ? targetImg.naturalWidth
+          : targetImg.naturalHeight;
 
         next.set(id, {
           ...sourceData,
@@ -417,7 +443,12 @@ const useStore = create((set, get) => ({
         if (hasMeaningfulImageChange(nextEntry, targetImg)) {
           nextSessionModifiedAt.set(id, now);
         } else {
-          nextSessionModifiedAt.delete(id);
+          const caption = String(state.captionById.get(id) || '').trim();
+          if (caption === '') {
+            nextSessionModifiedAt.delete(id);
+          } else if (!nextSessionModifiedAt.has(id)) {
+            nextSessionModifiedAt.set(id, now);
+          }
         }
       });
       return {
@@ -427,6 +458,101 @@ const useStore = create((set, get) => ({
           targetIds.length > 0
             ? state.cropLayoutVersion + 1
             : state.cropLayoutVersion,
+      };
+    });
+  },
+
+  setCaptionForImage: (id, caption) => {
+    set((state) => {
+      const nextCaption = String(caption ?? '');
+      const previousCaption = state.captionById.get(id) || '';
+      if (previousCaption === nextCaption) {
+        return {};
+      }
+
+      const nextCaptionById = new Map(state.captionById);
+      if (nextCaption.trim() === '') {
+        nextCaptionById.delete(id);
+      } else {
+        nextCaptionById.set(id, nextCaption);
+      }
+
+      const image = state.images.find((img) => img.id === id);
+      const entry = state.cropData.get(id);
+      const hasMeaningfulCrop = hasMeaningfulImageChange(entry, image);
+      const hasMeaningfulCaption = nextCaption.trim() !== '';
+      const shouldMarkModified = hasMeaningfulCrop || hasMeaningfulCaption;
+
+      let nextSessionModifiedAt = state.sessionModifiedAt;
+      const previousModifiedAt = state.sessionModifiedAt.get(id) || 0;
+      const now = getNowTs();
+
+      if (shouldMarkModified) {
+        if (
+          previousModifiedAt === 0 ||
+          now - previousModifiedAt >= SESSION_MODIFIED_THROTTLE_MS
+        ) {
+          nextSessionModifiedAt = new Map(state.sessionModifiedAt);
+          nextSessionModifiedAt.set(id, now);
+        }
+      } else if (previousModifiedAt > 0) {
+        nextSessionModifiedAt = new Map(state.sessionModifiedAt);
+        nextSessionModifiedAt.delete(id);
+      }
+
+      return {
+        captionById: nextCaptionById,
+        sessionModifiedAt: nextSessionModifiedAt,
+      };
+    });
+  },
+
+  applyPersistedImageDrafts: ({
+    cropEntriesById,
+    captionsById,
+    modifiedAtById,
+  }) => {
+    set((state) => {
+      const nextCropData = new Map(state.cropData);
+      const nextCaptionById = new Map(state.captionById);
+      const nextSessionModifiedAt = new Map(state.sessionModifiedAt);
+
+      let shouldBumpLayoutVersion = false;
+      const entries = cropEntriesById ? Object.entries(cropEntriesById) : [];
+
+      entries.forEach(([id, value]) => {
+        const previousEntry = nextCropData.get(id);
+        nextCropData.set(id, value);
+        if (hasGridLayoutAffectingChange(previousEntry, value)) {
+          shouldBumpLayoutVersion = true;
+        }
+      });
+
+      if (captionsById) {
+        Object.entries(captionsById).forEach(([id, value]) => {
+          const nextCaption = String(value ?? '');
+          if (nextCaption.trim() === '') {
+            nextCaptionById.delete(id);
+          } else {
+            nextCaptionById.set(id, nextCaption);
+          }
+        });
+      }
+
+      if (modifiedAtById) {
+        Object.entries(modifiedAtById).forEach(([id, value]) => {
+          const ts = Number(value || 0) || getNowTs();
+          nextSessionModifiedAt.set(id, ts);
+        });
+      }
+
+      return {
+        cropData: nextCropData,
+        captionById: nextCaptionById,
+        sessionModifiedAt: nextSessionModifiedAt,
+        cropLayoutVersion: shouldBumpLayoutVersion
+          ? state.cropLayoutVersion + 1
+          : state.cropLayoutVersion,
       };
     });
   },

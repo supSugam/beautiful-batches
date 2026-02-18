@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import useStore from '../../../store/useStore';
 
 const SparkleGlyph = ({ active }) => (
   <svg
@@ -25,7 +26,8 @@ const SparkleGlyph = ({ active }) => (
 );
 
 const CaptionSection = ({ imageId }) => {
-  const [caption, setCaption] = useState('');
+  const caption = useStore((state) => state.captionById.get(imageId) || '');
+  const setCaptionForImage = useStore((state) => state.setCaptionForImage);
   const [isProcessing, setIsProcessing] = useState(false);
   const magicTimerRef = useRef(null);
 
@@ -51,7 +53,6 @@ const CaptionSection = ({ imageId }) => {
   };
 
   useEffect(() => {
-    setCaption('');
     setIsProcessing(false);
     if (magicTimerRef.current) {
       window.clearTimeout(magicTimerRef.current);
@@ -66,7 +67,7 @@ const CaptionSection = ({ imageId }) => {
         <textarea
           className="caption-textarea"
           value={caption}
-          onChange={(event) => setCaption(event.target.value)}
+          onChange={(event) => setCaptionForImage(imageId, event.target.value)}
           placeholder="Write caption text for this image..."
           spellCheck={false}
         />

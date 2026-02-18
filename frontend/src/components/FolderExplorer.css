@@ -91,7 +91,7 @@
   padding-left: calc(8px + (var(--folder-depth, 0) * 14px));
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   transition: all var(--transition-fast);
 }
@@ -111,27 +111,38 @@
 }
 
 .folder-item-label {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  width: 100%;
   min-width: 0;
   font-size: 0.75rem;
   font-weight: 500;
 }
 
-.folder-item-label > span {
+.folder-item-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.folder-item-count {
-  font-size: 0.66rem;
+.folder-item-count-pill {
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.57rem;
+  line-height: 1;
   color: var(--text-muted);
   font-weight: 400;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
   letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .folder-remove-btn {
@@ -150,15 +161,10 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  opacity: 0;
-  pointer-events: none;
+  opacity: 0.84;
+  pointer-events: auto;
   transition: color var(--transition-fast), background var(--transition-fast),
     opacity var(--transition-fast);
-}
-
-.folder-item-row:hover .folder-remove-btn {
-  opacity: 0.9;
-  pointer-events: auto;
 }
 
 .folder-remove-btn:hover {

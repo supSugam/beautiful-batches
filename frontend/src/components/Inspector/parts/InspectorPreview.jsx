@@ -7,6 +7,7 @@ const InspectorPreview = ({
   isProcessing,
   imageObjectUrl,
   onCropperInit,
+  onCropperReady,
   onCropperChange,
   aspect,
   centerGuide,
@@ -119,6 +120,7 @@ const InspectorPreview = ({
             }}
             defaultSize={defaultSize}
             onChange={onCropperChange}
+            onReady={onCropperReady}
             background={false}
             minZoom={0.5}
             maxZoom={10}

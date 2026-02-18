@@ -198,6 +198,35 @@ const normalizePaddingFillType = (value) => {
   return 'empty';
 };
 
+const cloneRestoreState = (state) => {
+  if (!state || typeof state !== 'object') return null;
+  const coords = state.coordinates;
+  const transforms = state.transforms || {};
+  const flip = transforms.flip || {};
+  return {
+    coordinates:
+      coords &&
+      Number.isFinite(coords.left) &&
+      Number.isFinite(coords.top) &&
+      Number.isFinite(coords.width) &&
+      Number.isFinite(coords.height)
+        ? {
+            left: coords.left,
+            top: coords.top,
+            width: coords.width,
+            height: coords.height,
+          }
+        : null,
+    transforms: {
+      rotate: Number.isFinite(transforms.rotate) ? transforms.rotate : 0,
+      flip: {
+        horizontal: Boolean(flip.horizontal),
+        vertical: Boolean(flip.vertical),
+      },
+    },
+  };
+};
+
 export const useInspectorLogic = ({
   image,
   cropState,
@@ -305,8 +334,15 @@ export const useInspectorLogic = ({
   });
   const syncFrameRef = useRef(0);
   const queuedSyncRef = useRef(null);
+  const latestSnapshotRef = useRef(null);
   const lastSyncedRef = useRef(null);
   const rotateFrameRef = useRef(0);
+  const restoreFrameRef = useRef(0);
+  const cropperReadyRef = useRef(false);
+  const preparedImageIdRef = useRef(null);
+  const appliedCropperStateIdRef = useRef(null);
+  const restorePendingRef = useRef(false);
+  const restoreSnapshotRef = useRef(null);
   const queuedRotateRef = useRef({
     delta: 0,
     options: null,
@@ -358,6 +394,7 @@ export const useInspectorLogic = ({
   // Sync Helper: Propagate current state to the store immediately
   const syncToStore = useCallback(
     (overrideAspect, snapshot) => {
+      if (restorePendingRef.current) return;
       if (!cropperRef) return;
       const coords = snapshot?.coords || cropperRef.getCoordinates();
       const state = snapshot?.state || cropperRef.getState();
@@ -497,6 +534,27 @@ export const useInspectorLogic = ({
     [syncToStore],
   );
 
+  const flushQueuedSyncToStore = useCallback(() => {
+    if (syncFrameRef.current) {
+      cancelAnimationFrame(syncFrameRef.current);
+      syncFrameRef.current = 0;
+    }
+
+    const queued = queuedSyncRef.current;
+    queuedSyncRef.current = null;
+    if (queued) {
+      syncToStore(queued.overrideAspect, queued.snapshot);
+      return;
+    }
+
+    if (latestSnapshotRef.current) {
+      syncToStore(undefined, latestSnapshotRef.current);
+      return;
+    }
+
+    syncToStore();
+  }, [syncToStore]);
+
   const applyQueuedRotateDelta = useCallback(() => {
     if (!cropperRef) {
       queuedRotateRef.current = { delta: 0, options: null };
@@ -540,14 +598,121 @@ export const useInspectorLogic = ({
     applyQueuedRotateDelta();
   }, [applyQueuedRotateDelta]);
 
+  const applyPersistedStateToCropper = useCallback(() => {
+    if (!cropperRef) return false;
+    if (appliedCropperStateIdRef.current === image.id) return true;
+
+    const isLoaded =
+      typeof cropperRef.isLoaded === 'function' ? cropperRef.isLoaded() : true;
+    const state = cropperRef.getState?.();
+    const cropperW = Number(state?.imageSize?.width || 0);
+    const cropperH = Number(state?.imageSize?.height || 0);
+    const naturalW = Number(image?.naturalWidth || 0);
+    const naturalH = Number(image?.naturalHeight || 0);
+    const hasValidSize = cropperW > 0 && cropperH > 0;
+    const matchNormal =
+      naturalW > 0 &&
+      naturalH > 0 &&
+      Math.abs(cropperW - naturalW) < 2 &&
+      Math.abs(cropperH - naturalH) < 2;
+    const matchSwapped =
+      naturalW > 0 &&
+      naturalH > 0 &&
+      Math.abs(cropperW - naturalH) < 2 &&
+      Math.abs(cropperH - naturalW) < 2;
+
+    if (!isLoaded || !hasValidSize || (!matchNormal && !matchSwapped)) {
+      return false;
+    }
+
+    const restoreState = restoreSnapshotRef.current;
+    if (restoreState) {
+      const rotate = restoreState.transforms?.rotate || 0;
+      const flipState = restoreState.transforms?.flip || {
+        horizontal: false,
+        vertical: false,
+      };
+
+      cropperRef.reset();
+      if (rotate) {
+        cropperRef.rotateImage(rotate, {
+          transitions: false,
+          interaction: false,
+          immediately: true,
+        });
+      }
+      if (flipState.horizontal) {
+        cropperRef.flipImage(true, false, {
+          transitions: false,
+          interaction: false,
+          immediately: true,
+        });
+      }
+      if (flipState.vertical) {
+        cropperRef.flipImage(false, true, {
+          transitions: false,
+          interaction: false,
+          immediately: true,
+        });
+      }
+      if (restoreState.coordinates) {
+        cropperRef.setCoordinates(
+          {
+            left: restoreState.coordinates.left,
+            top: restoreState.coordinates.top,
+            width: restoreState.coordinates.width,
+            height: restoreState.coordinates.height,
+          },
+          {
+            transitions: false,
+            immediately: true,
+          },
+        );
+      }
+      cropperRef.transformImageEnd?.({
+        transitions: false,
+        immediately: true,
+      });
+    } else {
+      cropperRef.reset();
+    }
+
+    appliedCropperStateIdRef.current = image.id;
+    restorePendingRef.current = false;
+    requestAnimationFrame(() => syncToStore());
+    return true;
+  }, [
+    cropperRef,
+    image.id,
+    image?.naturalHeight,
+    image?.naturalWidth,
+    syncToStore,
+  ]);
+
+  const handleCropperReady = useCallback(() => {
+    cropperReadyRef.current = true;
+    if (restoreFrameRef.current) {
+      cancelAnimationFrame(restoreFrameRef.current);
+      restoreFrameRef.current = 0;
+    }
+    applyPersistedStateToCropper();
+  }, [applyPersistedStateToCropper]);
+
+  const handleCropperInit = useCallback((instance) => {
+    setCropperRef(instance);
+    cropperReadyRef.current = Boolean(instance?.isLoaded?.());
+  }, []);
+
   // Callback whenever cropper changes (move, zoom, rotate)
   const onCropperChange = useCallback(
     (cropper) => {
       if (!cropper) return;
+      if (restorePendingRef.current) return;
       const coords = cropper.getCoordinates();
 
       if (coords) {
         const state = cropper.getState && cropper.getState();
+        latestSnapshotRef.current = { coords, state };
         const rotate = state?.transforms?.rotate || 0;
         const imageSize = state?.imageSize || { width: 0, height: 0 };
         const centerRef = getCenterReference(state);
@@ -745,9 +910,6 @@ export const useInspectorLogic = ({
     [getCenterReference, isCropDragging, scheduleSyncToStore],
   );
 
-  // Initial Sync & Persistence on Change
-  const lastId = useRef(null);
-
   // We use a ref to track the CURRENT sync function because we need to call it in cleanup
   // but we don't want the cleanup to re-run constantly if syncToStore changes identity (it shouldn't much, but still).
   const syncRef = useRef(syncToStore);
@@ -764,6 +926,10 @@ export const useInspectorLogic = ({
       if (rotateFrameRef.current) {
         cancelAnimationFrame(rotateFrameRef.current);
         rotateFrameRef.current = 0;
+      }
+      if (restoreFrameRef.current) {
+        cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = 0;
       }
       queuedSyncRef.current = null;
       queuedRotateRef.current = { delta: 0, options: null };
@@ -791,123 +957,151 @@ export const useInspectorLogic = ({
   }, [cropperRef]);
 
   useEffect(() => {
-    if (lastId.current !== image.id) {
-      // Prepare new state...
-      if (cropState) {
-        const { rotate, flip: flipState } = cropState.transforms || {};
-        const nextMode = cropState.paddingMode === 'outer' ? 'outer' : 'inner';
-        const nextPadding = clampPaddingInputValues(cropState.padding, nextMode);
-        const nextCornerRadius = clampCornerRadiusInputValues(cropState.cornerRadius);
-        setAspect(cropState.aspect || undefined);
-        if (flipState) setFlip(flipState);
-        else setFlip({ horizontal: false, vertical: false });
+    if (preparedImageIdRef.current === image.id) return;
 
-        if (cropState.outputWidth) setOutputWidth(cropState.outputWidth);
-        else setOutputWidth(null);
-        setPaddingMode(nextMode);
-        setPaddingValues(nextPadding);
-        setPaddingInput(formatPaddingInput(nextPadding));
-        setCornerRadiusValues(nextCornerRadius);
-        setCornerRadiusInput(formatCornerRadiusInput(nextCornerRadius));
-        setPaddingFillType(normalizePaddingFillType(cropState.paddingFillType));
-        setPaddingFillValue(
-          typeof cropState.paddingFillValue === 'string' &&
-            cropState.paddingFillValue.trim() !== ''
-            ? cropState.paddingFillValue
-            : DEFAULT_PADDING_FILL_VALUE,
-        );
-        setPaddingImageUrl(
-          typeof cropState.paddingImageUrl === 'string'
-            ? cropState.paddingImageUrl
-            : '',
-        );
-
-        if (cropperRef) {
-          cropperRef.reset();
-          if (rotate) cropperRef.rotateImage(rotate);
-          if (flipState) {
-            if (flipState.horizontal) cropperRef.flipImage(true, false);
-            if (flipState.vertical) cropperRef.flipImage(false, true);
-          }
-          if (cropState.coordinates) {
-            cropperRef.setCoordinates({
-              left: cropState.coordinates.left,
-              top: cropState.coordinates.top,
-              width: cropState.coordinates.width,
-              height: cropState.coordinates.height,
-            });
-          }
-        }
-      } else {
-        setAspect(undefined);
-        setFlip({ horizontal: false, vertical: false });
-        setOutputWidth(null);
-        setPaddingMode('inner');
-        setPaddingValues({ ...DEFAULT_PADDING });
-        setPaddingInput(formatPaddingInput(DEFAULT_PADDING));
-        setCornerRadiusValues({ ...DEFAULT_CORNER_RADIUS });
-        setCornerRadiusInput(formatCornerRadiusInput(DEFAULT_CORNER_RADIUS));
-        setPaddingFillType('empty');
-        setPaddingFillValue(DEFAULT_PADDING_FILL_VALUE);
-        setPaddingImageUrl('');
-        if (cropperRef) {
-          cropperRef.reset();
-        }
-      }
-
-      lastId.current = image.id;
-      setManualW('');
-      setManualH('');
-      setManualOutputWidth('');
-      setIsCropDragging(false);
-      snapAxisRef.current = { x: false, y: false };
-      dragMetricsRef.current = {
-        prevLeft: null,
-        prevTop: null,
-        prevTime: 0,
-        cooldownXUntil: 0,
-        cooldownYUntil: 0,
-      };
-      setCenterGuide({
-        hintX: false,
-        hintY: false,
-        snapX: false,
-        snapY: false,
-      });
-      setCenterStatus({
+    if (cropState) {
+      const nextMode = cropState.paddingMode === 'outer' ? 'outer' : 'inner';
+      const nextPadding = clampPaddingInputValues(cropState.padding, nextMode);
+      const nextCornerRadius = clampCornerRadiusInputValues(
+        cropState.cornerRadius,
+      );
+      const nextFlip = cropState.transforms?.flip || {
         horizontal: false,
         vertical: false,
-      });
+      };
+
+      setAspect(cropState.aspect || undefined);
+      setFlip(nextFlip);
+      if (cropState.outputWidth) setOutputWidth(cropState.outputWidth);
+      else setOutputWidth(null);
+      setPaddingMode(nextMode);
+      setPaddingValues(nextPadding);
+      setPaddingInput(formatPaddingInput(nextPadding));
+      setCornerRadiusValues(nextCornerRadius);
+      setCornerRadiusInput(formatCornerRadiusInput(nextCornerRadius));
+      setPaddingFillType(normalizePaddingFillType(cropState.paddingFillType));
+      setPaddingFillValue(
+        typeof cropState.paddingFillValue === 'string' &&
+          cropState.paddingFillValue.trim() !== ''
+          ? cropState.paddingFillValue
+          : DEFAULT_PADDING_FILL_VALUE,
+      );
+      setPaddingImageUrl(
+        typeof cropState.paddingImageUrl === 'string'
+          ? cropState.paddingImageUrl
+          : '',
+      );
+    } else {
+      setAspect(undefined);
+      setFlip({ horizontal: false, vertical: false });
+      setOutputWidth(null);
+      setPaddingMode('inner');
+      setPaddingValues({ ...DEFAULT_PADDING });
+      setPaddingInput(formatPaddingInput(DEFAULT_PADDING));
+      setCornerRadiusValues({ ...DEFAULT_CORNER_RADIUS });
+      setCornerRadiusInput(formatCornerRadiusInput(DEFAULT_CORNER_RADIUS));
+      setPaddingFillType('empty');
+      setPaddingFillValue(DEFAULT_PADDING_FILL_VALUE);
+      setPaddingImageUrl('');
     }
+
+    preparedImageIdRef.current = image.id;
+    appliedCropperStateIdRef.current = null;
+    latestSnapshotRef.current = null;
+    restoreSnapshotRef.current = cloneRestoreState(cropState);
+    restorePendingRef.current = Boolean(restoreSnapshotRef.current);
+    cropperReadyRef.current = false;
+    setManualW('');
+    setManualH('');
+    setManualOutputWidth('');
+    setIsCropDragging(false);
+    snapAxisRef.current = { x: false, y: false };
+    dragMetricsRef.current = {
+      prevLeft: null,
+      prevTop: null,
+      prevTime: 0,
+      cooldownXUntil: 0,
+      cooldownYUntil: 0,
+    };
+    setCenterGuide({
+      hintX: false,
+      hintY: false,
+      snapX: false,
+      snapY: false,
+    });
+    setCenterStatus({
+      horizontal: false,
+      vertical: false,
+    });
   }, [
     image.id,
     cropState,
-    cropperRef,
     clampPaddingInputValues,
     clampCornerRadiusInputValues,
   ]);
 
+  useEffect(() => {
+    if (!cropperRef) return;
+    if (appliedCropperStateIdRef.current === image.id) return;
+
+    let attempts = 0;
+    const maxAttempts = 60;
+
+    const attemptApply = () => {
+      if (applyPersistedStateToCropper()) return;
+      attempts += 1;
+      if (attempts >= maxAttempts) {
+        restorePendingRef.current = false;
+        return;
+      }
+      restoreFrameRef.current = requestAnimationFrame(attemptApply);
+    };
+
+    if (restoreFrameRef.current) {
+      cancelAnimationFrame(restoreFrameRef.current);
+      restoreFrameRef.current = 0;
+    }
+
+    attemptApply();
+
+    return () => {
+      if (restoreFrameRef.current) {
+        cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = 0;
+      }
+    };
+  }, [cropperRef, image.id, applyPersistedStateToCropper]);
+
+  // Guarantee last edit state is committed before switching to another image.
+  useEffect(
+    () => () => {
+      flushRotateDelta();
+      flushQueuedSyncToStore();
+    },
+    [image.id, flushRotateDelta, flushQueuedSyncToStore],
+  );
+
   const navigateNext = useCallback(() => {
     if (hasNext) {
       flushRotateDelta();
-      syncToStore();
+      flushQueuedSyncToStore();
       onNext();
     }
-  }, [hasNext, flushRotateDelta, syncToStore, onNext]);
+  }, [hasNext, flushRotateDelta, flushQueuedSyncToStore, onNext]);
 
   const navigatePrev = useCallback(() => {
     if (hasPrev) {
       flushRotateDelta();
-      syncToStore();
+      flushQueuedSyncToStore();
       onPrev();
     }
-  }, [hasPrev, flushRotateDelta, syncToStore, onPrev]);
+  }, [hasPrev, flushRotateDelta, flushQueuedSyncToStore, onPrev]);
 
   const handleClose = useCallback(() => {
     flushRotateDelta();
-    syncToStore();
+    flushQueuedSyncToStore();
     onClose();
-  }, [flushRotateDelta, syncToStore, onClose]);
+  }, [flushRotateDelta, flushQueuedSyncToStore, onClose]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -1014,6 +1208,8 @@ export const useInspectorLogic = ({
       rotateFrameRef.current = 0;
     }
     queuedRotateRef.current = { delta: 0, options: null };
+    restoreSnapshotRef.current = null;
+    restorePendingRef.current = false;
     setCropperKey((prev) => prev + 1);
     setAspect(undefined);
     setFlip({ horizontal: false, vertical: false });
@@ -1203,6 +1399,8 @@ export const useInspectorLogic = ({
   }, []);
 
   const handleCropDragEnd = useCallback(() => {
+    flushRotateDelta();
+    flushQueuedSyncToStore();
     setIsCropDragging(false);
     snapAxisRef.current = { x: false, y: false };
     dragMetricsRef.current = {
@@ -1218,7 +1416,7 @@ export const useInspectorLogic = ({
       snapX: false,
       snapY: false,
     });
-  }, []);
+  }, [flushQueuedSyncToStore, flushRotateDelta]);
 
   useEffect(() => {
     if (!isCropDragging) return undefined;
@@ -1263,7 +1461,8 @@ export const useInspectorLogic = ({
   }
 
   return {
-    onCropperInit: setCropperRef,
+    onCropperInit: handleCropperInit,
+    onCropperReady: handleCropperReady,
     onCropperChange,
     centerGuide,
     centerStatus,

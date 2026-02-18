@@ -39,9 +39,9 @@ const FolderExplorer = ({
           >
             <span className="folder-item-label">
               <ImageIcon size={13} />
-              <span>All Images</span>
+              <span className="folder-item-name">All Images</span>
+              <span className="folder-item-count-pill">{totalImageCount}</span>
             </span>
-            <span className="folder-item-count">{totalImageCount}</span>
           </button>
 
           {folders.map((folder) => (
@@ -63,9 +63,9 @@ const FolderExplorer = ({
               >
                 <span className="folder-item-label">
                   <FolderOpen size={13} />
-                  <span>{folder.name}</span>
+                  <span className="folder-item-name">{folder.name}</span>
+                  <span className="folder-item-count-pill">{folder.count}</span>
                 </span>
-                <span className="folder-item-count">{folder.count}</span>
               </button>
               {folder.depth === 0 && (
                 <button

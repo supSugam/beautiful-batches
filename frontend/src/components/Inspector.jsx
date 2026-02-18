@@ -33,6 +33,14 @@ const ASPECT_PRESETS = [
   { label: '16:9', value: 16 / 9, icon: RectangleHorizontal },
 ];
 
+const EMPTY_IMAGE = Object.freeze({
+  id: '',
+  name: '',
+  objectUrl: '',
+  naturalWidth: 1,
+  naturalHeight: 1,
+});
+
 export const Inspector = ({
   image,
   onCropChange,
@@ -46,12 +54,13 @@ export const Inspector = ({
   width: sidebarWidth,
   onResize,
 }) => {
-  const cropState = useStore((state) => state.cropData.get(image?.id));
+  const activeImage = image || EMPTY_IMAGE;
+  const cropState = useStore((state) => state.cropData.get(activeImage.id));
   const ifFileExists = useStore((state) => state.ifFileExists);
   const setIfFileExists = useStore((state) => state.setIfFileExists);
 
   const logic = useInspectorLogic({
-    image,
+    image: activeImage,
     cropState,
     onCropChange,
     onClose,
@@ -89,7 +98,11 @@ export const Inspector = ({
         onClose={logic.handleClose}
         onPrev={logic.navigatePrev}
         onNext={logic.navigateNext}
-        onReset={logic.handleResetDraft}
+        onReset={() => {
+          logic.handleResetDraft();
+          if (!image?.id) return;
+          useStore.getState().setCaptionForImage(image.id, '');
+        }}
         onDelete={() => {
           onDelete(image.id);
           onClose();
@@ -110,6 +123,7 @@ export const Inspector = ({
             isProcessing={logic.isProcessing}
             imageObjectUrl={image.objectUrl}
             onCropperInit={logic.onCropperInit}
+            onCropperReady={logic.onCropperReady}
             onCropperChange={logic.onCropperChange}
             aspect={logic.aspect}
             centerGuide={logic.centerGuide}
@@ -169,7 +183,9 @@ export const Inspector = ({
               handlePaddingInputChange={logic.handlePaddingInputChange}
               handlePaddingInputBlur={logic.handlePaddingInputBlur}
               handlePaddingModeChange={logic.handlePaddingModeChange}
-              handleCornerRadiusInputChange={logic.handleCornerRadiusInputChange}
+              handleCornerRadiusInputChange={
+                logic.handleCornerRadiusInputChange
+              }
               handleCornerRadiusInputBlur={logic.handleCornerRadiusInputBlur}
               handlePaddingFillTypeChange={logic.handlePaddingFillTypeChange}
               handlePaddingFillValueChange={logic.handlePaddingFillValueChange}

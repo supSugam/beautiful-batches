@@ -11,6 +11,12 @@ import {
   clearSavedDirectoryHandle,
   clearSavedDirectoryHandleIfMatches,
 } from './utils/directoryPicker';
+import {
+  loadFolderDraftPayloads,
+  loadFolderDraftSummaries,
+  persistFolderDrafts,
+  resolveDraftsForImages,
+} from './utils/editDraftPersistence';
 import './App.css';
 
 const EXPLORER_OPEN_STORAGE_KEY = 'bb-explorer-open';
@@ -22,6 +28,8 @@ const nameCollator = new Intl.Collator(undefined, {
 });
 
 const normalizePath = (value) => String(value || '').replace(/\\/g, '/');
+const getRootFolderPathFromRelativePath = (relativePath) =>
+  normalizePath(relativePath).split('/').filter(Boolean)[0] || '';
 
 const readStoredBoolean = (key, fallback) => {
   if (typeof window === 'undefined') return fallback;
@@ -122,6 +130,9 @@ function App() {
   const sortOption = useStore((state) => state.sortOption);
   const setSortOption = useStore((state) => state.setSortOption);
   const sessionModifiedAt = useStore((state) => state.sessionModifiedAt);
+  const applyPersistedImageDrafts = useStore(
+    (state) => state.applyPersistedImageDrafts,
+  );
   const deleteFolder = useStore((state) => state.deleteFolder);
   const processing = useStore((state) => state.processing);
 
@@ -137,12 +148,15 @@ function App() {
   const rowHeightRafRef = useRef(0);
   const pendingRowHeightRef = useRef(rowHeight);
   const directoryRootsRef = useRef([]);
+  const draftPersistTimerRef = useRef(0);
+  const resolvedDraftFoldersRef = useRef(new Set());
   const [explorerOpen, setExplorerOpen] = useState(() =>
     readStoredBoolean(EXPLORER_OPEN_STORAGE_KEY, true),
   );
   const [activeFolderPath, setActiveFolderPath] = useState(() =>
     readStoredString(ACTIVE_FOLDER_STORAGE_KEY, ALL_FOLDERS_VALUE),
   );
+  const [draftRestorePrompt, setDraftRestorePrompt] = useState(null);
 
   const handleRowHeightChange = useCallback(
     (nextValue) => {
@@ -163,6 +177,8 @@ function App() {
   useEffect(() => {
     if (images.length !== 0) return;
     directoryRootsRef.current = [];
+    resolvedDraftFoldersRef.current = new Set();
+    setDraftRestorePrompt(null);
   }, [images.length]);
 
   useEffect(() => {
@@ -194,6 +210,14 @@ function App() {
   );
 
   const folderNodes = useMemo(() => buildFolderNodes(images), [images]);
+  const loadedRootPaths = useMemo(() => {
+    const roots = new Set();
+    images.forEach((image) => {
+      const root = getRootFolderPathFromRelativePath(image?.relativePath);
+      if (root) roots.add(root);
+    });
+    return Array.from(roots);
+  }, [images]);
 
   const filteredImages = useMemo(() => {
     if (activeFolderPath === ALL_FOLDERS_VALUE) return images;
@@ -295,6 +319,140 @@ function App() {
     if (visibleImageIds.has(selectedId)) return;
     setSelectedId(null);
   }, [selectedId, setSelectedId, visibleImageIds]);
+
+  useEffect(
+    () => () => {
+      if (!draftPersistTimerRef.current) return;
+      window.clearTimeout(draftPersistTimerRef.current);
+      draftPersistTimerRef.current = 0;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const schedulePersist = () => {
+      if (draftPersistTimerRef.current) {
+        window.clearTimeout(draftPersistTimerRef.current);
+      }
+      draftPersistTimerRef.current = window.setTimeout(() => {
+        draftPersistTimerRef.current = 0;
+        const state = useStore.getState();
+        if (!Array.isArray(state.images) || state.images.length === 0) return;
+        persistFolderDrafts({
+          images: state.images,
+          cropData: state.cropData,
+          captionById: state.captionById,
+          sessionModifiedAt: state.sessionModifiedAt,
+        });
+      }, 450);
+    };
+
+    const unsubscribe = useStore.subscribe(() => {
+      schedulePersist();
+    });
+
+    return () => {
+      unsubscribe();
+      if (!draftPersistTimerRef.current) return;
+      window.clearTimeout(draftPersistTimerRef.current);
+      draftPersistTimerRef.current = 0;
+    };
+  }, []);
+
+  useEffect(() => {
+    const flushDraftPersistence = () => {
+      const state = useStore.getState();
+      if (!Array.isArray(state.images) || state.images.length === 0) return;
+      persistFolderDrafts({
+        images: state.images,
+        cropData: state.cropData,
+        captionById: state.captionById,
+        sessionModifiedAt: state.sessionModifiedAt,
+      });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushDraftPersistence();
+      }
+    };
+
+    window.addEventListener('beforeunload', flushDraftPersistence);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', flushDraftPersistence);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (images.length === 0 || loadedRootPaths.length === 0) {
+      setDraftRestorePrompt(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (sessionModifiedAt.size > 0) {
+      images.forEach((image) => {
+        if (!sessionModifiedAt.has(image.id)) return;
+        const root = getRootFolderPathFromRelativePath(image.relativePath);
+        if (root) {
+          resolvedDraftFoldersRef.current.add(root);
+        }
+      });
+    }
+
+    const unresolvedFolders = loadedRootPaths.filter(
+      (folderPath) => !resolvedDraftFoldersRef.current.has(folderPath),
+    );
+    if (unresolvedFolders.length === 0) {
+      setDraftRestorePrompt(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    loadFolderDraftSummaries(unresolvedFolders).then((summaries) => {
+      if (cancelled) return;
+      const items = summaries
+        .filter((item) => item.count > 0)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((item) => ({
+          ...item,
+          selected: true,
+        }));
+
+      if (items.length === 0) {
+        setDraftRestorePrompt(null);
+        return;
+      }
+
+      setDraftRestorePrompt((previous) => {
+        if (!previous?.items?.length) {
+          return { items };
+        }
+
+        const selectedByFolder = new Map(
+          previous.items.map((item) => [item.folderPath, item.selected]),
+        );
+        return {
+          items: items.map((item) => ({
+            ...item,
+            selected: selectedByFolder.has(item.folderPath)
+              ? selectedByFolder.get(item.folderPath)
+              : item.selected,
+          })),
+        };
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [images, loadedRootPaths, sessionModifiedAt]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -416,6 +574,54 @@ function App() {
     [deleteFolder],
   );
 
+  const handleToggleDraftFolderSelection = useCallback((folderPath) => {
+    setDraftRestorePrompt((previous) => {
+      if (!previous?.items?.length) return previous;
+      return {
+        items: previous.items.map((item) =>
+          item.folderPath === folderPath
+            ? { ...item, selected: !item.selected }
+            : item,
+        ),
+      };
+    });
+  }, []);
+
+  const handleSkipDraftRestore = useCallback(() => {
+    if (!draftRestorePrompt?.items?.length) return;
+    draftRestorePrompt.items.forEach((item) =>
+      resolvedDraftFoldersRef.current.add(item.folderPath),
+    );
+    setDraftRestorePrompt(null);
+  }, [draftRestorePrompt]);
+
+  const handleApplyDraftRestore = useCallback(async () => {
+    if (!draftRestorePrompt?.items?.length) return;
+
+    const selectedFolders = draftRestorePrompt.items
+      .filter((item) => item.selected)
+      .map((item) => item.folderPath);
+    if (selectedFolders.length === 0) return;
+
+    const folderDraftPayloads = await loadFolderDraftPayloads(selectedFolders);
+    const resolvedDrafts = resolveDraftsForImages({
+      images,
+      folderDraftPayloads,
+    });
+
+    const hasRestorableData =
+      Object.keys(resolvedDrafts.cropEntriesById).length > 0 ||
+      Object.keys(resolvedDrafts.captionsById).length > 0;
+    if (hasRestorableData) {
+      applyPersistedImageDrafts(resolvedDrafts);
+    }
+
+    draftRestorePrompt.items.forEach((item) =>
+      resolvedDraftFoldersRef.current.add(item.folderPath),
+    );
+    setDraftRestorePrompt(null);
+  }, [applyPersistedImageDrafts, draftRestorePrompt, images]);
+
   if (images.length === 0) {
     return (
       <div className="app">
@@ -438,6 +644,51 @@ function App() {
         onExport={handleExport}
         processing={processing}
       />
+
+      {draftRestorePrompt?.items?.length > 0 && (
+        <div className="draft-restore-banner" role="status">
+          <div className="draft-restore-heading">
+            Found saved image drafts for these folders
+          </div>
+          <div className="draft-restore-list">
+            {draftRestorePrompt.items.map((item) => (
+              <label key={item.folderPath} className="draft-restore-item">
+                <input
+                  type="checkbox"
+                  checked={item.selected}
+                  onChange={() =>
+                    handleToggleDraftFolderSelection(item.folderPath)
+                  }
+                />
+                <span className="draft-restore-folder">{item.folderPath}</span>
+                <span className="draft-restore-count">{item.count}</span>
+                <span className="draft-restore-date">
+                  {item.updatedAt
+                    ? new Date(item.updatedAt).toLocaleString()
+                    : 'Unknown'}
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="draft-restore-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={handleSkipDraftRestore}
+            >
+              Skip for now
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={handleApplyDraftRestore}
+              disabled={!draftRestorePrompt.items.some((item) => item.selected)}
+            >
+              Restore selected
+            </button>
+          </div>
+        </div>
+      )}
 
       <ProgressBar current={processing?.current} total={processing?.total} />
 
