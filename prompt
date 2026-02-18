@@ -1,6 +1,0 @@
-one problem is that when a image is tall so it takes up less width, less image width = less footer width = the aspect ratio row takes two line = the image hard takes up more height = causes unevenness in the row and unfilled spacing.
-
-the whole ui and editing tools are glittery noticeably now, no animation, no smoothness, nothing feels fast, let's do fully professional way let's achieve that enterprise level of optimization and smoothness without sacrificing any features or design.
-
-the "cards" should reposition themselves cooperatively with animation, is that possible? like when a imahe is added or rotated or anything that affects the layout, the layour changes should adjust with perfect repositioning with animations like those in modern webapps.
-
