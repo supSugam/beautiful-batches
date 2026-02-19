@@ -1,15 +1,29 @@
 import React from 'react';
-
 import {
+  RotateCcw,
   RotateCw,
-  MoveHorizontal as FlipHorizontalIcon,
-  MoveVertical as FlipVerticalIcon,
-  RefreshCcw,
+  FlipHorizontal,
+  FlipVertical,
+  RefreshCw,
 } from 'lucide-react';
 import { RotateComponent } from './RotateComponent';
 
+/**
+ * TransformControls — rotation buttons, rotation slider, flip buttons, reset.
+ *
+ * Props:
+ *  - rotation           — current total rotation in degrees
+ *  - fineRotation       — fine rotation value for slider display (-45 to 45)
+ *  - handleRotate       — (delta) for ±90° button clicks
+ *  - handleRotateDelta  — (delta) fine rotation from slider
+ *  - handleRotateEnd    — called when slider drag ends
+ *  - flip               — { horizontal, vertical }
+ *  - handleFlip         — ('horizontal' | 'vertical') toggle a flip axis
+ *  - handleResetTransforms — reset all transforms
+ */
 const TransformControls = ({
   rotation,
+  fineRotation = 0,
   handleRotate,
   handleRotateDelta,
   handleRotateEnd,
@@ -17,85 +31,59 @@ const TransformControls = ({
   handleFlip,
   handleResetTransforms,
 }) => {
-  const [quarter, setQuarter] = React.useState(0);
-  const [adjustmentAngle, setAdjustmentAngle] = React.useState(0);
-  const rotateComponentRef = React.useRef(null);
-
-  React.useLayoutEffect(() => {
-    const absRotate = Math.abs(rotation);
-    let rotate;
-    if (absRotate % 90 > 45) {
-      rotate = (absRotate - (absRotate % 90) + 90) / 90;
-    } else if (absRotate % 90 < 45) {
-      rotate = (absRotate - (absRotate % 90)) / 90;
-    } else {
-      rotate = quarter;
-    }
-    rotate = Math.sign(rotation) * rotate;
-
-    if (rotate !== quarter) {
-      setQuarter(rotate);
-    }
-    setAdjustmentAngle(
-      Math.sign(rotation) * (Math.abs(rotation) - Math.abs(rotate) * 90),
-    );
-  }, [rotation]);
-
-  const rotateTo = (angle) => {
-    if (handleRotateDelta) {
-      handleRotateDelta(angle, {
-        transitions: false,
-        interaction: true,
-        immediately: true,
-      });
-    }
-  };
-
   return (
     <section className="control-section">
-      <h3 className="section-label">Transform</h3>
-      <div className="icon-action-row" style={{ marginBottom: '0.75rem' }}>
-        <div className="icon-action-row-inner" style={{ flex: 1 }}>
+      <div className="section-header">
+        <h3 className="section-label">Transform</h3>
+        <div className="section-header-tools">
           <button
-            className="btn-icon-box"
-            onClick={handleRotate}
-            title="Rotate 90° Clockwise"
-          >
-            <RotateCw size={18} />
-          </button>
-          <button
-            className={`btn-icon-box ${flip.horizontal ? 'active' : ''}`}
-            title="Flip Horizontal"
-            onClick={() => handleFlip(true)}
-          >
-            <FlipHorizontalIcon size={18} />
-          </button>
-          <button
-            className={`btn-icon-box ${flip.vertical ? 'active' : ''}`}
-            title="Flip Vertical"
-            onClick={() => handleFlip(false)}
-          >
-            <FlipVerticalIcon size={18} />
-          </button>
-          <button
-            className="btn-icon-box"
-            title="Reset Transforms"
+            className="btn-icon-subtle"
             onClick={handleResetTransforms}
-            style={{ flex: 0, minWidth: '44px' }}
+            title="Reset Transforms"
           >
-            <RefreshCcw size={18} />
+            <RefreshCw size={12} />
           </button>
         </div>
       </div>
 
-      <div style={{ padding: '0 4px' }}>
+      <div className="icon-action-row">
+        <div className="icon-action-row-inner">
+          <button
+            className="btn-icon-box"
+            onClick={() => handleRotate(-90)}
+            title="Rotate -90°"
+          >
+            <RotateCcw size={16} />
+          </button>
+          <button
+            className="btn-icon-box"
+            onClick={() => handleRotate(90)}
+            title="Rotate +90°"
+          >
+            <RotateCw size={16} />
+          </button>
+          <button
+            className={`btn-icon-box ${flip?.horizontal ? 'active' : ''}`}
+            onClick={() => handleFlip('horizontal')}
+            title="Flip Horizontal"
+          >
+            <FlipHorizontal size={16} />
+          </button>
+          <button
+            className={`btn-icon-box ${flip?.vertical ? 'active' : ''}`}
+            onClick={() => handleFlip('vertical')}
+            title="Flip Vertical"
+          >
+            <FlipVertical size={16} />
+          </button>
+        </div>
+
         <RotateComponent
-          ref={rotateComponentRef}
-          value={adjustmentAngle}
-          onChange={rotateTo}
-          onBlur={handleRotateEnd}
           from={-45}
           to={45}
+          value={fineRotation}
+          onChange={handleRotateDelta}
+          onBlur={handleRotateEnd}
         />
       </div>
     </section>

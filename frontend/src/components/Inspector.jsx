@@ -22,7 +22,7 @@ import { useInspectorLogic } from './Inspector/hooks/useInspectorLogic';
 import { useSidebarResize } from './Inspector/hooks/useSidebarResize';
 import useStore from '../store/useStore';
 
-import 'react-image-crop/dist/ReactCrop.css';
+
 import './Inspector.css';
 
 const ASPECT_PRESETS = [
@@ -114,21 +114,10 @@ export const Inspector = ({
       <div className="inspector-scroll">
         <div className="inspector-preview-section">
           <InspectorPreview
-            key={logic.cropperKey} // Hard reset by remounting wrapper? Or pass prop?
-            // Actually better to pass prop to use on Cropper, but wrapper remount works too.
-            // Let's pass it as a prop 'resetKey' inside to keep wrapper stable if possible,
-            // or just use valid logic.cropperKey here if we want full freshstart.
-            // If we remount InspectorPreview, we lose local ref? yes.
-            // That's exactly what we want for a hard reset.
+            key={logic.cropperKey}
             isProcessing={logic.isProcessing}
             imageObjectUrl={image.objectUrl}
-            onCropperInit={logic.onCropperInit}
-            onCropperReady={logic.onCropperReady}
-            onCropperChange={logic.onCropperChange}
-            aspect={logic.aspect}
-            centerGuide={logic.centerGuide}
-            onCropDragStart={logic.handleCropDragStart}
-            onCropDragEnd={logic.handleCropDragEnd}
+            editor={logic.editor}
           />
 
           <InspectorStats
@@ -163,6 +152,7 @@ export const Inspector = ({
           <section className="settings-section-card settings-section-card--transform">
             <TransformControls
               rotation={logic.rotation}
+              fineRotation={logic.fineRotation}
               handleRotate={logic.handleRotate}
               handleRotateDelta={logic.handleRotateDelta}
               handleRotateEnd={logic.handleRotateEnd}

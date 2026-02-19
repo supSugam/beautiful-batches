@@ -314,14 +314,146 @@
   }
 }
 
-/* Hide cropper UI artifacts during active rotation to reduce "messiness" */
-.custom-cropper.dragging-rotation .ReactCrop__child-wrapper {
-  opacity: 0.8;
+/* ── Custom crop overlay styles ────────────────────────── */
+
+.editor-canvas {
+  image-rendering: auto;
 }
 
-.custom-cropper.dragging-rotation .ReactCrop__crop-selection,
-.custom-cropper.dragging-rotation .ReactCrop__drag-handle {
-  display: none !important;
+.crop-selection {
+  box-sizing: border-box;
+  will-change: transform;
+}
+
+.crop-selection-border {
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.crop-selection--active .crop-selection-border {
+  border-color: rgba(255, 255, 255, 0.9);
+}
+
+/* Corner brackets */
+.crop-bracket {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.crop-bracket-tl {
+  top: -2px;
+  left: -2px;
+  border-top: 3px solid #fff;
+  border-left: 3px solid #fff;
+}
+
+.crop-bracket-tr {
+  top: -2px;
+  right: -2px;
+  border-top: 3px solid #fff;
+  border-right: 3px solid #fff;
+}
+
+.crop-bracket-bl {
+  bottom: -2px;
+  left: -2px;
+  border-bottom: 3px solid #fff;
+  border-left: 3px solid #fff;
+}
+
+.crop-bracket-br {
+  bottom: -2px;
+  right: -2px;
+  border-bottom: 3px solid #fff;
+  border-right: 3px solid #fff;
+}
+
+/* Resize handles */
+.crop-handle {
+  z-index: 3;
+}
+
+.crop-handle-corner {
+  width: 18px;
+  height: 18px;
+}
+
+.crop-handle-edge {
+  width: 24px;
+  height: 24px;
+}
+
+/* Rule-of-thirds grid */
+.crop-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.crop-grid-line {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.crop-grid-h1 {
+  left: 0;
+  right: 0;
+  top: 33.333%;
+  height: 1px;
+}
+
+.crop-grid-h2 {
+  left: 0;
+  right: 0;
+  top: 66.667%;
+  height: 1px;
+}
+
+.crop-grid-v1 {
+  top: 0;
+  bottom: 0;
+  left: 33.333%;
+  width: 1px;
+}
+
+.crop-grid-v2 {
+  top: 0;
+  bottom: 0;
+  left: 66.667%;
+  width: 1px;
+}
+
+/* Processing overlay */
+.editor-processing-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.editor-processing-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: editorSpin 0.7s linear infinite;
+}
+
+@keyframes editorSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .inspector-stats {
@@ -1425,35 +1557,7 @@
   background: #09090b; /* Fallback for transparency */
 }
 
-/* Force ReactCrop to fit available space while wrapping image tightly */
-/* Only needed for legacy ReactCrop */
-.inspector.inspector-dashboard .custom-cropper {
-  max-height: 100%;
-  max-width: 100%;
-  display: inline-flex !important; 
-  vertical-align: middle;
-  align-items: center;
-  justify-content: center;
-}
-
-.inspector.inspector-dashboard .ReactCrop__child-wrapper {
-  max-height: 100%;
-  max-width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Ensure images inside specific legacy containers behave */
-.inspector.inspector-dashboard .custom-cropper img {
-  max-height: 100% !important;
-  max-width: 100% !important;
-  width: auto !important;
-  height: auto !important;
-  object-fit: contain !important;
-  display: block;
-  flex-shrink: 0;
-}
+/* (legacy ReactCrop styles removed — custom editor used instead) */
 
 .inspector.inspector-dashboard .inspector-controls {
   width: clamp(320px, 42%, 520px);
