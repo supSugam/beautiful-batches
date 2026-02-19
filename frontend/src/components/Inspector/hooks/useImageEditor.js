@@ -805,30 +805,80 @@ export function useImageEditor({
     const absCos = Math.abs(Math.cos(rad));
     const absSin = Math.abs(Math.sin(rad));
 
-    // Wc, Hc are the dimensions of the crop box in the rotated frame (unzoomed pixels)
-    const wc = crop.w;
-    const hc = crop.h;
+    // Current dimensions
+    const curW = crop.w;
+    const curH = crop.h;
 
-    // Minimum zoom required to cover (wc, hc) with a rotated image of (naturalWidth, naturalHeight)
-    // Formula: s * w >= Wc*|cos| + Hc*|sin| and s * h >= Wc*|sin| + Hc*|cos|
-    const z = Math.max(
-      (wc * absCos + hc * absSin) / Math.max(1, naturalWidth),
-      (wc * absSin + hc * absCos) / Math.max(1, naturalHeight),
+    // Dimensions of crop box when aligned to image axes
+    const cw = curW * absCos + curH * absSin;
+    const ch = curW * absSin + curH * absCos;
+
+    // Shrink if necessary to fit anywhere
+    const k = Math.min(
+      1,
+      naturalWidth / Math.max(1, cw),
+      naturalHeight / Math.max(1, ch),
     );
 
-    // Apply zoom and center the view
-    setZoom(z);
+    const w = curW * k;
+    const h = curH * k;
+
+    // Recalculate cw, ch for possibly shrunk dimensions
+    const cw_final = w * absCos + h * absSin;
+    const ch_final = w * absSin + h * absCos;
+
+    // Safe range for center relative to image center (in image axes)
+    const sx = (naturalWidth - cw_final) / 2;
+    const sy = (naturalHeight - ch_final) / 2;
+
+    // Current center relative to image center
+    const curCenterX = crop.x + curW / 2;
+    const curCenterY = crop.y + curH / 2;
+    const imgCenterX = effectiveWidth / 2;
+    const imgCenterY = effectiveHeight / 2;
+
+    const dx = curCenterX - imgCenterX;
+    const dy = curCenterY - imgCenterY;
+
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+
+    // Vector from image center to crop center
+    // u, v are coordinates in a frame that rotates WITH the image.
+    // u = dx * cos + dy * sin
+    // v = -dx * sin + dy * cos
+    const u = dx * cos + dy * sin;
+    const v = -dx * sin + dy * cos;
+
+    // Clamp u, v to safe range
+    const nu = Math.max(-sx, Math.min(sx, u));
+    const nv = Math.max(-sy, Math.min(sy, v));
+
+    // Back to screen coordinates
+    // dx' = nu * cos - nv * sin
+    // dy' = nu * sin + nv * cos
+    const ndx = nu * cos - nv * sin;
+    const ndy = nu * sin + nv * cos;
+
+    const finalX = imgCenterX + ndx - w / 2;
+    const finalY = imgCenterY + ndy - h / 2;
+
+    const bounds = getBoundsForRotation(rotation);
+    setCropRaw(clampCropToBounds({ x: finalX, y: finalY, w, h }, bounds));
+    setZoom(1); // Smart fill usually resets to unzoomed to show the new zone
     setZoomAnchorRaw({ x: 0.5, y: 0.5 });
     zoomAnchorRef.current = { x: 0.5, y: 0.5 };
-    scheduleViewCommit();
+    notifyChange();
   }, [
-    crop.h,
-    crop.w,
+    crop,
+    effectiveWidth,
+    effectiveHeight,
+    getBoundsForRotation,
     naturalHeight,
     naturalWidth,
+    notifyChange,
     rotation,
     setZoom,
-    scheduleViewCommit,
   ]);
 
   const handleWheel = useCallback(
