@@ -59,6 +59,7 @@ export function useInspectorLogic({
         flip: { horizontal: false, vertical: false },
       },
       aspect: cropState.aspect ?? null,
+      editorView: cropState.editorView || null,
     };
   }, [cropperKey]); // Only re-derive on image switch, not every cropState change
 
@@ -76,6 +77,7 @@ export function useInspectorLogic({
           coordinates: state.coordinates,
           transforms: state.transforms,
           aspect: state.aspect,
+          editorView: state.editorView,
         });
       },
       [imageId, onCropChange],

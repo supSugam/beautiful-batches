@@ -20,10 +20,12 @@ const CropOverlay = ({
   crop,
   fitLayout,
   zoom = 1,
+  onPanImage,
   onCropMove,
   onCropResize,
   onDragStart,
   onDragEnd,
+  isPinching = false,
   centerStatus,
 }) => {
   // ── ALL hooks must be called unconditionally (before any early return) ──
@@ -38,23 +40,33 @@ const CropOverlay = ({
   const displayScaleRef = useRef(1);
   const cropRef = useRef(crop);
   const onCropMoveRef = useRef(onCropMove);
+  const onPanImageRef = useRef(onPanImage);
   const onCropResizeRef = useRef(onCropResize);
   const onDragStartRef = useRef(onDragStart);
   const onDragEndRef = useRef(onDragEnd);
+  const isPinchingRef = useRef(isPinching);
 
   // Keep refs up to date each render
   cropRef.current = crop;
   onCropMoveRef.current = onCropMove;
+  onPanImageRef.current = onPanImage;
   onCropResizeRef.current = onCropResize;
   onDragStartRef.current = onDragStart;
   onDragEndRef.current = onDragEnd;
+  isPinchingRef.current = isPinching;
 
   const dragHandlers = usePointerDrag({
     onMoveStart: () => {
+      if (isPinchingRef.current) return;
       setIsDragging(true);
       onDragStartRef.current?.();
     },
     onMove: ({ deltaX, deltaY }) => {
+      if (isPinchingRef.current) return;
+      if (zoom > 1.0001) {
+        onPanImageRef.current?.(deltaX, deltaY);
+        return;
+      }
       const s = displayScaleRef.current;
       onCropMoveRef.current?.(deltaX / s, deltaY / s);
     },
@@ -67,6 +79,7 @@ const CropOverlay = ({
   const makeResizeHandler = useCallback((handleId) => {
     return {
       onPointerDown: (e) => {
+        if (isPinchingRef.current) return;
         e.preventDefault();
         e.stopPropagation();
         activeHandle.current = handleId;
@@ -81,6 +94,7 @@ const CropOverlay = ({
         const startY = e.clientY;
 
         const handleMove = (moveEvent) => {
+          if (isPinchingRef.current) return;
           moveEvent.preventDefault();
           const s = displayScaleRef.current;
           const totalDx = (moveEvent.clientX - startX) / s;
@@ -111,59 +125,62 @@ const CropOverlay = ({
   if (!fitLayout || fitLayout.displayW <= 0) return null;
 
   const { scale, offsetX, offsetY, displayW, displayH } = fitLayout;
-  const displayScale = scale * zoom;
+  const interactionScale = scale;
 
   // Update ref for drag callbacks
-  displayScaleRef.current = displayScale;
+  displayScaleRef.current = interactionScale;
 
-  // Convert crop from effective-image pixels to screen pixels
-  const screenX = offsetX + crop.x * displayScale;
-  const screenY = offsetY + crop.y * displayScale;
-  const screenW = crop.w * displayScale;
-  const screenH = crop.h * displayScale;
+  // Keep crop UI in fit-layout coordinates so wheel/pinch zoom affects the
+  // image only, not the crop frame geometry.
+  const screenX = offsetX + crop.x * scale;
+  const screenY = offsetY + crop.y * scale;
+  const screenW = crop.w * scale;
+  const screenH = crop.h * scale;
 
   const isActive = isDragging || isResizing;
 
-  const imageLeft = offsetX;
-  const imageTop = offsetY;
-  const imageRight = offsetX + displayW;
-  const imageBottom = offsetY + displayH;
+  const containerWidth = displayW + offsetX * 2;
+  const containerHeight = displayH + offsetY * 2;
+  const overlayLeft = 0;
+  const overlayTop = 0;
+  const overlayRight = containerWidth;
+  const overlayBottom = containerHeight;
 
-  const cropLeft = Math.max(imageLeft, Math.min(screenX, imageRight));
-  const cropTop = Math.max(imageTop, Math.min(screenY, imageBottom));
-  const cropRight = Math.max(cropLeft, Math.min(screenX + screenW, imageRight));
-  const cropBottom = Math.max(cropTop, Math.min(screenY + screenH, imageBottom));
+  const cropLeft = Math.max(overlayLeft, Math.min(screenX, overlayRight));
+  const cropTop = Math.max(overlayTop, Math.min(screenY, overlayBottom));
+  const cropRight = Math.max(cropLeft, Math.min(screenX + screenW, overlayRight));
+  const cropBottom = Math.max(cropTop, Math.min(screenY + screenH, overlayBottom));
   const cropWidth = cropRight - cropLeft;
   const cropHeight = cropBottom - cropTop;
 
   const dimRects = [
     {
       key: 'top',
-      left: imageLeft,
-      top: imageTop,
-      width: displayW,
-      height: Math.max(0, cropTop - imageTop),
+      left: overlayLeft,
+      top: overlayTop,
+      width: containerWidth,
+      height: Math.max(0, cropTop - overlayTop),
     },
     {
       key: 'left',
-      left: imageLeft,
+      left: overlayLeft,
       top: cropTop,
-      width: Math.max(0, cropLeft - imageLeft),
+      width: Math.max(0, cropLeft - overlayLeft),
       height: cropHeight,
     },
     {
       key: 'right',
       left: cropRight,
       top: cropTop,
-      width: Math.max(0, imageRight - cropRight),
+      width: Math.max(0, overlayRight - cropRight),
       height: cropHeight,
     },
     {
       key: 'bottom',
-      left: imageLeft,
+      left: overlayLeft,
       top: cropBottom,
-      width: displayW,
-      height: Math.max(0, imageBottom - cropBottom),
+      width: containerWidth,
+      height: Math.max(0, overlayBottom - cropBottom),
     },
   ];
 
@@ -240,8 +257,8 @@ const CropOverlay = ({
           top: screenY,
           width: screenW,
           height: screenH,
-          pointerEvents: 'auto',
-          cursor: 'move',
+          pointerEvents: isPinching ? 'none' : 'auto',
+          cursor: zoom > 1.0001 ? (isActive ? 'grabbing' : 'grab') : 'move',
           touchAction: 'none',
         }}
         {...dragHandlers}

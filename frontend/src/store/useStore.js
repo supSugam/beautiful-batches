@@ -163,6 +163,19 @@ const normalizeCornerRadius = (radius) => ({
   bottomLeft: normalizePaddingValue(Number(radius?.bottomLeft ?? 0)),
 });
 
+const normalizeEditorView = (editorView) => {
+  const zoom = Number(editorView?.zoom);
+  const anchorX = Number(editorView?.anchor?.x);
+  const anchorY = Number(editorView?.anchor?.y);
+  return {
+    zoom: Number.isFinite(zoom) ? Math.max(1, zoom) : 1,
+    anchor: {
+      x: Number.isFinite(anchorX) ? anchorX : 0.5,
+      y: Number.isFinite(anchorY) ? anchorY : 0.5,
+    },
+  };
+};
+
 const hasAnyPadding = (padding) =>
   padding.top > 0 || padding.right > 0 || padding.bottom > 0 || padding.left > 0;
 
@@ -193,6 +206,13 @@ const hasMeaningfulImageChange = (entry, image) => {
   );
   if (hasAnyCornerRadius(normalizedCornerRadius)) return true;
 
+  const editorView = normalizeEditorView(entry?.editorView);
+  if (Math.abs(editorView.zoom - 1) > 0.0001) return true;
+  if (editorView.zoom > 1.0001) {
+    if (Math.abs(editorView.anchor.x - 0.5) > 0.0001) return true;
+    if (Math.abs(editorView.anchor.y - 0.5) > 0.0001) return true;
+  }
+
   const coords = normalizeStoredCoordinates(entry?.coordinates);
   if (!coords) return false;
 
@@ -218,6 +238,7 @@ const normalizeCropEntry = (entry) => {
   return {
     ...entry,
     coordinates: toStoredCoordinates(entry.coordinates),
+    editorView: normalizeEditorView(entry.editorView),
   };
 };
 

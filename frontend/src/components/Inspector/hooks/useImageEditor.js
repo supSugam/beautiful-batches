@@ -7,6 +7,10 @@ import {
 const FIT_PADDING_PX = 16;
 const MIN_CROP_SIZE = 10;
 const SNAP_THRESHOLD = 3;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 4;
+const WHEEL_ZOOM_SPEED = 0.0016;
+const VIEW_COMMIT_DELAY_MS = 140;
 
 const normalizeRotation = (rotation) => {
   const numeric = Number(rotation);
@@ -39,6 +43,30 @@ const getRotatedBounds = (width, height, rotation) => {
     width: safeWidth * cos + safeHeight * sin,
     height: safeWidth * sin + safeHeight * cos,
   };
+};
+
+const clampZoom = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return MIN_ZOOM;
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, numeric));
+};
+
+const clampAnchor = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0.5;
+  return Math.max(0, Math.min(1, numeric));
+};
+
+const toFiniteAnchor = (value, fallback = 0.5) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return numeric;
+};
+
+const clampInRange = (value, min, max) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return min;
+  return Math.max(min, Math.min(max, numeric));
 };
 
 const clampCropToBounds = (crop, bounds) => {
@@ -105,6 +133,58 @@ const remapCropByCoverage = (crop, previousBounds, nextBounds) => {
   );
 };
 
+const clampCropWithAspect = (crop, bounds, ratio, handleId, startCrop) => {
+  const safeRatio = Math.max(0.000001, Number(ratio) || 1);
+  const maxWidth = Math.max(1, Number(bounds?.width) || 1);
+  const maxHeight = Math.max(1, Number(bounds?.height) || 1);
+
+  const scalarMax = Math.min(maxHeight, maxWidth / safeRatio);
+  const scalarMin = Math.min(
+    scalarMax,
+    Math.max(MIN_CROP_SIZE, MIN_CROP_SIZE / safeRatio),
+  );
+  const requestedScalar = Math.max(
+    0,
+    Number(crop?.h) || (Number(crop?.w) || MIN_CROP_SIZE) / safeRatio,
+  );
+  const scalar = Math.max(scalarMin, Math.min(requestedScalar, scalarMax));
+  const w = scalar * safeRatio;
+  const h = scalar;
+
+  const source = startCrop || crop;
+  const startX = Number(source?.x) || 0;
+  const startY = Number(source?.y) || 0;
+  const startW = Number(source?.w) || w;
+  const startH = Number(source?.h) || h;
+
+  const anchorX = handleId.includes('l')
+    ? startX + startW
+    : handleId.includes('r')
+      ? startX
+      : startX + startW / 2;
+  const anchorY = handleId.includes('t')
+    ? startY + startH
+    : handleId.includes('b')
+      ? startY
+      : startY + startH / 2;
+
+  let x = handleId.includes('l')
+    ? anchorX - w
+    : handleId.includes('r')
+      ? anchorX
+      : anchorX - w / 2;
+  let y = handleId.includes('t')
+    ? anchorY - h
+    : handleId.includes('b')
+      ? anchorY
+      : anchorY - h / 2;
+
+  x = Math.max(0, Math.min(x, maxWidth - w));
+  y = Math.max(0, Math.min(y, maxHeight - h));
+
+  return { x, y, w, h };
+};
+
 /**
  * useImageEditor — unified state machine for image editing.
  *
@@ -116,6 +196,11 @@ const remapCropByCoverage = (crop, previousBounds, nextBounds) => {
 export function useImageEditor({ naturalWidth, naturalHeight, initialState, onChange }) {
   const initialRotation = normalizeRotation(initialState?.transforms?.rotate || 0);
   const initialBounds = getRotatedBounds(naturalWidth, naturalHeight, initialRotation);
+  const initialZoom = clampZoom(initialState?.editorView?.zoom ?? MIN_ZOOM);
+  const initialZoomAnchor = {
+    x: toFiniteAnchor(initialState?.editorView?.anchor?.x, 0.5),
+    y: toFiniteAnchor(initialState?.editorView?.anchor?.y, 0.5),
+  };
 
   // ── Container size ──────────────────────────────────────
   const [containerSize, setContainerSizeState] = useState({ width: 0, height: 0 });
@@ -135,7 +220,8 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
   const [flipV, setFlipV] = useState(() => {
     return Boolean(initialState?.transforms?.flip?.vertical);
   });
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoomRaw] = useState(initialZoom);
+  const [zoomAnchor, setZoomAnchorRaw] = useState(initialZoomAnchor);
   const [aspect, setAspectState] = useState(() => {
     return initialState?.aspect ?? null;
   });
@@ -177,7 +263,12 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
   flipVRef.current = flipV;
   const aspectRef = useRef(aspect);
   aspectRef.current = aspect;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const zoomAnchorRef = useRef(zoomAnchor);
+  zoomAnchorRef.current = zoomAnchor;
   const notifyTimeoutRef = useRef(null);
+  const viewCommitTimeoutRef = useRef(null);
 
   const notifyChange = useCallback(() => {
     clearTimeout(notifyTimeoutRef.current);
@@ -192,6 +283,10 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
           },
         },
         aspect: aspectRef.current,
+        editorView: {
+          zoom: zoomRef.current,
+          anchor: zoomAnchorRef.current,
+        },
       });
     }, 16);
   }, []);
@@ -199,8 +294,16 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
   useEffect(() => {
     return () => {
       clearTimeout(notifyTimeoutRef.current);
+      clearTimeout(viewCommitTimeoutRef.current);
     };
   }, []);
+
+  const scheduleViewCommit = useCallback(() => {
+    clearTimeout(viewCommitTimeoutRef.current);
+    viewCommitTimeoutRef.current = setTimeout(() => {
+      notifyChange();
+    }, VIEW_COMMIT_DELAY_MS);
+  }, [notifyChange]);
 
   // ── Fit layout (how image fits in container) ────────────
   const fitLayout = useMemo(() => {
@@ -294,6 +397,18 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
         } else {
           w = h * ratio;
         }
+        const bounds = getBoundsForRotation(rotationRef.current);
+        setCropRaw(
+          clampCropWithAspect(
+            { x, y, w, h },
+            bounds,
+            ratio,
+            handleId,
+            startCrop,
+          ),
+        );
+        notifyChange();
+        return;
       }
 
       const bounds = getBoundsForRotation(rotationRef.current);
@@ -455,7 +570,10 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
       });
 
       if (options.resetZoom) {
-        setZoom(1);
+        zoomRef.current = MIN_ZOOM;
+        zoomAnchorRef.current = { x: 0.5, y: 0.5 };
+        setZoomRaw(MIN_ZOOM);
+        setZoomAnchorRaw({ x: 0.5, y: 0.5 });
       }
       notifyChange();
     },
@@ -515,7 +633,10 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
     setRotationRaw(0);
     setFlipH(false);
     setFlipV(false);
-    setZoom(1);
+    zoomRef.current = MIN_ZOOM;
+    zoomAnchorRef.current = { x: 0.5, y: 0.5 };
+    setZoomRaw(MIN_ZOOM);
+    setZoomAnchorRaw({ x: 0.5, y: 0.5 });
 
     const resetBounds = getBoundsForRotation(0);
     setCropRaw({
@@ -535,7 +656,10 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
     setRotationRaw(0);
     setFlipH(false);
     setFlipV(false);
-    setZoom(1);
+    zoomRef.current = MIN_ZOOM;
+    zoomAnchorRef.current = { x: 0.5, y: 0.5 };
+    setZoomRaw(MIN_ZOOM);
+    setZoomAnchorRaw({ x: 0.5, y: 0.5 });
     setAspectState(null);
 
     const resetBounds = getBoundsForRotation(0);
@@ -549,13 +673,114 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
   }, [getBoundsForRotation, notifyChange]);
 
   // ── Zoom ────────────────────────────────────────────────
-  const handleWheel = useCallback(() => {
-    // Disabled for now — zoom is complex and will be re-enabled later
-  }, []);
+  const updateZoomAnchorFromClientPoint = useCallback(
+    ({ clientX, clientY, containerElement }) => {
+      if (!fitLayout || !containerElement) return;
+
+      const rect = containerElement.getBoundingClientRect?.();
+      if (!rect) return;
+
+      const localX = clientX - rect.left;
+      const localY = clientY - rect.top;
+      const relativeX = (localX - fitLayout.offsetX) / fitLayout.displayW;
+      const relativeY = (localY - fitLayout.offsetY) / fitLayout.displayH;
+      const nextAnchor = {
+        x: clampAnchor(relativeX),
+        y: clampAnchor(relativeY),
+      };
+
+      setZoomAnchorRaw(nextAnchor);
+      zoomAnchorRef.current = nextAnchor;
+    },
+    [fitLayout],
+  );
+
+  const setZoom = useCallback(
+    (nextZoom) => {
+      const normalized = clampZoom(nextZoom);
+      zoomRef.current = normalized;
+      setZoomRaw(normalized);
+      scheduleViewCommit();
+    },
+    [scheduleViewCommit],
+  );
+
+  const setZoomAtClientPoint = useCallback(
+    (nextZoom, clientX, clientY, containerElement) => {
+      updateZoomAnchorFromClientPoint({ clientX, clientY, containerElement });
+      const normalized = clampZoom(nextZoom);
+      zoomRef.current = normalized;
+      setZoomRaw(normalized);
+      scheduleViewCommit();
+    },
+    [scheduleViewCommit, updateZoomAnchorFromClientPoint],
+  );
+
+  const panZoomByScreenDelta = useCallback(
+    (deltaX, deltaY) => {
+      if (zoom <= MIN_ZOOM + 0.0001 || !fitLayout) return;
+      if (fitLayout.displayW <= 0 || fitLayout.displayH <= 0) return;
+
+      const zoomDelta = zoom - 1;
+      if (zoomDelta <= 0.000001) return;
+
+      const displayW = fitLayout.displayW;
+      const displayH = fitLayout.displayH;
+      const cropLeft = crop.x * fitLayout.scale;
+      const cropTop = crop.y * fitLayout.scale;
+      const cropRight = cropLeft + crop.w * fitLayout.scale;
+      const cropBottom = cropTop + crop.h * fitLayout.scale;
+
+      const minAnchorX = -cropLeft / (zoomDelta * displayW);
+      const maxAnchorX = (zoom * displayW - cropRight) / (zoomDelta * displayW);
+      const minAnchorY = -cropTop / (zoomDelta * displayH);
+      const maxAnchorY =
+        (zoom * displayH - cropBottom) / (zoomDelta * displayH);
+
+      const denomX = (1 - zoom) * displayW;
+      const denomY = (1 - zoom) * displayH;
+      if (Math.abs(denomX) < 0.000001 || Math.abs(denomY) < 0.000001) return;
+
+      setZoomAnchorRaw((previous) => {
+        const next = {
+          x: clampInRange(previous.x + deltaX / denomX, minAnchorX, maxAnchorX),
+          y: clampInRange(previous.y + deltaY / denomY, minAnchorY, maxAnchorY),
+        };
+        zoomAnchorRef.current = next;
+        return next;
+      });
+      scheduleViewCommit();
+    },
+    [crop.h, crop.w, crop.x, crop.y, fitLayout, scheduleViewCommit, zoom],
+  );
+
+  const handleWheel = useCallback(
+    (event) => {
+      if (!event) return;
+      event.preventDefault();
+
+      const deltaY = Number(event.deltaY) || 0;
+      if (Math.abs(deltaY) < 0.0001) return;
+
+      updateZoomAnchorFromClientPoint({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        containerElement: event.currentTarget,
+      });
+
+      const zoomFactor = Math.exp(-deltaY * WHEEL_ZOOM_SPEED);
+      const nextZoom = clampZoom(zoomRef.current * zoomFactor);
+      zoomRef.current = nextZoom;
+      setZoomRaw(nextZoom);
+      scheduleViewCommit();
+    },
+    [scheduleViewCommit, updateZoomAnchorFromClientPoint],
+  );
 
   // ── Drag start/end (for CropOverlay) ────────────────────
   const onDragStart = useCallback(() => {}, []);
   const onDragEnd = useCallback(() => {
+    clearTimeout(viewCommitTimeoutRef.current);
     notifyChange();
   }, [notifyChange]);
 
@@ -595,6 +820,12 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
 
     // Zoom
     zoom,
+    setZoom,
+    setZoomAtClientPoint,
+    panZoomByScreenDelta,
+    zoomAnchor,
+    minZoom: MIN_ZOOM,
+    maxZoom: MAX_ZOOM,
     handleWheel,
 
     // Layout

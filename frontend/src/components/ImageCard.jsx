@@ -225,7 +225,25 @@ export const ImageCard = memo(
       Math.abs(nw * Math.sin(angle)) + Math.abs(nh * Math.cos(angle));
 
     const hasCoords = Boolean(coords && cw > 0 && ch > 0);
-    const requiresCanvasPreview = hasCoords || hasTransformPreview;
+    const previewZoomRaw = Number(cropState?.editorView?.zoom);
+    const previewZoom =
+      Number.isFinite(previewZoomRaw) && previewZoomRaw > 1
+        ? previewZoomRaw
+        : 1;
+    const previewAnchorXRaw = Number(cropState?.editorView?.anchor?.x);
+    const previewAnchorYRaw = Number(cropState?.editorView?.anchor?.y);
+    const previewAnchorX = Number.isFinite(previewAnchorXRaw)
+      ? previewAnchorXRaw
+      : 0.5;
+    const previewAnchorY = Number.isFinite(previewAnchorYRaw)
+      ? previewAnchorYRaw
+      : 0.5;
+    const hasViewportPreview =
+      previewZoom > 1.0001 ||
+      Math.abs(previewAnchorX - 0.5) > 0.0001 ||
+      Math.abs(previewAnchorY - 0.5) > 0.0001;
+    const requiresCanvasPreview =
+      hasCoords || hasTransformPreview || hasViewportPreview;
     const previewAspectRatio = useMemo(() => {
       if (hasCoords) return `${cw} / ${ch}`;
       const safeW = Math.max(1, transformedW || nw || 1);
@@ -237,7 +255,8 @@ export const ImageCard = memo(
       const previewCanvas = previewCanvasRef.current;
       const transformedCanvas = transformedCanvasRef.current;
       const meta = transformedMetaRef.current;
-      if (!requiresCanvasPreview || !previewCanvas || !transformedCanvas) return;
+      if (!requiresCanvasPreview || !previewCanvas || !transformedCanvas)
+        return;
 
       const sourceW = hasCoords ? cw : meta.boxW || transformedW || nw || 1;
       const sourceH = hasCoords ? ch : meta.boxH || transformedH || nh || 1;
@@ -251,10 +270,7 @@ export const ImageCard = memo(
       const targetH = Math.max(1, Math.round(rowHeight * effectiveDpr));
       const targetW = Math.max(1, Math.round((sourceW / sourceH) * targetH));
 
-      if (
-        previewCanvas.width !== targetW ||
-        previewCanvas.height !== targetH
-      ) {
+      if (previewCanvas.width !== targetW || previewCanvas.height !== targetH) {
         previewCanvas.width = targetW;
         previewCanvas.height = targetH;
       }
@@ -266,10 +282,61 @@ export const ImageCard = memo(
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
-      let sx = hasCoords ? coords.left * meta.scale : 0;
-      let sy = hasCoords ? coords.top * meta.scale : 0;
-      let sw = hasCoords ? sourceW * meta.scale : transformedCanvas.width;
-      let sh = hasCoords ? sourceH * meta.scale : transformedCanvas.height;
+      const baseLeft = hasCoords ? coords.left : 0;
+      const baseTop = hasCoords ? coords.top : 0;
+      const baseWidth = hasCoords
+        ? sourceW
+        : meta.boxW || transformedW || nw || 1;
+      const baseHeight = hasCoords
+        ? sourceH
+        : meta.boxH || transformedH || nh || 1;
+      const transformedBoxW = Math.max(1, meta.boxW || transformedW || nw || 1);
+      const transformedBoxH = Math.max(1, meta.boxH || transformedH || nh || 1);
+
+      let previewLeft = baseLeft;
+      let previewTop = baseTop;
+      let previewWidth = baseWidth;
+      let previewHeight = baseHeight;
+
+      if (previewZoom > 1.0001) {
+        // Viewport in image-space: the portion of the full transformed image
+        // visible at this zoom level, anchored at the zoom point.
+        const viewW = transformedBoxW / previewZoom;
+        const viewH = transformedBoxH / previewZoom;
+        const viewLeft = (transformedBoxW - viewW) * previewAnchorX;
+        const viewTop = (transformedBoxH - viewH) * previewAnchorY;
+        const viewRight = viewLeft + viewW;
+        const viewBottom = viewTop + viewH;
+
+        // Intersect the zoom viewport with the crop box
+        const cropRight = baseLeft + baseWidth;
+        const cropBottom = baseTop + baseHeight;
+        const clippedLeft = Math.max(baseLeft, viewLeft);
+        const clippedTop = Math.max(baseTop, viewTop);
+        const clippedRight = Math.min(cropRight, viewRight);
+        const clippedBottom = Math.min(cropBottom, viewBottom);
+
+        previewLeft = clippedLeft;
+        previewTop = clippedTop;
+        previewWidth = Math.max(1, clippedRight - clippedLeft);
+        previewHeight = Math.max(1, clippedBottom - clippedTop);
+      }
+
+      previewWidth = Math.max(1, Math.min(previewWidth, transformedBoxW));
+      previewHeight = Math.max(1, Math.min(previewHeight, transformedBoxH));
+      previewLeft = Math.max(
+        0,
+        Math.min(previewLeft, transformedBoxW - previewWidth),
+      );
+      previewTop = Math.max(
+        0,
+        Math.min(previewTop, transformedBoxH - previewHeight),
+      );
+
+      let sx = previewLeft * meta.scale;
+      let sy = previewTop * meta.scale;
+      let sw = previewWidth * meta.scale;
+      let sh = previewHeight * meta.scale;
 
       if (
         !Number.isFinite(sx) ||
@@ -297,6 +364,9 @@ export const ImageCard = memo(
       transformedH,
       nw,
       nh,
+      previewZoom,
+      previewAnchorX,
+      previewAnchorY,
       requiresCanvasPreview,
     ]);
 
