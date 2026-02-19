@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import useStore from '../store/useStore';
+import { toStoredCoordinates } from '../utils/cropCoordinates';
 
 export const useExportLogic = () => {
   const {
@@ -28,7 +29,7 @@ export const useExportLogic = () => {
 
         cropsMap[uniqueName] = {
           originalName: img.name,
-          coordinates: cropEntry?.coordinates || null,
+          coordinates: toStoredCoordinates(cropEntry?.coordinates),
           transforms: cropEntry?.transforms || {
             rotate: 0,
             flip: { horizontal: false, vertical: false },

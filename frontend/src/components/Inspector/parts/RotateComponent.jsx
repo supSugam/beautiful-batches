@@ -47,7 +47,8 @@ export const RotateComponent = forwardRef(
     const recalculate = useCallback(() => {
       if (!barsRef.current) return;
       const width = barsRef.current.clientWidth;
-      const count = width / density;
+      if (width <= 0) return;
+      const count = Math.max(1, width / density);
       const neededLeftBarsCount = Math.max(
         0,
         Math.floor(count / 2) - Math.round((value - from) / step),
@@ -119,6 +120,13 @@ export const RotateComponent = forwardRef(
       return () => window.removeEventListener('resize', handleResize);
     }, [recalculate]);
 
+    useEffect(() => {
+      if (!barsRef.current || typeof ResizeObserver === 'undefined') return undefined;
+      const observer = new ResizeObserver(() => recalculate());
+      observer.observe(barsRef.current);
+      return () => observer.disconnect();
+    }, [recalculate]);
+
     useImperativeHandle(ref, () => ({
       refresh: recalculate,
     }));
@@ -131,7 +139,8 @@ export const RotateComponent = forwardRef(
       onMove: ({ deltaX }) => {
         if (!barsRef.current || !onChange) return;
         const width = barsRef.current.clientWidth;
-        const count = width / density;
+        if (width <= 0) return;
+        const count = Math.max(1, width / density);
         const shift = -(deltaX / width) * count * step;
 
         if (value + shift > to) {

@@ -39,7 +39,7 @@ const TransformControls = ({
           <button
             className="btn-icon-subtle"
             onClick={handleResetTransforms}
-            title="Reset Transforms"
+            title={`Reset Transforms (${Number(rotation || 0).toFixed(1)}°)`}
           >
             <RefreshCw size={12} />
           </button>

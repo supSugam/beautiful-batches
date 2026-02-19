@@ -1,5 +1,5 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { motion, useMotionValue, useSpring, animate } from 'framer-motion';
+import React, { forwardRef, useEffect, useImperativeHandle } from 'react';
+import { motion, useMotionValue, animate } from 'framer-motion';
 
 /**
  * EditorCanvas — renders the image with rotation, flip, and zoom
@@ -25,22 +25,16 @@ const EditorCanvas = forwardRef(function EditorCanvas(
   },
   ref,
 ) {
-  // Keep previous rotation to detect direction and animate properly
-  const prevRotationRef = useRef(rotation);
   const animatedRotation = useMotionValue(rotation);
   const animatedScaleX = useMotionValue(flipH ? -1 : 1);
   const animatedScaleY = useMotionValue(flipV ? -1 : 1);
 
   // Animate rotation changes
   useEffect(() => {
-    const prev = prevRotationRef.current;
-    prevRotationRef.current = rotation;
-
-    // Find shortest rotation path
-    let delta = rotation - prev;
-    if (delta > 180) delta -= 360;
-    if (delta < -180) delta += 360;
-    const target = animatedRotation.get() + delta;
+    const currentValue = animatedRotation.get();
+    let target = rotation;
+    while (target - currentValue > 180) target -= 360;
+    while (target - currentValue < -180) target += 360;
 
     animate(animatedRotation, target, {
       type: 'spring',
@@ -48,7 +42,7 @@ const EditorCanvas = forwardRef(function EditorCanvas(
       damping: 28,
       mass: 0.7,
     });
-  }, [rotation]);
+  }, [rotation, animatedRotation]);
 
   // Animate flip changes
   useEffect(() => {
@@ -77,10 +71,9 @@ const EditorCanvas = forwardRef(function EditorCanvas(
   // already reflect the rotated bounding box. We render the img at original
   // aspect, sized so that after rotation, it fills exactly displayW × displayH.
 
-  // Image element size (before rotation): if rotated 90/270, we swap the display dims
-  const isOrthogonal = rotation % 180 === 90;
-  const imgW = isOrthogonal ? displayH : displayW;
-  const imgH = isOrthogonal ? displayW : displayH;
+  // Draw image in natural aspect at fit scale, then rotate around center.
+  const imgW = naturalWidth * scale;
+  const imgH = naturalHeight * scale;
 
   // Center of the image area
   const centerX = offsetX + displayW / 2;

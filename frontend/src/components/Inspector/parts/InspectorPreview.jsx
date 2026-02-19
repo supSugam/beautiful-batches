@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import EditorCanvas from './EditorCanvas';
 import CropOverlay from './CropOverlay';
 
@@ -65,11 +65,8 @@ const InspectorPreview = ({ isProcessing, imageObjectUrl, editor }) => {
 
       <CropOverlay
         crop={editor.crop}
-        effectiveWidth={editor.effectiveWidth}
-        effectiveHeight={editor.effectiveHeight}
         fitLayout={editor.fitLayout}
         zoom={editor.zoom}
-        aspect={editor.aspect}
         onCropMove={editor.moveCrop}
         onCropResize={editor.resizeCrop}
         onDragStart={editor.onDragStart}

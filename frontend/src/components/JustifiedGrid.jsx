@@ -3,7 +3,19 @@ import { RowsPhotoAlbum } from 'react-photo-album';
 import 'react-photo-album/rows.css';
 import { ImageCard } from './ImageCard';
 import useStore from '../store/useStore';
+import { normalizeStoredCoordinates } from '../utils/cropCoordinates';
 import './JustifiedGrid.css';
+
+const getRotatedRatio = (width, height, rotation) => {
+  const safeWidth = Math.max(1, Number(width) || 1);
+  const safeHeight = Math.max(1, Number(height) || 1);
+  const radians = ((Number(rotation) || 0) * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(radians));
+  const sin = Math.abs(Math.sin(radians));
+  const rotatedWidth = safeWidth * cos + safeHeight * sin;
+  const rotatedHeight = safeWidth * sin + safeHeight * cos;
+  return rotatedWidth / Math.max(1, rotatedHeight);
+};
 
 const JustifiedGrid = ({
   images,
@@ -28,15 +40,17 @@ const JustifiedGrid = ({
       let ratio = img.naturalRatio || 1;
 
       // 1. If we have active crop coordinates, use them for the aspect ratio of the card
-      if (cropEntry?.coordinates) {
-        ratio = cropEntry.coordinates.width / cropEntry.coordinates.height;
+      const coordinates = normalizeStoredCoordinates(cropEntry?.coordinates);
+      if (coordinates) {
+        ratio = coordinates.width / coordinates.height;
       }
       // 2. Otherwise, fall back to rotation-based swap logic if coordinates aren't set yet
       else if (cropEntry?.transforms?.rotate) {
-        const rotation = Math.abs(cropEntry.transforms.rotate);
-        if (rotation % 180 === 90) {
-          ratio = 1 / ratio;
-        }
+        ratio = getRotatedRatio(
+          img.naturalWidth,
+          img.naturalHeight,
+          cropEntry.transforms.rotate,
+        );
       }
       const stableRatio =
         Number.isFinite(ratio) && ratio > 0

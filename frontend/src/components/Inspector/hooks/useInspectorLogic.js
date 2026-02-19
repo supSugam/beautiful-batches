@@ -1,6 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useImageEditor } from './useImageEditor';
 
+const normalizeToSignedRotation = (rotation) => {
+  const normalized = ((Number(rotation) % 360) + 360) % 360;
+  return normalized > 180 ? normalized - 360 : normalized;
+};
+
+const getRotationAnchor = (signedRotation) => {
+  let anchor = Math.trunc(signedRotation / 90) * 90;
+  const fine = signedRotation - anchor;
+  if (fine > 45) anchor += 90;
+  if (fine < -45) anchor -= 90;
+  return anchor;
+};
+
+const getFineRotation = (rotation) => {
+  const signed = normalizeToSignedRotation(rotation);
+  return signed - getRotationAnchor(signed);
+};
+
 /**
  * useInspectorLogic — bridges useImageEditor with the Inspector UI and Zustand store.
  *
@@ -133,19 +151,12 @@ export function useInspectorLogic({
   }, [editor]);
 
   // ── Rotation ────────────────────────────────────────────
-
-  // Fine rotation value for the slider (separate from the 90° steps)
-  const [fineRotation, setFineRotation] = useState(0);
-
-  useEffect(() => {
-    // Reset fine rotation on image switch
-    setFineRotation(0);
-  }, [cropperKey]);
+  const fineRotation = useMemo(() => {
+    return getFineRotation(editor.rotation);
+  }, [editor.rotation]);
 
   const handleRotate = useCallback(
     (delta) => {
-      // ±90° step rotation — reset fine rotation
-      setFineRotation(0);
       editor.rotateBy(delta);
     },
     [editor],
@@ -153,10 +164,6 @@ export function useInspectorLogic({
 
   const handleRotateDelta = useCallback(
     (delta) => {
-      setFineRotation((prev) => {
-        const next = Math.max(-45, Math.min(45, prev + delta));
-        return next;
-      });
       editor.setRotationDelta(delta);
     },
     [editor],
@@ -180,13 +187,11 @@ export function useInspectorLogic({
 
   // ── Reset transforms ───────────────────────────────────
   const handleResetTransforms = useCallback(() => {
-    setFineRotation(0);
     editor.resetTransforms();
   }, [editor]);
 
   // ── Reset draft (full reset) ────────────────────────────
   const handleResetDraft = useCallback(() => {
-    setFineRotation(0);
     editor.resetAll();
     setManualW('');
     setManualH('');

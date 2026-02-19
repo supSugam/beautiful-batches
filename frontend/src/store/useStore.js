@@ -1,4 +1,8 @@
 import { create } from 'zustand';
+import {
+  normalizeStoredCoordinates,
+  toStoredCoordinates,
+} from '../utils/cropCoordinates';
 
 const yieldToMainThread = () =>
   new Promise((resolve) => {
@@ -73,8 +77,9 @@ const quantizeGridRatio = (value) =>
   Math.round(Number(value || 0) * GRID_RATIO_PRECISION) / GRID_RATIO_PRECISION;
 
 const getGridRatioSignature = (entry) => {
-  const width = entry?.coordinates?.width;
-  const height = entry?.coordinates?.height;
+  const coordinates = normalizeStoredCoordinates(entry?.coordinates);
+  const width = coordinates?.width;
+  const height = coordinates?.height;
   if (!Number.isFinite(width) || !Number.isFinite(height) || height === 0) {
     return null;
   }
@@ -127,6 +132,18 @@ const normalizeRotation = (value) => {
   return normalized > 359.999 ? 0 : normalized;
 };
 
+const getRotatedBounds = (width, height, rotation) => {
+  const safeWidth = Math.max(1, Number(width) || 1);
+  const safeHeight = Math.max(1, Number(height) || 1);
+  const radians = (normalizeRotation(rotation) * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(radians));
+  const sin = Math.abs(Math.sin(radians));
+  return {
+    width: safeWidth * cos + safeHeight * sin,
+    height: safeWidth * sin + safeHeight * cos,
+  };
+};
+
 const normalizePaddingValue = (value) => {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.round(value));
@@ -176,7 +193,7 @@ const hasMeaningfulImageChange = (entry, image) => {
   );
   if (hasAnyCornerRadius(normalizedCornerRadius)) return true;
 
-  const coords = entry?.coordinates;
+  const coords = normalizeStoredCoordinates(entry?.coordinates);
   if (!coords) return false;
 
   const baselineWidth = Math.max(
@@ -194,6 +211,14 @@ const hasMeaningfulImageChange = (entry, image) => {
   if (!approxEqual(coords.height, baselineHeight)) return true;
 
   return false;
+};
+
+const normalizeCropEntry = (entry) => {
+  if (!entry || typeof entry !== 'object') return entry;
+  return {
+    ...entry,
+    coordinates: toStoredCoordinates(entry.coordinates),
+  };
 };
 
 const SESSION_MODIFIED_THROTTLE_MS = 750;
@@ -349,9 +374,10 @@ const useStore = create((set, get) => ({
       // Fine here because subscribers select by key (`cropData.get(id)`), not by map identity.
       const next = state.cropData;
       const previousEntry = next.get(id);
-      next.set(id, coords);
+      const normalizedCoords = normalizeCropEntry(coords);
+      next.set(id, normalizedCoords);
       const image = state.images.find((img) => img.id === id);
-      const isMeaningfulChange = hasMeaningfulImageChange(coords, image);
+      const isMeaningfulChange = hasMeaningfulImageChange(normalizedCoords, image);
       const now = getNowTs();
       const previousModifiedAt = state.sessionModifiedAt.get(id) || 0;
       let nextSessionModifiedAt = state.sessionModifiedAt;
@@ -372,7 +398,7 @@ const useStore = create((set, get) => ({
       }
       const shouldBumpLayoutVersion = hasGridLayoutAffectingChange(
         previousEntry,
-        coords,
+        normalizedCoords,
       );
       if (!shouldBumpLayoutVersion) {
         return {
@@ -392,6 +418,8 @@ const useStore = create((set, get) => ({
     const { images, cropData } = get();
     const sourceData = cropData.get(sourceId);
     if (!sourceData) return;
+    const sourceCoordinates = normalizeStoredCoordinates(sourceData.coordinates);
+    if (!sourceCoordinates) return;
 
     const sourceImg = images.find((img) => img.id === sourceId);
     if (!sourceImg) return;
@@ -401,18 +429,18 @@ const useStore = create((set, get) => ({
       flip: { horizontal: false, vertical: false },
     };
     const { rotate } = transforms;
-    const isRotated90 = rotate % 180 === 90;
-    const sourceW = isRotated90
-      ? sourceImg.naturalHeight
-      : sourceImg.naturalWidth;
-    const sourceH = isRotated90
-      ? sourceImg.naturalWidth
-      : sourceImg.naturalHeight;
+    const sourceBounds = getRotatedBounds(
+      sourceImg.naturalWidth,
+      sourceImg.naturalHeight,
+      rotate,
+    );
+    const sourceW = sourceBounds.width;
+    const sourceH = sourceBounds.height;
 
-    const relLeft = sourceData.coordinates.left / sourceW;
-    const relTop = sourceData.coordinates.top / sourceH;
-    const relWidth = sourceData.coordinates.width / sourceW;
-    const relHeight = sourceData.coordinates.height / sourceH;
+    const relLeft = sourceCoordinates.left / sourceW;
+    const relTop = sourceCoordinates.top / sourceH;
+    const relWidth = sourceCoordinates.width / sourceW;
+    const relHeight = sourceCoordinates.height / sourceH;
 
     set((state) => {
       // Same in-place update strategy as setCropChange for bulk operations.
@@ -423,12 +451,13 @@ const useStore = create((set, get) => ({
         const targetImg = images.find((img) => img.id === id);
         if (!targetImg) return;
 
-        const targetW = isRotated90
-          ? targetImg.naturalHeight
-          : targetImg.naturalWidth;
-        const targetH = isRotated90
-          ? targetImg.naturalWidth
-          : targetImg.naturalHeight;
+        const targetBounds = getRotatedBounds(
+          targetImg.naturalWidth,
+          targetImg.naturalHeight,
+          rotate,
+        );
+        const targetW = targetBounds.width;
+        const targetH = targetBounds.height;
 
         next.set(id, {
           ...sourceData,
@@ -522,8 +551,9 @@ const useStore = create((set, get) => ({
 
       entries.forEach(([id, value]) => {
         const previousEntry = nextCropData.get(id);
-        nextCropData.set(id, value);
-        if (hasGridLayoutAffectingChange(previousEntry, value)) {
+        const normalizedValue = normalizeCropEntry(value);
+        nextCropData.set(id, normalizedValue);
+        if (hasGridLayoutAffectingChange(previousEntry, normalizedValue)) {
           shouldBumpLayoutVersion = true;
         }
       });

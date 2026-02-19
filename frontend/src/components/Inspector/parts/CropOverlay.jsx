@@ -18,11 +18,8 @@ const HANDLES = [
 
 const CropOverlay = ({
   crop,
-  effectiveWidth,
-  effectiveHeight,
   fitLayout,
   zoom = 1,
-  aspect,
   onCropMove,
   onCropResize,
   onDragStart,
@@ -127,16 +124,48 @@ const CropOverlay = ({
 
   const isActive = isDragging || isResizing;
 
-  const dimPaths = getDimClipPath(
-    offsetX,
-    offsetY,
-    displayW,
-    displayH,
-    screenX,
-    screenY,
-    screenW,
-    screenH,
-  );
+  const imageLeft = offsetX;
+  const imageTop = offsetY;
+  const imageRight = offsetX + displayW;
+  const imageBottom = offsetY + displayH;
+
+  const cropLeft = Math.max(imageLeft, Math.min(screenX, imageRight));
+  const cropTop = Math.max(imageTop, Math.min(screenY, imageBottom));
+  const cropRight = Math.max(cropLeft, Math.min(screenX + screenW, imageRight));
+  const cropBottom = Math.max(cropTop, Math.min(screenY + screenH, imageBottom));
+  const cropWidth = cropRight - cropLeft;
+  const cropHeight = cropBottom - cropTop;
+
+  const dimRects = [
+    {
+      key: 'top',
+      left: imageLeft,
+      top: imageTop,
+      width: displayW,
+      height: Math.max(0, cropTop - imageTop),
+    },
+    {
+      key: 'left',
+      left: imageLeft,
+      top: cropTop,
+      width: Math.max(0, cropLeft - imageLeft),
+      height: cropHeight,
+    },
+    {
+      key: 'right',
+      left: cropRight,
+      top: cropTop,
+      width: Math.max(0, imageRight - cropRight),
+      height: cropHeight,
+    },
+    {
+      key: 'bottom',
+      left: imageLeft,
+      top: cropBottom,
+      width: displayW,
+      height: Math.max(0, imageBottom - cropBottom),
+    },
+  ];
 
   return (
     <div
@@ -152,20 +181,25 @@ const CropOverlay = ({
       }}
     >
       {/* Dim overlay outside crop */}
-      <div
-        className="crop-dim-overlay"
-        style={{
-          position: 'absolute',
-          top: offsetY,
-          left: offsetX,
-          width: displayW,
-          height: displayH,
-          background: 'rgba(0,0,0,0.55)',
-          clipPath: dimPaths,
-          pointerEvents: 'none',
-          transition: isActive ? 'none' : 'clip-path 0.1s ease',
-        }}
-      />
+      {dimRects.map((rect) => {
+        if (rect.width <= 0 || rect.height <= 0) return null;
+        return (
+          <div
+            key={rect.key}
+            className="crop-dim-overlay"
+            style={{
+              position: 'absolute',
+              left: rect.left,
+              top: rect.top,
+              width: rect.width,
+              height: rect.height,
+              background: 'rgba(0,0,0,0.55)',
+              pointerEvents: 'none',
+              transition: isActive ? 'none' : 'all 0.1s ease',
+            }}
+          />
+        );
+      })}
 
       {/* Center guide lines */}
       <div
@@ -253,29 +287,5 @@ const CropOverlay = ({
     </div>
   );
 };
-
-/**
- * Build CSS clip-path to dim everything EXCEPT the crop rectangle.
- * Uses polygon with an inner cutout (even-odd fill rule).
- */
-function getDimClipPath(ox, oy, ow, oh, cx, cy, cw, ch) {
-  const rx = cx - ox;
-  const ry = cy - oy;
-  const rr = rx + cw;
-  const rb = ry + ch;
-
-  return `polygon(
-    0 0,
-    ${ow}px 0,
-    ${ow}px ${oh}px,
-    0 ${oh}px,
-    0 0,
-    ${rx}px ${ry}px,
-    ${rx}px ${rb}px,
-    ${rr}px ${rb}px,
-    ${rr}px ${ry}px,
-    ${rx}px ${ry}px
-  )`;
-}
 
 export default React.memo(CropOverlay);

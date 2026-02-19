@@ -1,3 +1,7 @@
+.telegram-rotate-component {
+  width: 100%;
+}
+
 .telegram-rotate-component__bars {
   cursor: grab;
   width: 100%;
@@ -6,8 +10,9 @@
   display: flex;
   min-width: 0;
   position: relative;
-  height: 15px;
+  height: 22px;
   touch-action: none; /* Important for dragging on touch devices */
+  overflow: visible;
 }
 
 .telegram-rotate-component__bars--dragging {

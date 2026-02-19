@@ -9,6 +9,7 @@ import React, {
 import { motion } from 'framer-motion';
 import { X, Check } from 'lucide-react';
 import useStore from '../store/useStore';
+import { normalizeStoredCoordinates } from '../utils/cropCoordinates';
 import './ImageCard.css';
 
 const MAX_TRANSFORM_PREVIEW_DIM = 1536;
@@ -25,7 +26,6 @@ const EMPTY_CORNER_RADIUS = Object.freeze({
   bottomLeft: 0,
 });
 const DEFAULT_PADDING_FILL_VALUE = '#ffffff';
-const PREVIEW_ROTATE_STEP = 0.5;
 const MAX_PADDING_PX = 640;
 const MAX_CORNER_RADIUS_PX = 360;
 const INNER_PADDING_SIDE_RATIO = 0.4;
@@ -137,7 +137,7 @@ export const ImageCard = memo(
     }, [image.id, onSelect, selected]);
 
     // Live Crop Visuals
-    const coords = cropState?.coordinates;
+    const coords = normalizeStoredCoordinates(cropState?.coordinates);
     const cw = coords?.width;
     const ch = coords?.height;
     const previewPaddingMode =
@@ -213,9 +213,7 @@ export const ImageCard = memo(
     // Transformed dimensions (iw/ih are the size of the image AFTER rotation/flip)
     const nw = image.naturalWidth;
     const nh = image.naturalHeight;
-    const rotate = transforms.rotate || 0;
-    const previewRotate =
-      Math.round(rotate / PREVIEW_ROTATE_STEP) * PREVIEW_ROTATE_STEP;
+    const previewRotate = Number(transforms.rotate) || 0;
     const hasTransformPreview =
       Math.abs(previewRotate) > 0.0001 ||
       transforms.flip.horizontal ||
