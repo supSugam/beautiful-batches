@@ -89,8 +89,8 @@ export function useInspectorLogic({
   cropStateRef.current = cropState;
 
   // ── Derived pixel dimensions ────────────────────────────
-  const currentPixelWidth = Math.round(editor.crop.w);
-  const currentPixelHeight = Math.round(editor.crop.h);
+  const currentPixelWidth = Math.round(editor.effectiveCrop.w);
+  const currentPixelHeight = Math.round(editor.effectiveCrop.h);
 
   // ── Manual dimension input state ────────────────────────
   const [manualW, setManualW] = useState('');
@@ -186,6 +186,10 @@ export function useInspectorLogic({
     },
     [editor],
   );
+
+  const handleFillZoom = useCallback(() => {
+    editor.fillToAvoidBlanks();
+  }, [editor]);
 
   // ── Reset transforms ───────────────────────────────────
   const handleResetTransforms = useCallback(() => {
@@ -400,6 +404,7 @@ export function useInspectorLogic({
     handleRotateDelta,
     handleRotateEnd,
     handleFlip,
+    handleFillZoom,
     handleResetTransforms,
 
     // Padding

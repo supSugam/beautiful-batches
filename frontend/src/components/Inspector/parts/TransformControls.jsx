@@ -5,6 +5,7 @@ import {
   FlipHorizontal,
   FlipVertical,
   RefreshCw,
+  Maximize,
 } from 'lucide-react';
 import { RotateComponent } from './RotateComponent';
 
@@ -29,6 +30,7 @@ const TransformControls = ({
   handleRotateEnd,
   flip,
   handleFlip,
+  handleFillZoom,
   handleResetTransforms,
 }) => {
   return (
@@ -75,6 +77,13 @@ const TransformControls = ({
             title="Flip Vertical"
           >
             <FlipVertical size={16} />
+          </button>
+          <button
+            className="btn-icon-box"
+            onClick={handleFillZoom}
+            title="Fill to hide blanks"
+          >
+            <Maximize size={16} />
           </button>
         </div>
 

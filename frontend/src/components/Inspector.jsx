@@ -158,6 +158,7 @@ export const Inspector = ({
               handleRotateEnd={logic.handleRotateEnd}
               flip={logic.flip}
               handleFlip={logic.handleFlip}
+              handleFillZoom={logic.handleFillZoom}
               handleResetTransforms={logic.handleResetTransforms}
             />
           </section>

@@ -193,9 +193,20 @@ const clampCropWithAspect = (crop, bounds, ratio, handleId, startCrop) => {
  * Returns the full editor API consumed by InspectorPreview, CropOverlay,
  * and useInspectorLogic.
  */
-export function useImageEditor({ naturalWidth, naturalHeight, initialState, onChange }) {
-  const initialRotation = normalizeRotation(initialState?.transforms?.rotate || 0);
-  const initialBounds = getRotatedBounds(naturalWidth, naturalHeight, initialRotation);
+export function useImageEditor({
+  naturalWidth,
+  naturalHeight,
+  initialState,
+  onChange,
+}) {
+  const initialRotation = normalizeRotation(
+    initialState?.transforms?.rotate || 0,
+  );
+  const initialBounds = getRotatedBounds(
+    naturalWidth,
+    naturalHeight,
+    initialRotation,
+  );
   const initialZoom = clampZoom(initialState?.editorView?.zoom ?? MIN_ZOOM);
   const initialZoomAnchor = {
     x: toFiniteAnchor(initialState?.editorView?.anchor?.x, 0.5),
@@ -203,11 +214,15 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
   };
 
   // ── Container size ──────────────────────────────────────
-  const [containerSize, setContainerSizeState] = useState({ width: 0, height: 0 });
+  const [containerSize, setContainerSizeState] = useState({
+    width: 0,
+    height: 0,
+  });
 
   const setContainerSize = useCallback(({ width, height }) => {
     setContainerSizeState((previous) => {
-      if (previous.width === width && previous.height === height) return previous;
+      if (previous.width === width && previous.height === height)
+        return previous;
       return { width, height };
     });
   }, []);
@@ -227,7 +242,8 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
   });
 
   const getBoundsForRotation = useCallback(
-    (rotationValue) => getRotatedBounds(naturalWidth, naturalHeight, rotationValue),
+    (rotationValue) =>
+      getRotatedBounds(naturalWidth, naturalHeight, rotationValue),
     [naturalWidth, naturalHeight],
   );
 
@@ -248,6 +264,18 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
     );
     return clampCropToBounds(initialCrop, initialBounds);
   });
+
+  // ── Effective (Visual) Crop ──────────────────────────────
+  // This accounts for the current zoom and pan (zoomAnchor) to define
+  // the actual region of the image being selected.
+  const effectiveCrop = useMemo(() => {
+    const w = crop.w / zoom;
+    const h = crop.h / zoom;
+    // The visual top-left of the image inside the crop frame
+    const x = crop.x + zoomAnchor.x * crop.w * (1 - 1 / zoom);
+    const y = crop.y + zoomAnchor.y * crop.h * (1 - 1 / zoom);
+    return { x, y, w, h };
+  }, [crop, zoom, zoomAnchor]);
 
   // ── Refs for notify callbacks ───────────────────────────
   const onChangeRef = useRef(onChange);
@@ -273,8 +301,11 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
   const notifyChange = useCallback(() => {
     clearTimeout(notifyTimeoutRef.current);
     notifyTimeoutRef.current = setTimeout(() => {
+      // We send the EFFECTIVE (visual) coordinates to the store so the
+      // backend and gallery view see exactly what the user sees in the "safe area".
+      // We also reset zoom to 1 in the stored state to avoid "double zoom" on reload.
       onChangeRef.current?.({
-        coordinates: toStoredCoordinates(cropRef.current),
+        coordinates: toStoredCoordinates(effectiveCropRef.current),
         transforms: {
           rotate: rotationRef.current,
           flip: {
@@ -284,12 +315,15 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
         },
         aspect: aspectRef.current,
         editorView: {
-          zoom: zoomRef.current,
-          anchor: zoomAnchorRef.current,
+          zoom: 1, // Consumed by coordinates
+          anchor: { x: 0.5, y: 0.5 },
         },
       });
     }, 16);
   }, []);
+
+  const effectiveCropRef = useRef(effectiveCrop);
+  effectiveCropRef.current = effectiveCrop;
 
   useEffect(() => {
     return () => {
@@ -317,7 +351,10 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
     const availableHeight = ch - FIT_PADDING_PX * 2;
     if (availableWidth <= 0 || availableHeight <= 0) return null;
 
-    const scale = Math.min(availableWidth / effectiveWidth, availableHeight / effectiveHeight);
+    const scale = Math.min(
+      availableWidth / effectiveWidth,
+      availableHeight / effectiveHeight,
+    );
     const displayW = effectiveWidth * scale;
     const displayH = effectiveHeight * scale;
     const offsetX = (cw - displayW) / 2;
@@ -330,7 +367,12 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
       displayW,
       displayH,
     };
-  }, [containerSize.width, containerSize.height, effectiveWidth, effectiveHeight]);
+  }, [
+    containerSize.width,
+    containerSize.height,
+    effectiveWidth,
+    effectiveHeight,
+  ]);
 
   // ── Center snap detection ───────────────────────────────
   const centerStatus = useMemo(() => {
@@ -420,16 +462,20 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
 
   const setCropDimensions = useCallback(
     (w, h) => {
+      const z = zoomRef.current;
+      const targetW = w * z;
+      const targetH = h * z;
+
       const bounds = getBoundsForRotation(rotationRef.current);
       setCropRaw((previous) => {
         const centerX = previous.x + previous.w / 2;
         const centerY = previous.y + previous.h / 2;
         return clampCropToBounds(
           {
-            x: centerX - w / 2,
-            y: centerY - h / 2,
-            w,
-            h,
+            x: centerX - targetW / 2,
+            y: centerY - targetH / 2,
+            w: targetW,
+            h: targetH,
           },
           bounds,
         );
@@ -754,6 +800,37 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
     [crop.h, crop.w, crop.x, crop.y, fitLayout, scheduleViewCommit, zoom],
   );
 
+  const fillToAvoidBlanks = useCallback(() => {
+    const rad = (rotation * Math.PI) / 180;
+    const absCos = Math.abs(Math.cos(rad));
+    const absSin = Math.abs(Math.sin(rad));
+
+    // Wc, Hc are the dimensions of the crop box in the rotated frame (unzoomed pixels)
+    const wc = crop.w;
+    const hc = crop.h;
+
+    // Minimum zoom required to cover (wc, hc) with a rotated image of (naturalWidth, naturalHeight)
+    // Formula: s * w >= Wc*|cos| + Hc*|sin| and s * h >= Wc*|sin| + Hc*|cos|
+    const z = Math.max(
+      (wc * absCos + hc * absSin) / Math.max(1, naturalWidth),
+      (wc * absSin + hc * absCos) / Math.max(1, naturalHeight),
+    );
+
+    // Apply zoom and center the view
+    setZoom(z);
+    setZoomAnchorRaw({ x: 0.5, y: 0.5 });
+    zoomAnchorRef.current = { x: 0.5, y: 0.5 };
+    scheduleViewCommit();
+  }, [
+    crop.h,
+    crop.w,
+    naturalHeight,
+    naturalWidth,
+    rotation,
+    setZoom,
+    scheduleViewCommit,
+  ]);
+
   const handleWheel = useCallback(
     (event) => {
       if (!event) return;
@@ -797,6 +874,7 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
 
     // Crop
     crop,
+    effectiveCrop,
     moveCrop,
     resizeCrop,
     setCropDimensions,
@@ -823,6 +901,7 @@ export function useImageEditor({ naturalWidth, naturalHeight, initialState, onCh
     setZoom,
     setZoomAtClientPoint,
     panZoomByScreenDelta,
+    fillToAvoidBlanks,
     zoomAnchor,
     minZoom: MIN_ZOOM,
     maxZoom: MAX_ZOOM,
