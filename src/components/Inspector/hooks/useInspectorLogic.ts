@@ -60,17 +60,6 @@ export function useInspectorLogic({
   const naturalWidth = image?.naturalWidth || 1;
   const naturalHeight = image?.naturalHeight || 1;
 
-  // ── Track image switches ────────────────────────────────
-  const [cropperKey, setCropperKey] = useState(0);
-  const prevImageIdRef = useRef(imageId);
-
-  useEffect(() => {
-    if (imageId && imageId !== prevImageIdRef.current) {
-      prevImageIdRef.current = imageId;
-      setCropperKey((k) => k + 1);
-    }
-  }, [imageId]);
-
   // ── Build initial state from cropState ──────────────────
   const initialState = useMemo(() => {
     if (!cropState) return null;
@@ -83,10 +72,11 @@ export function useInspectorLogic({
       aspect: cropState.aspect ?? null,
       editorView: cropState.editorView || null,
     };
-  }, [cropperKey]); // Only re-derive on image switch, not every cropState change
+  }, [imageId]); // Re-derive exactly when the image ID changes
 
   // ── Editor engine ───────────────────────────────────────
   const editor = useImageEditor({
+    imageId,
     naturalWidth,
     naturalHeight,
     initialState,
@@ -247,7 +237,7 @@ export function useInspectorLogic({
 
   useEffect(() => {
     setOutputWidth(cropState?.outputWidth ?? null);
-  }, [cropperKey]);
+  }, [imageId]);
 
   const handleResizeToggle = useCallback(() => {
     const nextValue = outputWidth ? null : currentPixelWidth;
@@ -285,15 +275,14 @@ export function useInspectorLogic({
   // ── Padding & Corner Radius (string format: "T R B L") ──
   // PaddingSection expects plain strings like "0 0 0 0" or "10", not objects
 
-  const [paddingInput, setPaddingInput] = useState(
-    () => (typeof cropState?.padding === 'string' ? cropState.padding : ''),
+  const [paddingInput, setPaddingInput] = useState(() =>
+    typeof cropState?.padding === 'string' ? cropState.padding : '',
   );
   const [paddingMode, setPaddingMode] = useState(
     () => (cropState?.paddingMode || 'outer') as PaddingMode,
   );
-  const [cornerRadiusInput, setCornerRadiusInput] = useState(
-    () =>
-      typeof cropState?.cornerRadius === 'string' ? cropState.cornerRadius : '',
+  const [cornerRadiusInput, setCornerRadiusInput] = useState(() =>
+    typeof cropState?.cornerRadius === 'string' ? cropState.cornerRadius : '',
   );
   const [paddingFillType, setPaddingFillType] = useState(
     () => (cropState?.paddingFillType || 'empty') as PaddingFillType,
@@ -305,17 +294,20 @@ export function useInspectorLogic({
     () => cropState?.paddingImageUrl || null,
   );
 
-  // Sync on image switch
   useEffect(() => {
-    setPaddingInput(typeof cropState?.padding === 'string' ? cropState.padding : '');
+    setPaddingInput(
+      typeof cropState?.padding === 'string' ? cropState.padding : '',
+    );
     setPaddingMode((cropState?.paddingMode || 'outer') as PaddingMode);
     setCornerRadiusInput(
       typeof cropState?.cornerRadius === 'string' ? cropState.cornerRadius : '',
     );
-    setPaddingFillType((cropState?.paddingFillType || 'empty') as PaddingFillType);
+    setPaddingFillType(
+      (cropState?.paddingFillType || 'empty') as PaddingFillType,
+    );
     setPaddingFillValue(cropState?.paddingFillValue || '');
     setPaddingImageUrl(cropState?.paddingImageUrl || null);
-  }, [cropperKey]);
+  }, [imageId]);
 
   const syncToStore = useCallback(
     (partialUpdate: Partial<CropEntry>) => {
@@ -408,7 +400,6 @@ export function useInspectorLogic({
   // ── Return everything Inspector needs ───────────────────
   return {
     editor,
-    cropperKey,
     isProcessing,
 
     // Crop state

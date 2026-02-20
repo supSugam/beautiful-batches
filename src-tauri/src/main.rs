@@ -12,6 +12,18 @@ use std::path::PathBuf;
 use tauri::http::Response;
 use tauri::Manager;
 
+fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    for part in query.split('&') {
+        let mut split = part.splitn(2, '=');
+        let candidate_key = split.next().unwrap_or("");
+        if candidate_key != key {
+            continue;
+        }
+        return Some(split.next().unwrap_or(""));
+    }
+    None
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -44,7 +56,15 @@ fn main() {
                 .unwrap_or_else(|_| path_part.to_string().into())
                 .into_owned();
 
-            let is_thumbnail = query_part.map_or(false, |q| q.contains("thumbnail=true"));
+            let is_thumbnail = query_part
+                .and_then(|q| query_value(q, "thumbnail"))
+                .is_some_and(|value| value == "true" || value == "1");
+            let thumb_size = query_part
+                .and_then(|q| {
+                    query_value(q, "thumbSize")
+                        .or_else(|| query_value(q, "size"))
+                })
+                .and_then(|value| value.parse::<u32>().ok());
 
             std::thread::spawn(move || {
                 let file_path = PathBuf::from(if decoded_path.starts_with('/') {
@@ -54,7 +74,7 @@ fn main() {
                 });
 
                 let result = if is_thumbnail {
-                    thumbnails::get_or_create_thumbnail(&app_handle, &file_path)
+                    thumbnails::get_or_create_thumbnail(&app_handle, &file_path, thumb_size)
                 } else {
                     std::fs::read(&file_path).map_err(|e| e.to_string())
                 };
@@ -90,6 +110,10 @@ fn main() {
             commands::process_bulk_export,
             commands::pick_and_scan_root,
             commands::load_saved_roots_and_scan,
+            commands::load_saved_roots_metadata,
+            commands::scan_root_by_path,
+            commands::scan_folder_by_path_command,
+            commands::list_directory_children_by_path,
             commands::remove_saved_root,
             commands::clear_saved_roots,
         ])

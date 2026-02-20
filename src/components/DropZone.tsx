@@ -3,7 +3,6 @@ import { Upload, FolderOpen, Images } from 'lucide-react';
 import {
   ACCEPTED_IMAGE_TYPES,
   imagesFromFileList,
-  loadImagesFromSavedDirectory,
   pickImagesFromDirectory,
 } from '../utils/directoryPicker';
 import type { RawUploadImage } from '../types/app';
@@ -36,17 +35,6 @@ export function DropZone({ onImagesLoaded }: DropZoneProps) {
   const handleSelectFolder = async () => {
     setStatus('Opening folder...');
     try {
-      const saved = await loadImagesFromSavedDirectory({
-        promptForPermission: true,
-      });
-      if (saved.supported && saved.available && saved.granted) {
-        if (saved.images.length > 0) {
-          setStatus('');
-          onImagesLoaded(saved.images);
-          return;
-        }
-      }
-
       const result = await pickImagesFromDirectory();
       if (!result.supported) {
         setStatus('');

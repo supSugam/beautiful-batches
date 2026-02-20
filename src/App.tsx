@@ -1,23 +1,32 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  ACCEPTED_IMAGE_TYPES,
+  clearSavedDirectoryHandle,
+  clearSavedDirectoryHandleIfMatches,
+  listDirectoryChildren,
+  loadSavedRootPaths,
+  removeSavedRootByPath,
+  scanImagesFromFolderPath,
+} from './utils/directoryPicker';
 import { DropZone } from './components/DropZone';
 import Toolbar from './components/Toolbar/Toolbar';
 import ProgressBar from './components/common/ProgressBar';
 import MainLayout from './layouts/MainLayout';
 import useStore from './store/useStore';
-import { useImageUpload } from './hooks/useImageUpload';
-import { useExportLogic } from './hooks/useExportLogic';
-import {
-  ACCEPTED_IMAGE_TYPES,
-  clearSavedDirectoryHandle,
-  clearSavedDirectoryHandleIfMatches,
-  removeSavedRootByPath,
-} from './utils/directoryPicker';
 import {
   loadFolderDraftPayloads,
   loadFolderDraftSummaries,
   persistFolderDrafts,
   resolveDraftsForImages,
 } from './utils/editDraftPersistence';
+import { useImageUpload } from './hooks/useImageUpload';
+import { useExportLogic } from './hooks/useExportLogic';
 import type {
   DirectoryHandle,
   DirectoryRoot,
@@ -28,23 +37,38 @@ import type {
 import './App.css';
 
 const EXPLORER_OPEN_STORAGE_KEY = 'bb-explorer-open';
+const EXPANDED_PATHS_STORAGE_KEY = 'bb-expanded-paths';
 const ACTIVE_FOLDER_STORAGE_KEY = 'bb-active-folder-path';
+const LINKED_ROOT_NAMES_STORAGE_KEY = 'bb-linked-root-names';
 const ALL_FOLDERS_VALUE = '__all__';
+const RECURSIVE_SCAN_STORAGE_KEY = 'bb-recursive-scan';
+const FOLDER_INITIAL_IMAGE_BATCH = 240;
+const FOLDER_LOAD_MORE_BATCH = 180;
 const nameCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: 'base',
 });
 
-type DirectoryReadResult = {
-  directoryName?: string;
-  images?: Array<{ relativePath?: string }>;
-  directoryHandle?: DirectoryHandle | null;
-  rootPaths?: string[];
+const normalizePath = (value: unknown): string =>
+  String(value || '').replace(/\\/g, '/');
+const getFolderNameFromPath = (value: unknown): string => {
+  const normalized = normalizePath(value);
+  const parts = normalized.split('/').filter(Boolean);
+  return parts[parts.length - 1] || normalized;
 };
-
-const normalizePath = (value: unknown): string => String(value || '').replace(/\\/g, '/');
+const hasRootLevelImages = (
+  images: Array<{ relativePath?: string }>,
+): boolean => {
+  return images.some((image) => {
+    const relativePath = normalizePath(image?.relativePath);
+    const parts = relativePath.split('/').filter(Boolean);
+    return parts.length <= 2;
+  });
+};
 const getRootFolderPathFromRelativePath = (relativePath: string): string =>
   normalizePath(relativePath).split('/').filter(Boolean)[0] || '';
+const getRootTokenFromPath = (value: string): string =>
+  normalizePath(value).split('/').filter(Boolean)[0] || '';
 
 const readStoredBoolean = (key: string, fallback: boolean): boolean => {
   if (typeof window === 'undefined') return fallback;
@@ -58,48 +82,24 @@ const readStoredString = (key: string, fallback: string): string => {
   return window.localStorage.getItem(key) ?? fallback;
 };
 
+const readStoredStringArray = (key: string): string[] => {
+  if (typeof window === 'undefined') return [];
+  const raw = window.localStorage.getItem(key);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((value) => String(value || '').trim())
+      .filter((value) => value.length > 0);
+  } catch {
+    return [];
+  }
+};
+
 const persistStorageValue = (key: string, value: string): void => {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(key, value);
-};
-
-const buildFolderNodes = (images: GalleryImage[]): FolderNode[] => {
-  const folders = new Map<string, FolderNode>();
-
-  images.forEach((image) => {
-    const relativePath = normalizePath(image?.relativePath);
-    const parts = relativePath.split('/').filter(Boolean);
-    if (parts.length < 2) return;
-
-    const directoryParts = parts.slice(0, -1);
-    for (let index = 0; index < directoryParts.length; index += 1) {
-      const path = directoryParts.slice(0, index + 1).join('/');
-      const existing = folders.get(path);
-      if (existing) {
-        existing.count += 1;
-        continue;
-      }
-      folders.set(path, {
-        path,
-        name: directoryParts[index],
-        depth: index,
-        count: 1,
-      });
-    }
-  });
-
-  return Array.from(folders.values()).sort((a, b) =>
-    a.path.localeCompare(b.path),
-  );
-};
-
-const getRootFolderPathFromResult = (result: DirectoryReadResult): string => {
-  const fromName = normalizePath(result?.directoryName || '');
-  if (fromName) return fromName;
-
-  const firstPath = normalizePath(result?.images?.[0]?.relativePath || '');
-  const firstPart = firstPath.split('/').filter(Boolean)[0];
-  return firstPart || '';
 };
 
 const areSameDirectoryHandles = async (
@@ -151,27 +151,40 @@ function App() {
   const applyCropToImages = useStore((state) => state.applyCropToImages);
   const setRowHeight = useStore((state) => state.setRowHeight);
   const setInspectorWidth = useStore((state) => state.setInspectorWidth);
+  const explorerWidth = useStore((state) => state.explorerWidth);
+  const setExplorerWidth = useStore((state) => state.setExplorerWidth);
   const sortOption = useStore((state) => state.sortOption);
   const setSortOption = useStore((state) => state.setSortOption);
-  const sessionModifiedAt = useStore((state) => state.sessionModifiedAt);
   const applyPersistedImageDrafts = useStore(
     (state) => state.applyPersistedImageDrafts,
   );
   const deleteFolder = useStore((state) => state.deleteFolder);
   const processing = useStore((state) => state.processing);
+  const folderNodes = useStore((state) => state.folderNodes);
+  const rootNames = useStore((state) => state.rootNames);
+  const addImages = useStore((state) => state.addImages);
+  const expandedPaths = useStore((state) => state.expandedPaths);
+  const toggleExpandedPath = useStore((state) => state.toggleExpandedPath);
+  const setExpandedPaths = useStore((state) => state.setExpandedPaths);
+  const recursiveScan = useStore((state) => state.recursiveScan);
+  const setRecursiveScan = useStore((state) => state.setRecursiveScan);
 
   const addMoreRef = useRef<HTMLInputElement | null>(null);
   const {
     handleImagesLoaded,
     handleAddMore,
     handlePickFolderViaDirectoryPicker,
-    restoreLastDirectoryIfAvailable,
   } = useImageUpload();
   const { handleExport } = useExportLogic();
-  const restoreAttemptedRef = useRef<boolean>(false);
+  const linkedRootsHydratedRef = useRef<boolean>(false);
+  const cachedRootNamesBootstrappedRef = useRef<boolean>(false);
   const rowHeightRafRef = useRef<number>(0);
   const pendingRowHeightRef = useRef<number>(rowHeight);
   const directoryRootsRef = useRef<DirectoryRoot[]>([]);
+  const loadedFolderScanKeysRef = useRef<Set<string>>(new Set());
+  const loadingFolderScanKeysRef = useRef<Set<string>>(new Set());
+  const folderScanNextOffsetRef = useRef<Map<string, number>>(new Map());
+  const folderScanHasMoreRef = useRef<Map<string, boolean>>(new Map());
   const draftPersistTimerRef = useRef<number>(0);
   const resolvedDraftFoldersRef = useRef<Set<string>>(new Set());
   const [explorerOpen, setExplorerOpen] = useState(() =>
@@ -180,7 +193,68 @@ function App() {
   const [activeFolderPath, setActiveFolderPath] = useState(() =>
     readStoredString(ACTIVE_FOLDER_STORAGE_KEY, ALL_FOLDERS_VALUE),
   );
-  const [draftRestorePrompt, setDraftRestorePrompt] = useState<DraftRestorePrompt | null>(null);
+  const [cachedLinkedRootNames] = useState<string[]>(() => {
+    const activeStoredPath = readStoredString(
+      ACTIVE_FOLDER_STORAGE_KEY,
+      ALL_FOLDERS_VALUE,
+    );
+    const names = readStoredStringArray(LINKED_ROOT_NAMES_STORAGE_KEY);
+    if (activeStoredPath && activeStoredPath !== ALL_FOLDERS_VALUE) {
+      names.push(getFolderNameFromPath(activeStoredPath));
+    }
+    return Array.from(new Set(names.filter(Boolean)));
+  });
+  const [startupRootsResolved, setStartupRootsResolved] = useState(false);
+  const [draftRestorePrompt, setDraftRestorePrompt] =
+    useState<DraftRestorePrompt | null>(null);
+  const [loadingFolderPaths, setLoadingFolderPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [treeFolderNodes, setTreeFolderNodes] = useState<FolderNode[]>([]);
+  const [loadingTreePaths, setLoadingTreePaths] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [directoryRootsVersion, setDirectoryRootsVersion] = useState(0);
+  const loadedTreePathsRef = useRef<Set<string>>(new Set());
+  const loadingTreePathsRef = useRef<Set<string>>(new Set());
+
+  const markFolderLoading = useCallback(
+    (paths: string[], loading: boolean) => {
+      const safePaths = paths.filter(Boolean);
+      if (safePaths.length === 0) return;
+      setLoadingFolderPaths((previous) => {
+        const next = new Set(previous);
+        safePaths.forEach((path) => {
+          if (loading) {
+            next.add(path);
+          } else {
+            next.delete(path);
+          }
+        });
+        return next;
+      });
+    },
+    [],
+  );
+
+  const markTreePathLoading = useCallback(
+    (paths: string[], loading: boolean) => {
+      const safePaths = paths.filter(Boolean);
+      if (safePaths.length === 0) return;
+      setLoadingTreePaths((previous) => {
+        const next = new Set(previous);
+        safePaths.forEach((path) => {
+          if (loading) {
+            next.add(path);
+          } else {
+            next.delete(path);
+          }
+        });
+        return next;
+      });
+    },
+    [],
+  );
 
   const handleRowHeightChange = useCallback(
     (nextValue: number) => {
@@ -200,47 +274,198 @@ function App() {
 
   useEffect(() => {
     if (images.length !== 0) return;
-    directoryRootsRef.current = [];
     resolvedDraftFoldersRef.current = new Set();
     setDraftRestorePrompt(null);
   }, [images.length]);
 
   useEffect(() => {
-    if (restoreAttemptedRef.current) return;
-    if (images.length > 0) return;
-    restoreAttemptedRef.current = true;
+    if (cachedRootNamesBootstrappedRef.current) return;
+    if (images.length > 0 || folderNodes.length > 0) return;
+    cachedRootNamesBootstrappedRef.current = true;
 
-    restoreLastDirectoryIfAvailable().then((result) => {
-      if (!result?.restored) return;
-      const restoredRoot = getRootFolderPathFromResult(result);
-      if (Array.isArray(result.rootPaths) && result.rootPaths.length > 0) {
-        directoryRootsRef.current = result.rootPaths.map(
-          (rootPath: string): DirectoryRoot => ({
-            rootPath,
-            handle: null,
-          }),
-        );
-      } else if (result.directoryHandle && restoredRoot) {
-        directoryRootsRef.current = [
-          { rootPath: restoredRoot, handle: result.directoryHandle },
-        ];
+    const cachedRootNames = Array.from(
+      new Set(readStoredStringArray(LINKED_ROOT_NAMES_STORAGE_KEY)),
+    );
+    if (cachedRootNames.length > 0) {
+      addImages([], cachedRootNames);
+    }
+  }, [addImages, folderNodes.length, images.length]);
+
+  useEffect(() => {
+    if (linkedRootsHydratedRef.current) return;
+    if (images.length > 0) {
+      setStartupRootsResolved(true);
+      return;
+    }
+    linkedRootsHydratedRef.current = true;
+
+    loadSavedRootPaths().then((rootPaths) => {
+      if (!Array.isArray(rootPaths) || rootPaths.length === 0) {
+        directoryRootsRef.current = [];
+        setDirectoryRootsVersion((previous) => previous + 1);
+        loadedTreePathsRef.current = new Set();
+        loadingTreePathsRef.current = new Set();
+        setTreeFolderNodes([]);
+        setLoadingTreePaths(new Set());
+        persistStorageValue(LINKED_ROOT_NAMES_STORAGE_KEY, JSON.stringify([]));
+        return;
       }
-      if (restoredRoot) {
-        setActiveFolderPath(restoredRoot);
+      const nextRoots = rootPaths.map(
+        (rootPath: string): DirectoryRoot => ({
+          rootPath,
+          rootName: getFolderNameFromPath(rootPath),
+          handle: null,
+        }),
+      );
+      directoryRootsRef.current = nextRoots;
+      setDirectoryRootsVersion((previous) => previous + 1);
+      const rootNames = nextRoots
+        .map((root) => root.rootName)
+        .filter((name) => Boolean(name));
+      persistStorageValue(
+        LINKED_ROOT_NAMES_STORAGE_KEY,
+        JSON.stringify(Array.from(new Set(rootNames))),
+      );
+      if (rootNames.length > 0) {
+        addImages([], Array.from(new Set(rootNames)));
       }
+    }).finally(() => {
+      setStartupRootsResolved(true);
     });
-  }, [images.length, restoreLastDirectoryIfAvailable, setActiveFolderPath]);
+  }, [addImages, images.length]);
 
-  useEffect(
-    () => () => {
-      if (!rowHeightRafRef.current) return;
-      cancelAnimationFrame(rowHeightRafRef.current);
-      rowHeightRafRef.current = 0;
+  useEffect(() => {
+    // Expanded paths restoration
+    const storedExpanded = localStorage.getItem(EXPANDED_PATHS_STORAGE_KEY);
+    if (storedExpanded) {
+      try {
+        const parsed = JSON.parse(storedExpanded);
+        if (Array.isArray(parsed)) {
+          setExpandedPaths(new Set(parsed));
+        }
+      } catch (err) {
+        console.error('Failed to parse stored expanded paths:', err);
+      }
+    }
+
+    // Recursive scan restoration
+    const storedRecursive = localStorage.getItem(RECURSIVE_SCAN_STORAGE_KEY);
+    if (storedRecursive !== null) {
+      setRecursiveScan(storedRecursive === 'true');
+    }
+  }, [setExpandedPaths, setRecursiveScan]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      EXPANDED_PATHS_STORAGE_KEY,
+      JSON.stringify(Array.from(expandedPaths)),
+    );
+  }, [expandedPaths]);
+
+  useEffect(() => {
+    persistStorageValue(
+      RECURSIVE_SCAN_STORAGE_KEY,
+      recursiveScan ? 'true' : 'false',
+    );
+  }, [recursiveScan]);
+
+  const mergeTreeNodes = useCallback(
+    (nextNodes: FolderNode[], options: { pruneToRoots?: string[] } = {}) => {
+      setTreeFolderNodes((previous) => {
+        const byPath = new Map<string, FolderNode>();
+        const allowedRoots = options.pruneToRoots
+          ? new Set(options.pruneToRoots)
+          : null;
+
+        previous.forEach((node) => {
+          const rootPath = normalizePath(node.path).split('/').filter(Boolean)[0] || '';
+          if (allowedRoots && rootPath && !allowedRoots.has(rootPath)) return;
+          byPath.set(node.path, node);
+        });
+
+        nextNodes.forEach((node) => {
+          const existing = byPath.get(node.path);
+          byPath.set(node.path, {
+            ...(existing || {}),
+            ...node,
+            depth: Math.max(0, Number(node.depth || existing?.depth || 0)),
+            count: Math.max(0, Number(node.count ?? existing?.count ?? 0)),
+          });
+        });
+
+        return Array.from(byPath.values()).sort((a, b) =>
+          a.path.localeCompare(b.path),
+        );
+      });
     },
     [],
   );
 
-  const folderNodes = useMemo(() => buildFolderNodes(images), [images]);
+  const resolveRootForFolderPath = useCallback((folderPath: string) => {
+    const normalized = normalizePath(folderPath);
+    const rootToken = normalized.split('/').filter(Boolean)[0] || normalized;
+    if (!rootToken) return null;
+
+    const root = directoryRootsRef.current.find(
+      (candidate) =>
+        candidate.rootName === rootToken || candidate.rootPath === rootToken,
+    );
+    if (!root?.rootPath || !root.rootName) return null;
+    return {
+      root,
+      rootToken,
+    };
+  }, []);
+
+  const loadTreeChildrenForPath = useCallback(
+    async (folderPath: string) => {
+      const normalizedFolderPath = normalizePath(folderPath);
+      if (!normalizedFolderPath || normalizedFolderPath === ALL_FOLDERS_VALUE) {
+        return;
+      }
+      if (loadedTreePathsRef.current.has(normalizedFolderPath)) return;
+      if (loadingTreePathsRef.current.has(normalizedFolderPath)) return;
+
+      const resolved = resolveRootForFolderPath(normalizedFolderPath);
+      if (!resolved) return;
+
+      const { root } = resolved;
+      loadingTreePathsRef.current.add(normalizedFolderPath);
+      markTreePathLoading([normalizedFolderPath], true);
+      try {
+        const children = await listDirectoryChildren({
+          rootPath: root.rootPath,
+          rootName: root.rootName,
+          folderPath: normalizedFolderPath,
+        });
+
+        mergeTreeNodes(
+          [
+            {
+              path: normalizedFolderPath,
+              name:
+                normalizedFolderPath.split('/').filter(Boolean).pop() ||
+                normalizedFolderPath,
+              depth:
+                normalizedFolderPath
+                  .split('/')
+                  .filter(Boolean)
+                  .length - 1,
+              count: 0,
+              expandable: children.length > 0,
+            },
+            ...children,
+          ],
+        );
+        loadedTreePathsRef.current.add(normalizedFolderPath);
+      } finally {
+        loadingTreePathsRef.current.delete(normalizedFolderPath);
+        markTreePathLoading([normalizedFolderPath], false);
+      }
+    },
+    [markTreePathLoading, mergeTreeNodes, resolveRootForFolderPath],
+  );
+
   const loadedRootPaths = useMemo(() => {
     const roots = new Set<string>();
     images.forEach((image: GalleryImage) => {
@@ -250,13 +475,150 @@ function App() {
     return Array.from(roots);
   }, [images]);
 
-  const filteredImages = useMemo(() => {
-    if (activeFolderPath === ALL_FOLDERS_VALUE) return images;
-    const prefix = `${activeFolderPath}/`;
-    return images.filter((image) =>
-      normalizePath(image.relativePath).startsWith(prefix),
+  const linkedRootNamesFromPaths = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          directoryRootsRef.current
+            .map((root) => root.rootName)
+            .filter(Boolean),
+        ),
+      ),
+    [directoryRootsVersion],
+  );
+
+  const effectiveRootNames = useMemo(() => {
+    const source =
+      Array.isArray(rootNames) && rootNames.length > 0
+        ? rootNames
+        : linkedRootNamesFromPaths.length > 0
+          ? linkedRootNamesFromPaths
+          : cachedLinkedRootNames;
+    return Array.from(new Set(source.filter(Boolean)));
+  }, [cachedLinkedRootNames, linkedRootNamesFromPaths, rootNames]);
+
+  useEffect(() => {
+    const uniqueRoots = Array.from(new Set(effectiveRootNames.filter(Boolean)));
+    const allowedRoots = new Set(uniqueRoots);
+    const getScanKeyRootToken = (scanKey: string): string => {
+      const pathPart = String(scanKey || '').split('::')[0] || '';
+      return getRootTokenFromPath(pathPart);
+    };
+
+    loadedTreePathsRef.current = new Set(
+      Array.from(loadedTreePathsRef.current).filter((path) => {
+        const root = getRootTokenFromPath(path);
+        return root ? allowedRoots.has(root) : false;
+      }),
     );
-  }, [activeFolderPath, images]);
+    loadingTreePathsRef.current = new Set(
+      Array.from(loadingTreePathsRef.current).filter((path) => {
+        const root = getRootTokenFromPath(path);
+        return root ? allowedRoots.has(root) : false;
+      }),
+    );
+    loadedFolderScanKeysRef.current = new Set(
+      Array.from(loadedFolderScanKeysRef.current).filter((scanKey) => {
+        const root = getScanKeyRootToken(scanKey);
+        return root ? allowedRoots.has(root) : false;
+      }),
+    );
+    loadingFolderScanKeysRef.current = new Set(
+      Array.from(loadingFolderScanKeysRef.current).filter((scanKey) => {
+        const root = getScanKeyRootToken(scanKey);
+        return root ? allowedRoots.has(root) : false;
+      }),
+    );
+    folderScanNextOffsetRef.current = new Map(
+      Array.from(folderScanNextOffsetRef.current.entries()).filter(
+        ([scanKey]) => {
+          const root = getScanKeyRootToken(scanKey);
+          return root ? allowedRoots.has(root) : false;
+        },
+      ),
+    );
+    folderScanHasMoreRef.current = new Map(
+      Array.from(folderScanHasMoreRef.current.entries()).filter(([scanKey]) => {
+        const root = getScanKeyRootToken(scanKey);
+        return root ? allowedRoots.has(root) : false;
+      }),
+    );
+
+    const rootNodes: FolderNode[] = uniqueRoots.map((name) => ({
+      path: name,
+      name,
+      depth: 0,
+      count: 0,
+      expandable: true,
+    }));
+    mergeTreeNodes(rootNodes, { pruneToRoots: uniqueRoots });
+
+    setLoadingTreePaths((previous) => {
+      const next = new Set<string>();
+      previous.forEach((path) => {
+        const root = getRootTokenFromPath(path);
+        if (root && allowedRoots.has(root)) {
+          next.add(path);
+        }
+      });
+      return next;
+    });
+
+  }, [
+    effectiveRootNames,
+    mergeTreeNodes,
+  ]);
+
+  const effectiveFolderNodes = useMemo(() => {
+    const countsByPath = new Map<string, number>();
+    folderNodes.forEach((node) => {
+      countsByPath.set(normalizePath(node.path), Math.max(0, node.count || 0));
+    });
+
+    if (treeFolderNodes.length > 0) {
+      return treeFolderNodes.map((node) => ({
+        ...node,
+        count: countsByPath.get(normalizePath(node.path)) ?? node.count,
+      }));
+    }
+
+    return effectiveRootNames.map((name) => ({
+      path: name,
+      name,
+      depth: 0,
+      count: countsByPath.get(normalizePath(name)) ?? 0,
+      expandable: true,
+    }));
+  }, [effectiveRootNames, folderNodes, treeFolderNodes]);
+
+  useEffect(() => {
+    if (images.length !== 0) return;
+    if (folderNodes.length !== 0) return;
+    const rootNames = directoryRootsRef.current
+      .map((root) => root.rootName)
+      .filter(Boolean);
+    if (rootNames.length === 0) return;
+    addImages([], Array.from(new Set(rootNames)));
+  }, [addImages, folderNodes.length, images.length]);
+
+  const filteredImages = useMemo(() => {
+    if (activeFolderPath === ALL_FOLDERS_VALUE) {
+      if (recursiveScan) return images;
+      return images.filter((image) => {
+        const relativePath = normalizePath(image.relativePath);
+        const parts = relativePath.split('/').filter(Boolean);
+        return parts.length <= 2;
+      });
+    }
+    const prefix = `${activeFolderPath}/`;
+    return images.filter((image) => {
+      const relativePath = normalizePath(image.relativePath);
+      if (!relativePath.startsWith(prefix)) return false;
+      if (recursiveScan) return true;
+      const remainder = relativePath.substring(prefix.length);
+      return !remainder.includes('/');
+    });
+  }, [activeFolderPath, images, recursiveScan]);
 
   const visibleImages = useMemo(() => {
     const next = filteredImages.map((image, originalIndex) => ({
@@ -280,16 +642,26 @@ function App() {
       } else if (sortOption === 'size_asc') {
         const bySize = (a.sourceSize || 0) - (b.sourceSize || 0);
         if (bySize !== 0) return bySize;
-      } else if (sortOption === 'last_modified_oldest') {
-        const byModified =
-          getEffectiveModifiedTimestamp(a, sessionModifiedAt) -
-          getEffectiveModifiedTimestamp(b, sessionModifiedAt);
-        if (byModified !== 0) return byModified;
-      } else {
-        const byModified =
-          getEffectiveModifiedTimestamp(b, sessionModifiedAt) -
-          getEffectiveModifiedTimestamp(a, sessionModifiedAt);
-        if (byModified !== 0) return byModified;
+      } else if (
+        sortOption === 'last_modified_oldest' ||
+        sortOption === 'last_modified'
+      ) {
+        // Read the current modification times directly.
+        // We do *not* subscribe to sessionModifiedAt in App.tsx because it
+        // causes the entire gallery to re-render synchronously 60x a second
+        // when dragging padding/rotation sliders.
+        const currentModTimes = useStore.getState().sessionModifiedAt;
+
+        const byModifiedA = getEffectiveModifiedTimestamp(a, currentModTimes);
+        const byModifiedB = getEffectiveModifiedTimestamp(b, currentModTimes);
+
+        if (sortOption === 'last_modified_oldest') {
+          const byModified = byModifiedA - byModifiedB;
+          if (byModified !== 0) return byModified;
+        } else {
+          const byModified = byModifiedB - byModifiedA;
+          if (byModified !== 0) return byModified;
+        }
       }
 
       const byPath = nameCollator.compare(
@@ -305,7 +677,7 @@ function App() {
     });
 
     return next.map((entry) => entry.image);
-  }, [filteredImages, sessionModifiedAt, sortOption]);
+  }, [filteredImages, sortOption]); // Deliberately omitting sessionModifiedAt to avoid lag
 
   const visibleImageIds = useMemo(
     () => new Set(visibleImages.map((image) => image.id)),
@@ -326,20 +698,130 @@ function App() {
     setSelectedId(visibleImages[index - 1].id);
   }, [selectedId, setSelectedId, visibleImages]);
 
+  const loadImagesForFolderPath = useCallback(
+    async (
+      folderPath: string,
+      options: { append?: boolean } = {},
+    ) => {
+      const append = Boolean(options.append);
+      const normalizedFolderPath = normalizePath(folderPath);
+      if (
+        !normalizedFolderPath ||
+        normalizedFolderPath === ALL_FOLDERS_VALUE
+      ) {
+        return;
+      }
+
+      const resolved = resolveRootForFolderPath(normalizedFolderPath);
+      if (!resolved) return;
+
+      const { root, rootToken } = resolved;
+      const scanKey = `${normalizedFolderPath}::${recursiveScan ? 'recursive' : 'direct'}`;
+      if (!append && loadedFolderScanKeysRef.current.has(scanKey)) return;
+      if (append && folderScanHasMoreRef.current.get(scanKey) === false) return;
+      if (loadingFolderScanKeysRef.current.has(scanKey)) return;
+
+      const offset = append
+        ? Math.max(0, folderScanNextOffsetRef.current.get(scanKey) || 0)
+        : 0;
+      const limit = append
+        ? FOLDER_LOAD_MORE_BATCH
+        : FOLDER_INITIAL_IMAGE_BATCH;
+
+      loadingFolderScanKeysRef.current.add(scanKey);
+      const loadingKeys = Array.from(
+        new Set([
+          normalizedFolderPath,
+          rootToken,
+          root.rootName,
+          root.rootPath,
+        ]),
+      ).filter(Boolean);
+      markFolderLoading(loadingKeys, true);
+      try {
+        const scanResult = await scanImagesFromFolderPath({
+          rootPath: root.rootPath,
+          rootName: root.rootName,
+          folderPath: normalizedFolderPath,
+          recursive: recursiveScan,
+          offset,
+          limit,
+        });
+        await addImages(scanResult.images, [root.rootName]);
+        loadedFolderScanKeysRef.current.add(scanKey);
+        const nextOffset = offset + (Array.isArray(scanResult.images) ? scanResult.images.length : 0);
+        folderScanNextOffsetRef.current.set(scanKey, nextOffset);
+        const hasMore = Array.isArray(scanResult.images)
+          ? scanResult.images.length >= limit
+          : false;
+        folderScanHasMoreRef.current.set(scanKey, hasMore);
+      } finally {
+        loadingFolderScanKeysRef.current.delete(scanKey);
+        markFolderLoading(loadingKeys, false);
+      }
+    },
+    [addImages, markFolderLoading, recursiveScan, resolveRootForFolderPath],
+  );
+
+  const handleSelectFolder = useCallback(
+    (folderPath: string) => {
+      setActiveFolderPath(folderPath);
+      void loadTreeChildrenForPath(folderPath);
+      void loadImagesForFolderPath(folderPath);
+    },
+    [loadImagesForFolderPath, loadTreeChildrenForPath],
+  );
+
+  const handleLoadMoreActiveFolder = useCallback(() => {
+    if (!activeFolderPath || activeFolderPath === ALL_FOLDERS_VALUE) return;
+    void loadImagesForFolderPath(activeFolderPath, { append: true });
+  }, [activeFolderPath, loadImagesForFolderPath]);
+
+  const handleToggleExpand = useCallback(
+    (path: string) => {
+      if (!expandedPaths.has(path)) {
+        void loadTreeChildrenForPath(path);
+      }
+      toggleExpandedPath(path);
+    },
+    [expandedPaths, loadTreeChildrenForPath, toggleExpandedPath],
+  );
+
   useEffect(() => {
-    persistStorageValue(
-      EXPLORER_OPEN_STORAGE_KEY,
-      explorerOpen ? '1' : '0',
-    );
+    persistStorageValue(EXPLORER_OPEN_STORAGE_KEY, explorerOpen ? '1' : '0');
   }, [explorerOpen]);
 
   useEffect(() => {
     if (activeFolderPath === ALL_FOLDERS_VALUE) return;
-    const pathExists = folderNodes.some((folder) => folder.path === activeFolderPath);
+    void loadTreeChildrenForPath(activeFolderPath);
+  }, [activeFolderPath, loadTreeChildrenForPath]);
+
+  useEffect(() => {
+    if (activeFolderPath === ALL_FOLDERS_VALUE) return;
+    void loadImagesForFolderPath(activeFolderPath);
+  }, [activeFolderPath, loadImagesForFolderPath]);
+
+  useEffect(() => {
+    expandedPaths.forEach((path) => {
+      if (!path || path === ALL_FOLDERS_VALUE) return;
+      void loadTreeChildrenForPath(path);
+    });
+  }, [expandedPaths, loadTreeChildrenForPath]);
+
+  useEffect(() => {
+    if (activeFolderPath === ALL_FOLDERS_VALUE) return;
+    const pathExists = effectiveFolderNodes.some(
+      (folder) => folder.path === activeFolderPath,
+    );
     if (!pathExists) {
+      const activeRootPath =
+        normalizePath(activeFolderPath).split('/').filter(Boolean)[0] || '';
+      if (activeRootPath && effectiveRootNames.includes(activeRootPath)) {
+        return;
+      }
       setActiveFolderPath(ALL_FOLDERS_VALUE);
     }
-  }, [activeFolderPath, folderNodes]);
+  }, [activeFolderPath, effectiveFolderNodes, effectiveRootNames]);
 
   useEffect(() => {
     persistStorageValue(ACTIVE_FOLDER_STORAGE_KEY, activeFolderPath);
@@ -426,9 +908,10 @@ function App() {
       };
     }
 
-    if (sessionModifiedAt.size > 0) {
+    const currentSessionModifiedAt = useStore.getState().sessionModifiedAt;
+    if (currentSessionModifiedAt.size > 0) {
       images.forEach((image) => {
-        if (!sessionModifiedAt.has(image.id)) return;
+        if (!currentSessionModifiedAt.has(image.id)) return;
         const root = getRootFolderPathFromRelativePath(image.relativePath);
         if (root) {
           resolvedDraftFoldersRef.current.add(root);
@@ -461,7 +944,7 @@ function App() {
         return;
       }
 
-      setDraftRestorePrompt((previous) => {
+      setDraftRestorePrompt((previous: DraftRestorePrompt | null) => {
         if (!previous?.items?.length) {
           return { items };
         }
@@ -483,7 +966,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [images, loadedRootPaths, sessionModifiedAt]);
+  }, [images, loadedRootPaths]); // Removed sessionModifiedAt from dependency array
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -493,12 +976,16 @@ function App() {
 
       const target = event.target as HTMLElement | null;
       const tagName = String(target?.tagName || '').toLowerCase();
-      if (tagName === 'input' || tagName === 'textarea' || target?.isContentEditable) {
+      if (
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        target?.isContentEditable
+      ) {
         return;
       }
 
       event.preventDefault();
-      setExplorerOpen((previous) => !previous);
+      setExplorerOpen((previous: boolean) => !previous);
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -518,39 +1005,70 @@ function App() {
     return parts[parts.length - 1] || activeFolderPath;
   }, [activeFolderPath]);
 
+  const isActiveFolderLoading = useMemo(() => {
+    if (!activeFolderPath || activeFolderPath === ALL_FOLDERS_VALUE) {
+      return false;
+    }
+    return loadingFolderPaths.has(activeFolderPath);
+  }, [activeFolderPath, loadingFolderPaths]);
+
+  const explorerLoadingFolderPaths = useMemo(
+    () => new Set([...loadingFolderPaths, ...loadingTreePaths]),
+    [loadingFolderPaths, loadingTreePaths],
+  );
+
   const handleAddFolder = useCallback(async () => {
     const result = await handlePickFolderViaDirectoryPicker();
     if (!result.handled) {
       addMoreRef.current?.click();
       return;
     }
-    if (!Array.isArray(result.images) || result.images.length === 0) {
+
+    const pickedImages = Array.isArray(result.images) ? result.images : [];
+
+    const rootPath = normalizePath(result.rootPath);
+    const rootName = result.directoryName || getFolderNameFromPath(rootPath);
+    if (!rootPath && pickedImages.length === 0) {
       return;
     }
-
-    const rootPath = getRootFolderPathFromResult(result);
     const nextHandle = result.directoryHandle;
     const currentRoots = directoryRootsRef.current;
 
-    if (nextHandle) {
+    if (nextHandle || rootPath) {
       let skipByRoot = '';
-      const replaceRoots: string[] = [];
+      const replaceRootPaths: string[] = [];
+      const replaceRootNames: string[] = [];
 
       for (const root of currentRoots) {
-        if (!root?.handle) continue;
+        if (root.handle && nextHandle) {
+          if (await areSameDirectoryHandles(root.handle, nextHandle)) {
+            skipByRoot = root.rootName;
+            break;
+          }
 
-        if (await areSameDirectoryHandles(root.handle, nextHandle)) {
-          skipByRoot = root.rootPath;
-          break;
-        }
+          if (await isDirectoryAncestor(root.handle, nextHandle)) {
+            skipByRoot = root.rootName;
+            break;
+          }
 
-        if (await isDirectoryAncestor(root.handle, nextHandle)) {
-          skipByRoot = root.rootPath;
-          break;
-        }
-
-        if (await isDirectoryAncestor(nextHandle, root.handle)) {
-          replaceRoots.push(root.rootPath);
+          if (await isDirectoryAncestor(nextHandle, root.handle)) {
+            replaceRootPaths.push(root.rootPath);
+            replaceRootNames.push(root.rootName);
+          }
+        } else if (root.rootPath && rootPath) {
+          const existingPath = root.rootPath;
+          if (existingPath === rootPath) {
+            skipByRoot = root.rootName;
+            break;
+          }
+          if (rootPath.startsWith(`${existingPath}/`)) {
+            skipByRoot = root.rootName;
+            break;
+          }
+          if (existingPath.startsWith(`${rootPath}/`)) {
+            replaceRootPaths.push(existingPath);
+            replaceRootNames.push(root.rootName);
+          }
         }
       }
 
@@ -559,11 +1077,12 @@ function App() {
         return;
       }
 
-      if (replaceRoots.length > 0) {
-        replaceRoots.forEach((folderPath) => deleteFolder(folderPath));
+      if (replaceRootPaths.length > 0) {
+        replaceRootNames.forEach((folderPath) => deleteFolder(folderPath));
         directoryRootsRef.current = currentRoots.filter(
-          (root) => !replaceRoots.includes(root.rootPath),
+          (root) => !replaceRootPaths.includes(root.rootPath),
         );
+        setDirectoryRootsVersion((previous) => previous + 1);
       }
     } else if (
       rootPath &&
@@ -575,42 +1094,175 @@ function App() {
 
     if (rootPath) {
       directoryRootsRef.current = [
-        ...directoryRootsRef.current.filter((root) => root.rootPath !== rootPath),
-        { rootPath, handle: nextHandle || null },
+        ...directoryRootsRef.current.filter(
+          (root) => root.rootPath !== rootPath,
+        ),
+        { rootPath, rootName, handle: nextHandle || null },
       ];
+      setDirectoryRootsVersion((previous) => previous + 1);
+      persistStorageValue(
+        LINKED_ROOT_NAMES_STORAGE_KEY,
+        JSON.stringify(
+          Array.from(
+            new Set(
+              directoryRootsRef.current
+                .map((root) => root.rootName)
+                .filter(Boolean),
+            ),
+          ),
+        ),
+      );
     }
 
-    await handleImagesLoaded(result.images);
-    if (rootPath) {
-      setActiveFolderPath(rootPath);
+    if (
+      !recursiveScan &&
+      pickedImages.length > 0 &&
+      !hasRootLevelImages(pickedImages)
+    ) {
+      setRecursiveScan(true);
+    }
+
+    const initialImagesForStore = recursiveScan ? pickedImages : [];
+    await addImages(initialImagesForStore, rootName ? [rootName] : []);
+    if (rootName) {
+      const directKey = `${normalizePath(rootName)}::direct`;
+      const recursiveKey = `${normalizePath(rootName)}::recursive`;
+      loadedFolderScanKeysRef.current.delete(directKey);
+      loadedFolderScanKeysRef.current.delete(recursiveKey);
+      folderScanHasMoreRef.current.delete(directKey);
+      folderScanHasMoreRef.current.delete(recursiveKey);
+      folderScanNextOffsetRef.current.delete(directKey);
+      folderScanNextOffsetRef.current.delete(recursiveKey);
+
+      if (initialImagesForStore.length > 0) {
+        loadedFolderScanKeysRef.current.add(recursiveKey);
+        folderScanNextOffsetRef.current.set(
+          recursiveKey,
+          initialImagesForStore.length,
+        );
+        folderScanHasMoreRef.current.set(
+          recursiveKey,
+          initialImagesForStore.length >= FOLDER_INITIAL_IMAGE_BATCH,
+        );
+      } else {
+        void loadImagesForFolderPath(rootName);
+      }
+      setActiveFolderPath(rootName);
+      void loadTreeChildrenForPath(rootName);
     }
   }, [
     deleteFolder,
-    handleImagesLoaded,
+    addImages,
     handlePickFolderViaDirectoryPicker,
+    loadImagesForFolderPath,
+    loadTreeChildrenForPath,
+    recursiveScan,
+    setRecursiveScan,
     setActiveFolderPath,
   ]);
 
   const handleRemoveFolder = useCallback(
     async (folderPath: string) => {
       const previousRoots = directoryRootsRef.current;
-      const removedRoot = previousRoots.find((root) => root.rootPath === folderPath);
+      const removedRoot = previousRoots.find(
+        (root) => root.rootName === folderPath || root.rootPath === folderPath,
+      );
 
       deleteFolder(folderPath);
       directoryRootsRef.current = previousRoots.filter(
-        (root) => root.rootPath !== folderPath,
+        (root) => root.rootName !== folderPath && root.rootPath !== folderPath,
       );
+      setDirectoryRootsVersion((previous) => previous + 1);
 
       if (removedRoot?.handle) {
         await clearSavedDirectoryHandleIfMatches(removedRoot.handle);
       } else {
-        await removeSavedRootByPath(folderPath);
+        await removeSavedRootByPath(removedRoot?.rootPath || folderPath);
       }
+      markFolderLoading(
+        [folderPath, removedRoot?.rootName || '', removedRoot?.rootPath || ''],
+        false,
+      );
+      const removedRootToken = normalizePath(
+        removedRoot?.rootName || folderPath,
+      );
+      loadedFolderScanKeysRef.current = new Set(
+        Array.from(loadedFolderScanKeysRef.current).filter((scanKey) => {
+          const pathPart = String(scanKey || '').split('::')[0] || '';
+          const rootToken = getRootTokenFromPath(pathPart);
+          return rootToken !== removedRootToken;
+        }),
+      );
+      loadingFolderScanKeysRef.current = new Set(
+        Array.from(loadingFolderScanKeysRef.current).filter((scanKey) => {
+          const pathPart = String(scanKey || '').split('::')[0] || '';
+          const rootToken = getRootTokenFromPath(pathPart);
+          return rootToken !== removedRootToken;
+        }),
+      );
+      folderScanNextOffsetRef.current = new Map(
+        Array.from(folderScanNextOffsetRef.current.entries()).filter(
+          ([scanKey]) => {
+            const pathPart = String(scanKey || '').split('::')[0] || '';
+            const rootToken = getRootTokenFromPath(pathPart);
+            return rootToken !== removedRootToken;
+          },
+        ),
+      );
+      folderScanHasMoreRef.current = new Map(
+        Array.from(folderScanHasMoreRef.current.entries()).filter(
+          ([scanKey]) => {
+            const pathPart = String(scanKey || '').split('::')[0] || '';
+            const rootToken = getRootTokenFromPath(pathPart);
+            return rootToken !== removedRootToken;
+          },
+        ),
+      );
+      setTreeFolderNodes((previous) =>
+        previous.filter((node) => {
+          const rootToken = getRootTokenFromPath(node.path);
+          return rootToken !== removedRootToken;
+        }),
+      );
+      loadedTreePathsRef.current = new Set(
+        Array.from(loadedTreePathsRef.current).filter((path) => {
+          const rootToken = getRootTokenFromPath(path);
+          return rootToken !== removedRootToken;
+        }),
+      );
+      loadingTreePathsRef.current = new Set(
+        Array.from(loadingTreePathsRef.current).filter((path) => {
+          const rootToken = getRootTokenFromPath(path);
+          return rootToken !== removedRootToken;
+        }),
+      );
+      setLoadingTreePaths((previous) => {
+        const next = new Set<string>();
+        previous.forEach((path) => {
+          const rootToken = getRootTokenFromPath(path);
+          if (rootToken !== removedRootToken) {
+            next.add(path);
+          }
+        });
+        return next;
+      });
+      persistStorageValue(
+        LINKED_ROOT_NAMES_STORAGE_KEY,
+        JSON.stringify(
+          Array.from(
+            new Set(
+              directoryRootsRef.current
+                .map((root) => root.rootName)
+                .filter(Boolean),
+            ),
+          ),
+        ),
+      );
       if (directoryRootsRef.current.length === 0) {
         await clearSavedDirectoryHandle();
       }
     },
-    [deleteFolder],
+    [deleteFolder, markFolderLoading],
   );
 
   const handleToggleDraftFolderSelection = useCallback((folderPath: string) => {
@@ -661,7 +1313,21 @@ function App() {
     setDraftRestorePrompt(null);
   }, [applyPersistedImageDrafts, draftRestorePrompt, images]);
 
-  if (images.length === 0) {
+  if (
+    images.length === 0 &&
+    effectiveFolderNodes.length === 0 &&
+    !startupRootsResolved
+  ) {
+    return (
+      <div className="app">
+        <div className="grid-empty-state">
+          <p>Loading linked folders...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (images.length === 0 && effectiveFolderNodes.length === 0) {
     return (
       <div className="app">
         <DropZone onImagesLoaded={handleImagesLoaded} />
@@ -741,17 +1407,26 @@ function App() {
         handleDelete={(id) => useStore.getState().deleteImage(id)}
         inspectorWidth={inspectorWidth}
         setInspectorWidth={setInspectorWidth}
+        explorerWidth={explorerWidth}
+        setExplorerWidth={setExplorerWidth}
         selectNext={handleSelectNext}
         selectPrev={handleSelectPrev}
         handleApplyCropToImages={applyCropToImages}
         explorerOpen={explorerOpen}
-        folderNodes={folderNodes}
+        folderNodes={effectiveFolderNodes}
         activeFolderPath={activeFolderPath}
-        onSelectFolder={setActiveFolderPath}
+        onSelectFolder={handleSelectFolder}
         totalImageCount={images.length}
         onResetFolderFilter={() => setActiveFolderPath(ALL_FOLDERS_VALUE)}
         onAddFolder={handleAddFolder}
         onRemoveFolder={handleRemoveFolder}
+        expandedPaths={expandedPaths}
+        onToggleExpand={handleToggleExpand}
+        recursiveScan={recursiveScan}
+        setRecursiveScan={setRecursiveScan}
+        onLoadMoreImages={handleLoadMoreActiveFolder}
+        loadingFolderPaths={explorerLoadingFolderPaths}
+        isActiveFolderLoading={isActiveFolderLoading}
       />
 
       <input

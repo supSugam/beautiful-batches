@@ -139,6 +139,7 @@ export const ImageCard = memo(
     image,
     onDelete,
     rowHeight,
+    thumbnailSize = 320,
     selected,
     onSelect,
     disableLayoutAnimation = false,
@@ -146,20 +147,14 @@ export const ImageCard = memo(
     image: GalleryImage;
     onDelete: (id: string) => void;
     rowHeight: number;
+    thumbnailSize?: number;
     selected: boolean;
     onSelect: (id: string | null) => void;
     disableLayoutAnimation?: boolean;
   }) => {
-    // We stringify the specific coordinates to guarantee absolute stability across Map clones.
-    // This stops React from churning the DOM every 16ms during pan unless this specific card's crop changed.
-    const cropStateStr = useStore((state) => JSON.stringify(state.cropData.get(image.id)));
-    const cropState = useMemo(() => {
-      try {
-        return cropStateStr ? (JSON.parse(cropStateStr) as CropEntry) : undefined;
-      } catch {
-        return undefined;
-      }
-    }, [cropStateStr]);
+    const cropState = useStore(
+      useCallback((state) => state.cropData.get(image.id), [image.id]),
+    );
 
     const transforms = cropState?.transforms || {
       rotate: 0,
@@ -291,6 +286,12 @@ export const ImageCard = memo(
 
     const flipX = transforms.flip.horizontal ? -1 : 1;
     const flipY = transforms.flip.vertical ? -1 : 1;
+    const previewImageSrc = useMemo(() => {
+      if (!image.thumbnailUrl) return image.objectUrl;
+      const safeThumbSize = Math.max(96, Math.round(Number(thumbnailSize || 320)));
+      const separator = image.thumbnailUrl.includes('?') ? '&' : '?';
+      return `${image.thumbnailUrl}${separator}thumbSize=${safeThumbSize}`;
+    }, [image.objectUrl, image.thumbnailUrl, thumbnailSize]);
 
 
     return (
@@ -342,8 +343,12 @@ export const ImageCard = memo(
                 }}
               >
                 <img
-                  src={image.thumbnailUrl || image.objectUrl}
+                  src={previewImageSrc}
                   alt={image.name}
+                  loading="lazy"
+                  decoding="async"
+                  fetchPriority={selected ? 'high' : 'low'}
+                  draggable={false}
                   style={{
                     position: 'absolute',
                     width: `${imgW}%`,

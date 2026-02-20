@@ -8,6 +8,7 @@ import type {
   CropEntry,
   EditorViewState,
   ExportFormat,
+  FolderNode,
   GalleryImage,
   IfFileExistsMode,
   PaddingValues,
@@ -33,75 +34,71 @@ const readDimensionsWithImageElement = (objectUrl: string) =>
     img.src = objectUrl;
   });
 
-// Helper for loading natural dimensions progressively and cheaply.
-async function loadImageWithDimensions(
-  raw: RawUploadImage,
-): Promise<
-  Omit<
-    GalleryImage,
-    'sourceLastModified' | 'sourceSize' | 'loadedAt'
-  >
-> {
-  const { file, id, relativePath, assetUrl } = raw;
+const METADATA_HYDRATION_CONCURRENCY = 8;
+const METADATA_HYDRATION_BATCH_SIZE = 48;
 
-  // For native (Tauri) images, use the asset URL directly — zero-copy,
-  // streamed from disk. For web images, create a blob URL.
-  const objectUrl = assetUrl || URL.createObjectURL(file);
-  let width = 1;
-  let height = 1;
+const revokeImageObjectUrl = (
+  image: Pick<GalleryImage, 'objectUrl' | 'assetUrl'> | null | undefined,
+) => {
+  if (!image?.objectUrl || image.assetUrl) return;
+  try {
+    URL.revokeObjectURL(image.objectUrl);
+  } catch {
+    // Ignore invalid blob URL revocations.
+  }
+};
 
-  // For native images the File is empty (0 bytes). Use the asset URL to read
-  // dimensions via an <img> element instead of createImageBitmap.
-  if (assetUrl) {
+const toGalleryImageShell = (raw: RawUploadImage): GalleryImage => {
+  const objectUrl = raw.assetUrl || URL.createObjectURL(raw.file);
+  const nativeWidth = Math.max(0, Number(raw.nativeWidth || 0) || 0);
+  const nativeHeight = Math.max(0, Number(raw.nativeHeight || 0) || 0);
+  const hasNativeDimensions = nativeWidth > 0 && nativeHeight > 0;
+  const naturalWidth = hasNativeDimensions ? nativeWidth : 1;
+  const naturalHeight = hasNativeDimensions ? nativeHeight : 1;
+  const naturalRatio = naturalWidth / Math.max(1, naturalHeight);
+
+  return {
+    ...raw,
+    id: raw.id,
+    name: raw.file.name,
+    relativePath: raw.relativePath,
+    objectUrl,
+    naturalWidth,
+    naturalHeight,
+    naturalRatio: Number.isFinite(naturalRatio) && naturalRatio > 0 ? naturalRatio : 1,
+    dimensionsLoaded: hasNativeDimensions,
+    sourceLastModified: Number(raw?.file?.lastModified || 0) || 0,
+    sourceSize: raw.nativeSize ?? (Number(raw?.file?.size || 0) || 0),
+    loadedAt: getNowTs(),
+  };
+};
+
+const loadNaturalDimensions = async (
+  image: Pick<GalleryImage, 'objectUrl' | 'assetUrl' | 'file'>,
+): Promise<{ width: number; height: number }> => {
+  if (image.assetUrl) {
+    return readDimensionsWithImageElement(image.objectUrl);
+  }
+
+  if (
+    typeof createImageBitmap === 'function' &&
+    Number(image?.file?.size || 0) > 0
+  ) {
     try {
-      const result = await readDimensionsWithImageElement(objectUrl);
-      width = result.width;
-      height = result.height;
-    } catch {
-      width = 1;
-      height = 1;
-    }
-  } else {
-    try {
-      if (typeof createImageBitmap === 'function') {
-        const bitmap = await createImageBitmap(file);
-        width = bitmap.width || 1;
-        height = bitmap.height || 1;
-        if (typeof bitmap.close === 'function') {
-          bitmap.close();
-        }
-      } else {
-        const result = await readDimensionsWithImageElement(objectUrl);
-        width = result.width;
-        height = result.height;
+      const bitmap = await createImageBitmap(image.file);
+      const width = bitmap.width || 1;
+      const height = bitmap.height || 1;
+      if (typeof bitmap.close === 'function') {
+        bitmap.close();
       }
+      return { width, height };
     } catch {
-      try {
-        const result = await readDimensionsWithImageElement(objectUrl);
-        width = result.width;
-        height = result.height;
-      } catch {
-        width = 1;
-        height = 1;
-      }
+      // Fall back to <img> decoding path.
     }
   }
 
-  return {
-    id,
-    name: file.name,
-    relativePath,
-    objectUrl,
-    file,
-    absolutePath: raw.absolutePath,
-    assetUrl: raw.assetUrl,
-    thumbnailUrl: raw.thumbnailUrl,
-    nativeSize: raw.nativeSize,
-    naturalWidth: width,
-    naturalHeight: height,
-    naturalRatio: width / height,
-  };
-}
+  return readDimensionsWithImageElement(image.objectUrl);
+};
 
 const getDefaultInspectorWidth = () => {
   if (typeof window === 'undefined') return 980;
@@ -110,6 +107,10 @@ const getDefaultInspectorWidth = () => {
   const min = Math.max(360, viewportWidth * 0.32);
   const max = viewportWidth * 0.94;
   return Math.round(Math.max(min, Math.min(preferred, max)));
+};
+
+const getDefaultExplorerWidth = () => {
+  return 260; // Initial default matching legacy CSS
 };
 
 const GRID_RATIO_PRECISION = 200;
@@ -127,6 +128,71 @@ const getGridRatioSignature = (entry: CropEntry | undefined): number | null => {
   const ratio = width / height;
   if (!Number.isFinite(ratio) || ratio <= 0) return null;
   return quantizeGridRatio(ratio);
+};
+
+const normalizePath = (value: unknown): string =>
+  String(value || '').replace(/\\/g, '/');
+
+const buildFolderNodes = (
+  images: GalleryImage[],
+  rootNames: string[],
+): FolderNode[] => {
+  const folders = new Map<string, FolderNode>();
+
+  // Ensure root names (from scanned results) are present even if they have no images
+  rootNames.forEach((name) => {
+    if (!name) return;
+    const path = name; // Top-level path is just the directory name
+    folders.set(path, {
+      path,
+      name,
+      depth: 0,
+      count: 0,
+    });
+  });
+
+  images.forEach((image) => {
+    const relativePath = normalizePath(image?.relativePath);
+    const parts = relativePath.split('/').filter(Boolean);
+    if (parts.length < 2) {
+      if (parts.length === 1) {
+        // Just a root image
+        const path = parts[0];
+        const existing = folders.get(path);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          folders.set(path, {
+            path,
+            name: path,
+            depth: 0,
+            count: 1,
+          });
+        }
+      }
+      return;
+    }
+
+    const directoryParts = parts.slice(0, -1);
+    for (let index = 0; index < directoryParts.length; index += 1) {
+      const path = directoryParts.slice(0, index + 1).join('/');
+      const existing = folders.get(path);
+      if (existing) {
+        existing.count += 1;
+        continue;
+      }
+      folders.set(path, {
+        path,
+        name: directoryParts[index],
+        depth: index,
+        count: 1,
+      });
+    }
+  });
+
+  return Array.from(folders.values()).sort((a, b) =>
+    a.path.localeCompare(b.path),
+  );
 };
 
 const getQuarterTurn = (entry: CropEntry | undefined): number => {
@@ -318,6 +384,7 @@ export interface UseStoreState {
   captionById: Map<string, string>;
   sessionModifiedAt: Map<string, number>;
   cropLayoutVersion: number;
+  folderNodes: FolderNode[];
   selectedId: string | null;
   processing: ProcessingState | null;
   rowHeight: number;
@@ -326,11 +393,17 @@ export interface UseStoreState {
   ifFileExists: IfFileExistsMode;
   showAllFooters: boolean;
   inspectorWidth: number;
+  explorerWidth: number;
   sortOption: SortOption;
-  setImages: (images: GalleryImage[]) => void;
-  addImages: (rawImages: RawUploadImage[]) => Promise<void>;
+  rootNames: string[];
+  setImages: (images: RawUploadImage[], rootNames?: string[]) => Promise<void>;
+  addImages: (
+    newImages: RawUploadImage[],
+    rootNames?: string[],
+  ) => Promise<void>;
+  ensureImageMetadata: (id: string | null | undefined) => void;
   deleteImage: (id: string) => void;
-  clearAll: () => void;
+  clearImages: () => void;
   deleteFolder: (folderPath: string) => void;
   setSelectedId: (id: string | null) => void;
   selectNext: () => void;
@@ -345,194 +418,611 @@ export interface UseStoreState {
   setIfFileExists: (ifFileExists: IfFileExistsMode) => void;
   setShowAllFooters: (showAllFooters: boolean) => void;
   setInspectorWidth: (inspectorWidth: number) => void;
+  setExplorerWidth: (explorerWidth: number) => void;
   setSortOption: (sortOption: SortOption) => void;
   setProcessing: (processing: ProcessingState | null) => void;
+  expandedPaths: Set<string>;
+  toggleExpandedPath: (path: string) => void;
+  setExpandedPaths: (paths: Set<string>) => void;
+  recursiveScan: boolean;
+  setRecursiveScan: (recursiveScan: boolean) => void;
 }
 
-const useStore = create<UseStoreState>((set, get) => ({
-  // --- Global State ---
-  images: [],
-  cropData: new Map<string, CropEntry>(),
-  captionById: new Map<string, string>(),
-  sessionModifiedAt: new Map<string, number>(),
-  cropLayoutVersion: 0,
-  selectedId: null,
-  processing: null,
+const useStore = create<UseStoreState>((set, get) => {
+  const metadataQueue: string[] = [];
+  const queuedMetadataIds = new Set<string>();
+  const inFlightMetadataIds = new Set<string>();
+  let metadataWorkerRunning = false;
 
-  // --- UI Settings ---
-  rowHeight: 250,
-  format: 'png',
-  quality: 90,
-  ifFileExists: 'append',
-  showAllFooters: true,
-  inspectorWidth: getDefaultInspectorWidth(),
-  sortOption: 'last_modified',
+  const resetPendingMetadataQueue = () => {
+    metadataQueue.length = 0;
+    queuedMetadataIds.clear();
+  };
 
-  // --- Actions ---
+  const removeIdsFromMetadataQueue = (ids: Iterable<string>) => {
+    const removeSet = new Set(
+      Array.from(ids)
+        .map((id) => String(id || '').trim())
+        .filter(Boolean),
+    );
+    if (removeSet.size === 0) return;
 
-  // Images
-  setImages: (images) => set({ images }),
+    removeSet.forEach((id) => queuedMetadataIds.delete(id));
+    if (metadataQueue.length === 0) return;
 
-  addImages: async (rawImages) => {
-    if (!Array.isArray(rawImages) || rawImages.length === 0) return;
+    for (let index = metadataQueue.length - 1; index >= 0; index -= 1) {
+      if (removeSet.has(metadataQueue[index])) {
+        metadataQueue.splice(index, 1);
+      }
+    }
+  };
 
-    const CHUNK_SIZE = 20;
+  const applyMetadataBatch = (
+    updates: Array<{ id: string; width: number; height: number }>,
+  ) => {
+    if (updates.length === 0) return;
+    const updatesById = new Map(
+      updates.map((entry) => [entry.id, entry] as const),
+    );
+
+    set((state) => {
+      if (state.images.length === 0) return {};
+      let didChange = false;
+      const nextImages = state.images.map((image) => {
+        const next = updatesById.get(image.id);
+        if (!next) return image;
+        const width = Math.max(1, Number(next.width) || 1);
+        const height = Math.max(1, Number(next.height) || 1);
+        const ratio = width / height;
+
+        if (
+          image.dimensionsLoaded &&
+          image.naturalWidth === width &&
+          image.naturalHeight === height
+        ) {
+          return image;
+        }
+
+        didChange = true;
+        return {
+          ...image,
+          naturalWidth: width,
+          naturalHeight: height,
+          naturalRatio: Number.isFinite(ratio) && ratio > 0 ? ratio : 1,
+          dimensionsLoaded: true,
+        };
+      });
+
+      if (!didChange) return {};
+      return { images: nextImages };
+    });
+  };
+
+  const runMetadataHydrationWorker = async () => {
+    if (metadataWorkerRunning) return;
+    metadataWorkerRunning = true;
+
+    try {
+      let pendingUpdates: Array<{ id: string; width: number; height: number }> =
+        [];
+      while (true) {
+        const nextIds: string[] = [];
+        while (
+          nextIds.length < METADATA_HYDRATION_CONCURRENCY &&
+          metadataQueue.length > 0
+        ) {
+          const id = metadataQueue.shift();
+          if (!id) continue;
+          if (!queuedMetadataIds.delete(id)) continue;
+          nextIds.push(id);
+          inFlightMetadataIds.add(id);
+        }
+
+        if (nextIds.length === 0) break;
+
+        const imagesById = new Map(
+          get().images.map((image) => [image.id, image] as const),
+        );
+
+        const results = await Promise.all(
+          nextIds.map(async (id) => {
+            const image = imagesById.get(id);
+            if (!image || image.dimensionsLoaded) {
+              inFlightMetadataIds.delete(id);
+              return null;
+            }
+
+            try {
+              const { width, height } = await loadNaturalDimensions(image);
+              return { id, width, height };
+            } catch {
+              return { id, width: 1, height: 1 };
+            } finally {
+              inFlightMetadataIds.delete(id);
+            }
+          }),
+        );
+
+        const updates = results.filter(Boolean) as Array<{
+          id: string;
+          width: number;
+          height: number;
+        }>;
+        pendingUpdates = [...pendingUpdates, ...updates];
+        if (
+          pendingUpdates.length >= METADATA_HYDRATION_BATCH_SIZE ||
+          (metadataQueue.length === 0 && inFlightMetadataIds.size === 0)
+        ) {
+          applyMetadataBatch(pendingUpdates);
+          pendingUpdates = [];
+        }
+        await yieldToMainThread();
+      }
+
+      if (pendingUpdates.length > 0) {
+        applyMetadataBatch(pendingUpdates);
+      }
+    } finally {
+      metadataWorkerRunning = false;
+      if (metadataQueue.length > 0) {
+        void runMetadataHydrationWorker();
+      }
+    }
+  };
+
+  const queueImageMetadataHydration = (
+    ids: string[],
+    options: { priority?: boolean } = {},
+  ) => {
+    const normalizedIds = ids
+      .map((id) => String(id || '').trim())
+      .filter(Boolean);
+    if (normalizedIds.length === 0) return;
+
+    if (options.priority) {
+      for (let index = normalizedIds.length - 1; index >= 0; index -= 1) {
+        const id = normalizedIds[index];
+        if (queuedMetadataIds.has(id) || inFlightMetadataIds.has(id)) continue;
+        queuedMetadataIds.add(id);
+        metadataQueue.unshift(id);
+      }
+    } else {
+      normalizedIds.forEach((id) => {
+        if (queuedMetadataIds.has(id) || inFlightMetadataIds.has(id)) return;
+        queuedMetadataIds.add(id);
+        metadataQueue.push(id);
+      });
+    }
+
+    void runMetadataHydrationWorker();
+  };
+
+  const buildImageShells = async (
+    rawImages: RawUploadImage[],
+  ): Promise<GalleryImage[]> => {
+    const CHUNK_SIZE = 500;
+    const nextImages: GalleryImage[] = [];
     for (let index = 0; index < rawImages.length; index += CHUNK_SIZE) {
       const chunk = rawImages.slice(index, index + CHUNK_SIZE);
-      const withDims = await Promise.all(
-        chunk.map((img) => loadImageWithDimensions(img)),
-      );
-      set((state) => ({
-        images: [
-          ...state.images,
-          ...withDims.map((image) => ({
-            ...image,
-            sourceLastModified: Number(image?.file?.lastModified || 0) || 0,
-            sourceSize: image.nativeSize ?? (Number(image?.file?.size || 0) || 0),
-            loadedAt: getNowTs(),
-          })),
-        ],
-      }));
-
+      nextImages.push(...chunk.map(toGalleryImageShell));
       if (index + CHUNK_SIZE < rawImages.length) {
         await yieldToMainThread();
       }
     }
-  },
+    return nextImages;
+  };
 
-  deleteImage: (id) => {
-    const { images, cropData, captionById, selectedId, sessionModifiedAt } =
-      get();
-    const img = images.find((i) => i.id === id);
-    if (img?.objectUrl) URL.revokeObjectURL(img.objectUrl);
+  return {
+    // --- Global State ---
+    images: [],
+    cropData: new Map<string, CropEntry>(),
+    captionById: new Map<string, string>(),
+    sessionModifiedAt: new Map<string, number>(),
+    cropLayoutVersion: 0,
+    folderNodes: [],
+    rootNames: [],
+    selectedId: null,
+    processing: null,
 
-    const newCropData = new Map<string, CropEntry>(cropData);
-    newCropData.delete(id);
-    const nextCaptionById = new Map<string, string>(captionById);
-    nextCaptionById.delete(id);
-    const nextSessionModifiedAt = new Map<string, number>(sessionModifiedAt);
-    nextSessionModifiedAt.delete(id);
+    // --- UI Settings ---
+    rowHeight: 250,
+    format: 'png',
+    quality: 90,
+    ifFileExists: 'append',
+    showAllFooters: true,
+    inspectorWidth: getDefaultInspectorWidth(),
+    explorerWidth: getDefaultExplorerWidth(),
+    sortOption: 'last_modified',
+    expandedPaths: new Set<string>(),
+    recursiveScan: false,
 
-    set({
-      images: images.filter((i) => i.id !== id),
-      cropData: newCropData,
-      captionById: nextCaptionById,
-      sessionModifiedAt: nextSessionModifiedAt,
-      selectedId: selectedId === id ? null : selectedId,
-    });
-  },
+    // --- Actions ---
 
-  clearAll: () => {
-    const { images } = get();
-    images.forEach((img) => {
-      if (img.objectUrl) URL.revokeObjectURL(img.objectUrl);
-    });
-    set({
-      images: [],
-      cropData: new Map<string, CropEntry>(),
-      captionById: new Map<string, string>(),
-      sessionModifiedAt: new Map<string, number>(),
-      selectedId: null,
-    });
-  },
+    // Images
+    setImages: async (rawImages, rootNames) => {
+      const safeRawImages = Array.isArray(rawImages) ? rawImages : [];
+      const previousImages = get().images;
+      resetPendingMetadataQueue();
+      previousImages.forEach((image) => revokeImageObjectUrl(image));
 
-  deleteFolder: (folderPath) => {
-    const normalizedFolderPath = String(folderPath || '').replace(/\\/g, '/');
-    if (!normalizedFolderPath) return;
-    const folderPrefix = normalizedFolderPath.endsWith('/')
-      ? normalizedFolderPath
-      : `${normalizedFolderPath}/`;
+      if (safeRawImages.length === 0) {
+        set((state) => {
+          const nextRootNames = rootNames || state.rootNames;
+          return {
+            images: [],
+            rootNames: nextRootNames,
+            folderNodes: buildFolderNodes([], nextRootNames),
+            selectedId: null,
+          };
+        });
+        return;
+      }
 
-    const { images, cropData, captionById, selectedId, sessionModifiedAt } =
-      get();
-    const toRemove = images.filter((img) =>
-      String(img.relativePath || '')
-        .replace(/\\/g, '/')
-        .startsWith(folderPrefix),
-    );
-    if (toRemove.length === 0) return;
+      const nextImages = await buildImageShells(safeRawImages);
+      const nextImageIds = nextImages
+        .filter((image) => !image.dimensionsLoaded)
+        .map((image) => image.id);
 
-    const removeIds = new Set(toRemove.map((img) => img.id));
-    toRemove.forEach((img) => {
-      if (img?.objectUrl) URL.revokeObjectURL(img.objectUrl);
-    });
+      set((state) => {
+        const nextRootNames = rootNames || state.rootNames;
+        return {
+          images: nextImages,
+          rootNames: nextRootNames,
+          folderNodes: buildFolderNodes(nextImages, nextRootNames),
+          selectedId: nextImages.some((img) => img.id === state.selectedId)
+            ? state.selectedId
+            : null,
+        };
+      });
 
-    const nextCropData = new Map<string, CropEntry>(cropData);
-    removeIds.forEach((id) => nextCropData.delete(id));
-    const nextCaptionById = new Map<string, string>(captionById);
-    removeIds.forEach((id) => nextCaptionById.delete(id));
-    const nextSessionModifiedAt = new Map<string, number>(sessionModifiedAt);
-    removeIds.forEach((id) => nextSessionModifiedAt.delete(id));
+      queueImageMetadataHydration(nextImageIds);
+      const nextSelectedId = get().selectedId;
+      if (nextSelectedId) {
+        queueImageMetadataHydration([nextSelectedId], { priority: true });
+      }
+    },
 
-    set({
-      images: images.filter((img) => !removeIds.has(img.id)),
-      cropData: nextCropData,
-      captionById: nextCaptionById,
-      sessionModifiedAt: nextSessionModifiedAt,
-      selectedId: selectedId && removeIds.has(selectedId) ? null : selectedId,
-    });
-  },
+    addImages: async (rawImages, rootNames) => {
+      if (
+        !Array.isArray(rawImages) ||
+        (rawImages.length === 0 && (!rootNames || rootNames.length === 0))
+      ) {
+        if (rootNames && rootNames.length > 0) {
+          set((state) => {
+            const nextRootNames = Array.from(
+              new Set([...state.rootNames, ...rootNames]),
+            );
+            return {
+              rootNames: nextRootNames,
+              folderNodes: buildFolderNodes(state.images, nextRootNames),
+            };
+          });
+        }
+        return;
+      }
 
-  // Selection
-  setSelectedId: (id) => set({ selectedId: id }),
+      const existingIds = new Set(get().images.map((img) => img.id));
+      const existingAbsolutePaths = new Set(
+        get()
+          .images.map((img) => normalizePath(img.absolutePath || ''))
+          .filter(Boolean),
+      );
+      const seenCandidateIds = new Set<string>();
+      const seenCandidatePaths = new Set<string>();
+      const candidateRaw = rawImages.filter((img) => {
+        const imageId = String(img?.id || '').trim();
+        const absolutePath = normalizePath(img?.absolutePath || '');
 
-  selectNext: () => {
-    const { images, selectedId } = get();
-    if (!selectedId) return;
-    const idx = images.findIndex((img) => img.id === selectedId);
-    if (idx < images.length - 1) set({ selectedId: images[idx + 1].id });
-  },
+        if (!imageId) return false;
+        if (existingIds.has(imageId) || seenCandidateIds.has(imageId)) {
+          return false;
+        }
+        seenCandidateIds.add(imageId);
 
-  selectPrev: () => {
-    const { images, selectedId } = get();
-    if (!selectedId) return;
-    const idx = images.findIndex((img) => img.id === selectedId);
-    if (idx > 0) set({ selectedId: images[idx - 1].id });
-  },
+        if (!absolutePath) return true;
+        if (
+          existingAbsolutePaths.has(absolutePath) ||
+          seenCandidatePaths.has(absolutePath)
+        ) {
+          return false;
+        }
+        seenCandidatePaths.add(absolutePath);
+        return true;
+      });
+      if (candidateRaw.length === 0) {
+        if (rootNames && rootNames.length > 0) {
+          set((state) => {
+            const nextRootNames = Array.from(
+              new Set([...state.rootNames, ...rootNames]),
+            );
+            return {
+              rootNames: nextRootNames,
+              folderNodes: buildFolderNodes(state.images, nextRootNames),
+            };
+          });
+        }
+        return;
+      }
+
+      const hydrated = await buildImageShells(candidateRaw);
+      let queuedIds: string[] = [];
+
+      set((state) => {
+        const currentImages = state.images;
+        const currentIds = new Set<string>();
+        const currentAbsolutePaths = new Set<string>();
+        const dedupedCurrent: GalleryImage[] = [];
+        const removedDuplicateIds: string[] = [];
+
+        currentImages.forEach((img) => {
+          const absolutePath = normalizePath(img.absolutePath || '');
+          if (currentIds.has(img.id)) {
+            removedDuplicateIds.push(img.id);
+            return;
+          }
+          if (absolutePath && currentAbsolutePaths.has(absolutePath)) {
+            removedDuplicateIds.push(img.id);
+            return;
+          }
+
+          currentIds.add(img.id);
+          if (absolutePath) {
+            currentAbsolutePaths.add(absolutePath);
+          }
+          dedupedCurrent.push(img);
+        });
+
+        const validNew: GalleryImage[] = [];
+        hydrated.forEach((img) => {
+          const absolutePath = normalizePath(img.absolutePath || '');
+          if (currentIds.has(img.id)) {
+            revokeImageObjectUrl(img);
+            return;
+          }
+          if (absolutePath && currentAbsolutePaths.has(absolutePath)) {
+            revokeImageObjectUrl(img);
+            return;
+          }
+          currentIds.add(img.id);
+          if (absolutePath) {
+            currentAbsolutePaths.add(absolutePath);
+          }
+          validNew.push(img);
+        });
+        queuedIds = validNew
+          .filter((img) => !img.dimensionsLoaded)
+          .map((img) => img.id);
+
+        const nextImages = [...dedupedCurrent, ...validNew];
+        const nextRootNames = rootNames?.length
+          ? Array.from(new Set([...state.rootNames, ...rootNames]))
+          : state.rootNames;
+
+        const nextImageIds = new Set(nextImages.map((img) => img.id));
+        const staleIds = removedDuplicateIds.filter(
+          (id) => !nextImageIds.has(id),
+        );
+
+        if (staleIds.length === 0) {
+          return {
+            images: nextImages,
+            rootNames: nextRootNames,
+            folderNodes: buildFolderNodes(nextImages, nextRootNames),
+          };
+        }
+
+        const nextCropData = new Map<string, CropEntry>(state.cropData);
+        const nextCaptionById = new Map<string, string>(state.captionById);
+        const nextSessionModifiedAt = new Map<string, number>(
+          state.sessionModifiedAt,
+        );
+        staleIds.forEach((id) => {
+          nextCropData.delete(id);
+          nextCaptionById.delete(id);
+          nextSessionModifiedAt.delete(id);
+        });
+
+        return {
+          images: nextImages,
+          rootNames: nextRootNames,
+          folderNodes: buildFolderNodes(nextImages, nextRootNames),
+          cropData: nextCropData,
+          captionById: nextCaptionById,
+          sessionModifiedAt: nextSessionModifiedAt,
+          selectedId:
+            state.selectedId && nextImageIds.has(state.selectedId)
+              ? state.selectedId
+              : null,
+        };
+      });
+
+      if (queuedIds.length > 0) {
+        queueImageMetadataHydration(queuedIds);
+      }
+      const nextSelectedId = get().selectedId;
+      if (nextSelectedId) {
+        queueImageMetadataHydration([nextSelectedId], { priority: true });
+      }
+    },
+
+    ensureImageMetadata: (id) => {
+      const safeId = String(id || '').trim();
+      if (!safeId) return;
+
+      const target = get().images.find((image) => image.id === safeId);
+      if (!target || target.dimensionsLoaded) return;
+      queueImageMetadataHydration([safeId], { priority: true });
+    },
+
+    deleteImage: (id) => {
+      removeIdsFromMetadataQueue([id]);
+      set((state) => {
+        const removedImage = state.images.find((img) => img.id === id);
+        const nextImages = state.images.filter((img) => img.id !== id);
+        const newCropData = new Map<string, CropEntry>(state.cropData);
+        newCropData.delete(id);
+        const nextCaptionById = new Map<string, string>(state.captionById);
+        nextCaptionById.delete(id);
+        const nextSessionModifiedAt = new Map<string, number>(
+          state.sessionModifiedAt,
+        );
+        nextSessionModifiedAt.delete(id);
+        revokeImageObjectUrl(removedImage);
+
+        return {
+          images: nextImages,
+          folderNodes: buildFolderNodes(nextImages, state.rootNames),
+          cropData: newCropData,
+          captionById: nextCaptionById,
+          sessionModifiedAt: nextSessionModifiedAt,
+          selectedId: state.selectedId === id ? null : state.selectedId,
+        };
+      });
+    },
+
+    clearImages: () => {
+      const { images } = get();
+      removeIdsFromMetadataQueue(images.map((img) => img.id));
+      resetPendingMetadataQueue();
+      images.forEach((img) => {
+        revokeImageObjectUrl(img);
+      });
+      set({
+        images: [],
+        folderNodes: [],
+        rootNames: [],
+        cropData: new Map<string, CropEntry>(),
+        captionById: new Map<string, string>(),
+        sessionModifiedAt: new Map<string, number>(),
+        selectedId: null,
+      });
+    },
+
+    deleteFolder: (folderPath) => {
+      const normalizedFolderPath = String(folderPath || '').replace(/\\/g, '/');
+      if (!normalizedFolderPath) return;
+      const folderPrefix = normalizedFolderPath.endsWith('/')
+        ? normalizedFolderPath
+        : `${normalizedFolderPath}/`;
+      let removedIds: string[] = [];
+
+      set((state) => {
+        const nextImages = state.images.filter(
+          (img) =>
+            !img.relativePath.startsWith(folderPrefix) &&
+            img.relativePath !== normalizedFolderPath,
+        );
+
+        const nextRootNames = state.rootNames.filter(
+          (name) => name !== normalizedFolderPath,
+        );
+
+        const nextCropData = new Map<string, CropEntry>(state.cropData);
+        const nextCaptionById = new Map<string, string>(state.captionById);
+        const nextSessionModifiedAt = new Map<string, number>(
+          state.sessionModifiedAt,
+        );
+
+        removedIds = state.images
+          .filter((img) => !nextImages.some((ni) => ni.id === img.id))
+          .map((img) => img.id);
+
+        removedIds.forEach((id) => {
+          nextCropData.delete(id);
+          nextCaptionById.delete(id);
+          nextSessionModifiedAt.delete(id);
+          const img = state.images.find((i) => i.id === id);
+          revokeImageObjectUrl(img);
+        });
+
+        return {
+          images: nextImages,
+          rootNames: nextRootNames,
+          folderNodes: buildFolderNodes(nextImages, nextRootNames),
+          cropData: nextCropData,
+          captionById: nextCaptionById,
+          sessionModifiedAt: nextSessionModifiedAt,
+          selectedId:
+            state.selectedId &&
+            nextImages.some((img) => img.id === state.selectedId)
+              ? state.selectedId
+              : null,
+        };
+      });
+
+      if (removedIds.length > 0) {
+        removeIdsFromMetadataQueue(removedIds);
+      }
+    },
+    // Selection
+    setSelectedId: (id) => {
+      set({ selectedId: id });
+      if (!id) return;
+      get().ensureImageMetadata(id);
+    },
+
+    selectNext: () => {
+      const { images, selectedId } = get();
+      if (!selectedId) return;
+      const idx = images.findIndex((img) => img.id === selectedId);
+      if (idx < images.length - 1) get().setSelectedId(images[idx + 1].id);
+    },
+
+    selectPrev: () => {
+      const { images, selectedId } = get();
+      if (!selectedId) return;
+      const idx = images.findIndex((img) => img.id === selectedId);
+      if (idx > 0) get().setSelectedId(images[idx - 1].id);
+    },
 
   // Crop Data
   setCropChange: (id, coords) => {
     set((state) => {
-      // Mutate in place to avoid cloning a large Map every pointer frame.
-      // Fine here because subscribers select by key (`cropData.get(id)`), not by map identity.
-      const next = state.cropData;
-      const previousEntry = next.get(id);
+      const nextCropData = new Map(state.cropData);
+      const previousEntry = nextCropData.get(id);
       const normalizedCoords = normalizeCropEntry(coords);
-      next.set(id, normalizedCoords);
+      nextCropData.set(id, normalizedCoords);
+
       const image = state.images.find((img) => img.id === id);
-      const isMeaningfulChange = hasMeaningfulImageChange(normalizedCoords, image);
+      const isMeaningfulChange = hasMeaningfulImageChange(
+        normalizedCoords,
+        image,
+      );
       const now = getNowTs();
       const previousModifiedAt = state.sessionModifiedAt.get(id) || 0;
       let nextSessionModifiedAt = state.sessionModifiedAt;
+
       if (isMeaningfulChange) {
         if (
           previousModifiedAt === 0 ||
           now - previousModifiedAt >= SESSION_MODIFIED_THROTTLE_MS
         ) {
-          nextSessionModifiedAt = new Map<string, number>(state.sessionModifiedAt);
+          nextSessionModifiedAt = new Map<string, number>(
+            state.sessionModifiedAt,
+          );
           nextSessionModifiedAt.set(id, now);
         }
       } else if (previousModifiedAt > 0) {
         const caption = String(state.captionById.get(id) || '').trim();
         if (caption === '') {
-          nextSessionModifiedAt = new Map<string, number>(state.sessionModifiedAt);
+          nextSessionModifiedAt = new Map<string, number>(
+            state.sessionModifiedAt,
+          );
           nextSessionModifiedAt.delete(id);
         }
       }
+
       const shouldBumpLayoutVersion = hasGridLayoutAffectingChange(
         previousEntry,
         normalizedCoords,
       );
-      if (!shouldBumpLayoutVersion) {
-        return {
-          cropData: next,
-          sessionModifiedAt: nextSessionModifiedAt,
-        };
-      }
+
       return {
-        cropData: next,
+        cropData: nextCropData,
         sessionModifiedAt: nextSessionModifiedAt,
-        cropLayoutVersion: state.cropLayoutVersion + 1,
+        cropLayoutVersion: shouldBumpLayoutVersion
+          ? state.cropLayoutVersion + 1
+          : state.cropLayoutVersion,
       };
     });
   },
@@ -541,7 +1031,9 @@ const useStore = create<UseStoreState>((set, get) => ({
     const { images, cropData } = get();
     const sourceData = cropData.get(sourceId);
     if (!sourceData) return;
-    const sourceCoordinates = normalizeStoredCoordinates(sourceData.coordinates);
+    const sourceCoordinates = normalizeStoredCoordinates(
+      sourceData.coordinates,
+    );
     if (!sourceCoordinates) return;
 
     const sourceImg = images.find((img) => img.id === sourceId);
@@ -566,10 +1058,13 @@ const useStore = create<UseStoreState>((set, get) => ({
     const relHeight = sourceCoordinates.height / sourceH;
 
     set((state) => {
-      // Same in-place update strategy as setCropChange for bulk operations.
-      const next = state.cropData;
-      const nextSessionModifiedAt = new Map<string, number>(state.sessionModifiedAt);
+      const nextCropData = new Map(state.cropData);
+      const nextSessionModifiedAt = new Map<string, number>(
+        state.sessionModifiedAt,
+      );
       const now = getNowTs();
+      let shouldBumpLayoutVersion = false;
+
       targetIds.forEach((id) => {
         const targetImg = images.find((img) => img.id === id);
         if (!targetImg) return;
@@ -582,16 +1077,19 @@ const useStore = create<UseStoreState>((set, get) => ({
         const targetW = targetBounds.width;
         const targetH = targetBounds.height;
 
-        next.set(id, {
+        const newCoordinates = {
+          left: Math.round(relLeft * targetW),
+          top: Math.round(relTop * targetH),
+          width: Math.round(relWidth * targetW),
+          height: Math.round(relHeight * targetH),
+        };
+        const nextEntry = {
           ...sourceData,
-          coordinates: {
-            left: Math.round(relLeft * targetW),
-            top: Math.round(relTop * targetH),
-            width: Math.round(relWidth * targetW),
-            height: Math.round(relHeight * targetH),
-          },
-        });
-        const nextEntry = next.get(id);
+          coordinates: newCoordinates,
+        };
+        const previousEntry = nextCropData.get(id);
+        nextCropData.set(id, nextEntry);
+
         if (hasMeaningfulImageChange(nextEntry, targetImg)) {
           nextSessionModifiedAt.set(id, now);
         } else {
@@ -602,14 +1100,16 @@ const useStore = create<UseStoreState>((set, get) => ({
             nextSessionModifiedAt.set(id, now);
           }
         }
+        if (hasGridLayoutAffectingChange(previousEntry, nextEntry)) {
+          shouldBumpLayoutVersion = true;
+        }
       });
       return {
-        cropData: next,
+        cropData: nextCropData,
         sessionModifiedAt: nextSessionModifiedAt,
-        cropLayoutVersion:
-          targetIds.length > 0
-            ? state.cropLayoutVersion + 1
-            : state.cropLayoutVersion,
+        cropLayoutVersion: shouldBumpLayoutVersion
+          ? state.cropLayoutVersion + 1
+          : state.cropLayoutVersion,
       };
     });
   },
@@ -644,11 +1144,15 @@ const useStore = create<UseStoreState>((set, get) => ({
           previousModifiedAt === 0 ||
           now - previousModifiedAt >= SESSION_MODIFIED_THROTTLE_MS
         ) {
-          nextSessionModifiedAt = new Map<string, number>(state.sessionModifiedAt);
+          nextSessionModifiedAt = new Map<string, number>(
+            state.sessionModifiedAt,
+          );
           nextSessionModifiedAt.set(id, now);
         }
       } else if (previousModifiedAt > 0) {
-        nextSessionModifiedAt = new Map<string, number>(state.sessionModifiedAt);
+        nextSessionModifiedAt = new Map<string, number>(
+          state.sessionModifiedAt,
+        );
         nextSessionModifiedAt.delete(id);
       }
 
@@ -667,7 +1171,9 @@ const useStore = create<UseStoreState>((set, get) => ({
     set((state) => {
       const nextCropData = new Map<string, CropEntry>(state.cropData);
       const nextCaptionById = new Map<string, string>(state.captionById);
-      const nextSessionModifiedAt = new Map<string, number>(state.sessionModifiedAt);
+      const nextSessionModifiedAt = new Map<string, number>(
+        state.sessionModifiedAt,
+      );
 
       let shouldBumpLayoutVersion = false;
       const entries = cropEntriesById ? Object.entries(cropEntriesById) : [];
@@ -713,18 +1219,27 @@ const useStore = create<UseStoreState>((set, get) => ({
   // UI Settings
   setRowHeight: (rowHeight) => set({ rowHeight }),
   setFormat: (format) => set({ format }),
-  setQuality: (quality) => set({ quality }),
-  setIfFileExists: (ifFileExists) =>
-    set({
-      ifFileExists:
-        ifFileExists === 'skip' ||
-        ifFileExists === 'overwrite' ||
-        ifFileExists === 'append'
-          ? ifFileExists
-          : 'append',
-    }),
+  setQuality: (quality) =>
+    set((state) => ({ quality: Math.max(1, Math.min(100, quality)) })),
+  setIfFileExists: (ifFileExists) => set({ ifFileExists }),
   setShowAllFooters: (showAllFooters) => set({ showAllFooters }),
-  setInspectorWidth: (inspectorWidth) => set({ inspectorWidth }),
+  setInspectorWidth: (width) => {
+    // Basic bounds check to avoid shrinking completely or overflowing
+    const minWidth = 360;
+    const maxWidth =
+      typeof window !== 'undefined' ? window.innerWidth * 0.96 : 1800;
+    const validWidth = Math.max(minWidth, Math.min(maxWidth, width));
+    set({ inspectorWidth: validWidth });
+  },
+  setExplorerWidth: (width) => {
+    // Sensible bounds check for sidebar width
+    const minWidth = 180;
+    const maxWidth =
+      typeof window !== 'undefined' ? window.innerWidth * 0.4 : 600;
+    const safeMax = Math.max(minWidth + 100, Math.min(500, maxWidth));
+    const validWidth = Math.max(minWidth, Math.min(safeMax, width));
+    set({ explorerWidth: validWidth });
+  },
   setSortOption: (sortOption) =>
     set({
       sortOption:
@@ -738,6 +1253,21 @@ const useStore = create<UseStoreState>((set, get) => ({
           : 'last_modified',
     }),
   setProcessing: (processing) => set({ processing }),
-}));
+
+  // Expanded Paths
+  toggleExpandedPath: (path) =>
+    set((state) => {
+      const next = new Set(state.expandedPaths);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return { expandedPaths: next };
+    }),
+  setExpandedPaths: (expandedPaths) => set({ expandedPaths }),
+  setRecursiveScan: (recursiveScan) => set({ recursiveScan }),
+  };
+});
 
 export default useStore;

@@ -16,8 +16,11 @@ type MainLayoutProps = {
   setSelectedId: (id: string | null) => void;
   handleCropChange: (id: string, coords: CropEntry) => void;
   handleDelete: (id: string) => void;
+  onLoadMoreImages?: () => void;
   inspectorWidth: number;
   setInspectorWidth: (width: number) => void;
+  explorerWidth: number;
+  setExplorerWidth: (width: number) => void;
   selectNext: () => void;
   selectPrev: () => void;
   handleApplyCropToImages: (sourceId: string, targetIds: string[]) => void;
@@ -29,6 +32,12 @@ type MainLayoutProps = {
   onResetFolderFilter: () => void;
   onAddFolder: () => void | Promise<void>;
   onRemoveFolder: (path: string) => void | Promise<void>;
+  expandedPaths: Set<string>;
+  onToggleExpand: (path: string) => void;
+  recursiveScan: boolean;
+  setRecursiveScan: (recursive: boolean) => void;
+  loadingFolderPaths?: Set<string>;
+  isActiveFolderLoading?: boolean;
 };
 
 const MainLayout = ({
@@ -38,8 +47,11 @@ const MainLayout = ({
   setSelectedId,
   handleCropChange,
   handleDelete,
+  onLoadMoreImages,
   inspectorWidth,
   setInspectorWidth,
+  explorerWidth,
+  setExplorerWidth,
   selectNext,
   selectPrev,
   handleApplyCropToImages,
@@ -51,6 +63,12 @@ const MainLayout = ({
   onResetFolderFilter,
   onAddFolder,
   onRemoveFolder,
+  expandedPaths,
+  onToggleExpand,
+  recursiveScan,
+  setRecursiveScan,
+  loadingFolderPaths,
+  isActiveFolderLoading,
 }: MainLayoutProps) => {
   const selectedImage = images.find((img) => img.id === selectedId);
 
@@ -64,6 +82,13 @@ const MainLayout = ({
         totalImageCount={totalImageCount}
         onAddFolder={onAddFolder}
         onRemoveFolder={onRemoveFolder}
+        expandedPaths={expandedPaths}
+        onToggleExpand={onToggleExpand}
+        recursiveScan={recursiveScan}
+        setRecursiveScan={setRecursiveScan}
+        explorerWidth={explorerWidth}
+        setExplorerWidth={setExplorerWidth}
+        loadingFolderPaths={loadingFolderPaths}
       />
 
       <div className="image-grid-scroll">
@@ -75,10 +100,24 @@ const MainLayout = ({
             selectedId={selectedId}
             onSelect={setSelectedId}
             onDelete={handleDelete}
+            onEndReached={onLoadMoreImages}
           />
+        ) : isActiveFolderLoading ? (
+          <div className="grid-empty-state">
+            <p>Scanning folder...</p>
+          </div>
         ) : (
           <div className="grid-empty-state">
             <p>No images in this folder selection.</p>
+            {!recursiveScan && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setRecursiveScan(true)}
+              >
+                Enable Recursive Scan
+              </button>
+            )}
             <button
               type="button"
               className="btn btn-secondary btn-sm"
@@ -93,7 +132,6 @@ const MainLayout = ({
       <AnimatePresence>
         {selectedId && selectedImage && (
           <Inspector
-            key={selectedImage.id}
             image={selectedImage}
             onCropChange={handleCropChange}
             onClose={() => setSelectedId(null)}

@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
 
@@ -43,15 +43,41 @@ pub fn save_root_paths(app: &AppHandle, roots: &[String]) -> Result<(), String> 
     fs::write(file_path, raw).map_err(|error| format!("Failed to save linked roots: {error}"))
 }
 
+pub struct AddRootResult {
+    pub saved_paths: Vec<String>,
+}
+
 /// Add a root path if not already present and persist.
-pub fn add_root_path(app: &AppHandle, new_root: &str) -> Result<Vec<String>, String> {
+/// If the new path is a sub-folder of an already added folder, skip adding.
+/// If the new path is a parent of already added folder(s), remove those children.
+pub fn add_root_path(app: &AppHandle, new_root: &str) -> Result<AddRootResult, String> {
     let mut saved = load_saved_root_paths(app)?;
     let normalized = normalize_saved_root_path(new_root);
-    if !saved.iter().any(|item| item == &normalized) {
-        saved.push(normalized);
+    let new_path = Path::new(&normalized);
+
+    // 1. Check if the new path is already a child of (or equal to) an existing path
+    if saved.iter().any(|item| {
+        let existing_path = Path::new(item);
+        new_path.starts_with(existing_path)
+    }) {
+        return Ok(AddRootResult {
+            saved_paths: saved,
+        });
     }
+
+    // 2. Remove any existing paths that are children of the new path
+    saved.retain(|item| {
+        let existing_path = Path::new(item);
+        !existing_path.starts_with(new_path)
+    });
+
+    // 3. Add the new path
+    saved.push(normalized);
     save_root_paths(app, &saved)?;
-    Ok(saved)
+
+    Ok(AddRootResult {
+        saved_paths: saved,
+    })
 }
 
 /// Remove a root path and persist. Returns `true` if the path was found.

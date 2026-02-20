@@ -1,5 +1,8 @@
 .justified-grid-container {
   direction: ltr;
+  padding: 12px;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .justified-grid-container .react-photo-album--rows,

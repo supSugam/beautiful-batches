@@ -78,6 +78,8 @@ pub struct NativeScannedImage {
     pub absolute_path: String,
     pub size: u64,
     pub last_modified: u64,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -86,6 +88,14 @@ pub struct NativeRootScan {
     pub root_path: String,
     pub directory_name: String,
     pub images: Vec<NativeScannedImage>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeDirectoryChild {
+    pub path: String,
+    pub name: String,
+    pub depth: usize,
 }
 
 #[derive(Debug, Serialize)]

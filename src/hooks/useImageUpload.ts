@@ -2,27 +2,31 @@ import { useCallback, type ChangeEvent } from 'react';
 import useStore from '../store/useStore';
 import {
   imagesFromFileList,
-  loadImagesFromSavedDirectory,
   pickImagesFromDirectory,
+  loadImagesFromSavedDirectory,
   type LoadSavedDirectoryResult,
   type PickImagesFromDirectoryResult,
 } from '../utils/directoryPicker';
 import type { DirectoryHandle, RawUploadImage } from '../types/app';
 
-type ImageUploadResult = {
+export type ImageUploadResult = {
   handled: boolean;
   images: RawUploadImage[];
   directoryName: string;
   directoryHandle: DirectoryHandle | null;
   rootPaths: string[];
+  rootNames: string[];
+  rootPath: string;
 };
 
-type RestoreDirectoryResult = {
+export type RestoreDirectoryResult = {
   restored: boolean;
   images: RawUploadImage[];
   directoryName: string;
   directoryHandle: DirectoryHandle | null;
   rootPaths: string[];
+  rootNames: string[];
+  rootPath: string;
 };
 
 const toImageUploadResult = (
@@ -31,10 +35,14 @@ const toImageUploadResult = (
 ): ImageUploadResult => ({
   handled,
   images: Array.isArray(result.images) ? result.images : [],
-  directoryName:
-    'directoryName' in result ? result.directoryName || '' : '',
+  directoryName: 'directoryName' in result ? result.directoryName || '' : '',
   directoryHandle:
     'directoryHandle' in result ? result.directoryHandle || null : null,
+  rootPath: 'rootPath' in result ? result.rootPath || '' : '',
+  rootNames:
+    'rootNames' in result && Array.isArray(result.rootNames)
+      ? result.rootNames
+      : [],
   rootPaths:
     'rootPaths' in result && Array.isArray(result.rootPaths)
       ? result.rootPaths
@@ -49,29 +57,44 @@ export const useImageUpload = () => {
     [addImages],
   );
 
-  const handleAddMoreViaDirectoryPicker = useCallback(async (): Promise<boolean> => {
-    try {
-      const saved = await loadImagesFromSavedDirectory({
-        promptForPermission: true,
-      });
-      if (saved.supported && saved.available && saved.granted) {
-        if (saved.images.length > 0) {
-          await addImages(saved.images);
+  const handleAddMoreViaDirectoryPicker =
+    useCallback(async (): Promise<boolean> => {
+      try {
+        const saved = await loadImagesFromSavedDirectory({
+          promptForPermission: true,
+        });
+        if (saved.supported && saved.available && saved.granted) {
+          if (saved.images.length > 0 || saved.rootNames?.length) {
+            await addImages(
+              saved.images,
+              saved.rootNames?.length ? saved.rootNames : [],
+            );
+          }
+          return true;
+        }
+
+        const result = await pickImagesFromDirectory();
+        if (!result.supported) return false;
+
+        if (
+          !result.aborted &&
+          (result.images.length > 0 || result.directoryName)
+        ) {
+          await addImages(
+            result.images,
+            result.rootPath && result.directoryName
+              ? [result.directoryName]
+              : result.rootNames?.length
+                ? result.rootNames
+                : [],
+          );
         }
         return true;
+      } catch (error) {
+        console.error('Directory picker add-more error:', error);
+        return false;
       }
-
-      const result = await pickImagesFromDirectory();
-      if (!result.supported) return false;
-      if (!result.aborted && result.images.length > 0) {
-        await addImages(result.images);
-      }
-      return true;
-    } catch (error) {
-      console.error('Directory picker add-more error:', error);
-      return false;
-    }
-  }, [addImages]);
+    }, [addImages]);
 
   const handlePickFolderViaDirectoryPicker = useCallback(
     async (): Promise<ImageUploadResult> => {
@@ -83,6 +106,8 @@ export const useImageUpload = () => {
             images: [],
             directoryName: '',
             directoryHandle: null,
+            rootPath: '',
+            rootNames: [],
             rootPaths: [],
           };
         }
@@ -92,9 +117,12 @@ export const useImageUpload = () => {
             images: [],
             directoryName: '',
             directoryHandle: null,
+            rootPath: '',
+            rootNames: [],
             rootPaths: [],
           };
         }
+
         return toImageUploadResult(result, true);
       } catch (error) {
         console.error('Directory picker add-folder error:', error);
@@ -103,6 +131,8 @@ export const useImageUpload = () => {
           images: [],
           directoryName: '',
           directoryHandle: null,
+          rootPath: '',
+          rootNames: [],
           rootPaths: [],
         };
       }
@@ -127,6 +157,8 @@ export const useImageUpload = () => {
             images: [],
             directoryName: '',
             directoryHandle: null,
+            rootPath: '',
+            rootNames: [],
             rootPaths: [],
           };
         }
@@ -136,6 +168,8 @@ export const useImageUpload = () => {
             images: [],
             directoryName: '',
             directoryHandle: null,
+            rootPath: '',
+            rootNames: [],
             rootPaths: [],
           };
         }
@@ -147,6 +181,8 @@ export const useImageUpload = () => {
           images: [],
           directoryName: '',
           directoryHandle: null,
+          rootPath: '',
+          rootNames: [],
           rootPaths: [],
         };
       }
@@ -166,16 +202,23 @@ export const useImageUpload = () => {
             images: [],
             directoryName: '',
             directoryHandle: null,
+            rootPath: '',
+            rootNames: [],
             rootPaths: [],
           };
         }
-        if (saved.images.length > 0) {
-          await addImages(saved.images);
+        if (saved.images.length > 0 || saved.rootNames?.length) {
+          await addImages(
+            saved.images,
+            saved.rootNames?.length ? saved.rootNames : [],
+          );
           return {
             restored: true,
             images: saved.images,
             directoryName: saved.directoryName || '',
             directoryHandle: saved.directoryHandle || null,
+            rootPath: saved.rootPath || '',
+            rootNames: saved.rootNames || [],
             rootPaths: saved.rootPaths || [],
           };
         }
@@ -184,6 +227,8 @@ export const useImageUpload = () => {
           images: [],
           directoryName: saved.directoryName || '',
           directoryHandle: saved.directoryHandle || null,
+          rootPath: saved.rootPath || '',
+          rootNames: saved.rootNames || [],
           rootPaths: saved.rootPaths || [],
         };
       } catch {
@@ -192,6 +237,8 @@ export const useImageUpload = () => {
           images: [],
           directoryName: '',
           directoryHandle: null,
+          rootPath: '',
+          rootNames: [],
           rootPaths: [],
         };
       }

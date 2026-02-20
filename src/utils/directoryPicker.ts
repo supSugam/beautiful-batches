@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   DirectoryHandle,
+  FolderNode,
   RawUploadImage,
 } from '../types/app';
 
@@ -35,6 +36,8 @@ type NativeScannedImage = {
   absolutePath: string;
   size: number;
   lastModified: number;
+  width: number;
+  height: number;
 };
 
 type NativeRootScan = {
@@ -43,13 +46,19 @@ type NativeRootScan = {
   images: NativeScannedImage[];
 };
 
+type NativeDirectoryChild = {
+  path: string;
+  name: string;
+  depth: number;
+};
+
 type NativePickAndScanRootResult = {
   cancelled: boolean;
   root: NativeRootScan | null;
   savedRootPaths: string[];
 };
 
-type NativeLoadSavedRootsResult = {
+export type NativeLoadSavedRootsResult = {
   roots: NativeRootScan[];
   savedRootPaths: string[];
 };
@@ -80,6 +89,17 @@ const buildUploadId = (prefix: string, relativePath: string): string => {
   return `${prefix}-${Date.now()}-${uploadSequence}-${relativePath}`;
 };
 
+const buildNativeUploadId = (
+  image: NativeScannedImage,
+  relativePath: string,
+): string => {
+  const absolutePath = normalizePath(image.absolutePath);
+  if (absolutePath) {
+    return `native:${absolutePath}`;
+  }
+  return `native:${relativePath}`;
+};
+
 /**
  * Convert a native scanned image (path-based) into a RawUploadImage.
  *
@@ -89,12 +109,10 @@ const buildUploadId = (prefix: string, relativePath: string): string => {
  */
 const nativeScannedImageToRawUpload = (
   image: NativeScannedImage,
-  prefix: string,
 ): RawUploadImage => {
   const extension = getExtension(image.fileName);
   const mimeType = mimeTypeForExtension(extension);
   const relativePath = normalizePath(image.relativePath || image.fileName);
-
   // Build the asset URL for the webview.
   const assetUrl = toLocalFileUrl(image.absolutePath);
   const thumbnailUrl = `${assetUrl}?thumbnail=true`;
@@ -109,23 +127,28 @@ const nativeScannedImageToRawUpload = (
 
   return {
     file,
-    id: buildUploadId(prefix, relativePath),
+    id: buildNativeUploadId(image, relativePath),
     relativePath,
     absolutePath: image.absolutePath,
     assetUrl,
     thumbnailUrl,
     nativeSize: image.size,
+    nativeWidth: Number(image.width || 0) || undefined,
+    nativeHeight: Number(image.height || 0) || undefined,
   };
 };
 
-const flattenNativeRootScans = (
+export const flattenNativeRootScans = (
   roots: NativeRootScan[],
 ): RawUploadImage[] => {
   const images: RawUploadImage[] = [];
   roots.forEach((root) => {
-    const prefix = normalizePath(root.rootPath || root.directoryName || 'root');
     root.images.forEach((image) => {
-      images.push(nativeScannedImageToRawUpload(image, prefix));
+      if (Number(image?.size || 0) <= 0) return;
+      if (Number(image?.width || 0) <= 0 || Number(image?.height || 0) <= 0) {
+        return;
+      }
+      images.push(nativeScannedImageToRawUpload(image));
     });
   });
   return images;
@@ -197,11 +220,14 @@ export type PickImagesFromDirectoryResult =
       directoryName?: string;
       directoryHandle?: DirectoryHandle;
       rootPaths?: string[];
+      rootNames?: string[];
+      rootPath?: string;
     };
 
 export const pickImagesFromDirectory = async (): Promise<PickImagesFromDirectoryResult> => {
   if (isTauriRuntime()) {
-    const result = await invoke<NativePickAndScanRootResult>('pick_and_scan_root');
+    const result =
+      await invoke<NativePickAndScanRootResult>('pick_and_scan_root');
     if (result.cancelled) {
       return {
         supported: true,
@@ -211,7 +237,16 @@ export const pickImagesFromDirectory = async (): Promise<PickImagesFromDirectory
     }
 
     if (!result.root) {
-      return { supported: false, aborted: false, images: [] };
+      return {
+        supported: true,
+        aborted: false,
+        images: [],
+        rootPaths: Array.isArray(result.savedRootPaths)
+          ? result.savedRootPaths
+              .map((value) => normalizePath(value))
+              .filter(Boolean)
+          : [],
+      };
     }
 
     return {
@@ -219,8 +254,12 @@ export const pickImagesFromDirectory = async (): Promise<PickImagesFromDirectory
       aborted: false,
       images: flattenNativeRootScans([result.root]),
       directoryName: result.root.directoryName,
+      rootPath: normalizePath(result.root.rootPath),
+      rootNames: [result.root.directoryName],
       rootPaths: Array.isArray(result.savedRootPaths)
-        ? result.savedRootPaths.map((value) => normalizePath(value)).filter(Boolean)
+        ? result.savedRootPaths
+            .map((value) => normalizePath(value))
+            .filter(Boolean)
         : [],
     };
   }
@@ -230,7 +269,9 @@ export const pickImagesFromDirectory = async (): Promise<PickImagesFromDirectory
   }
 
   try {
-    const directoryHandle = await (window as WindowWithDirectoryPicker).showDirectoryPicker?.();
+    const directoryHandle = await (
+      window as WindowWithDirectoryPicker
+    ).showDirectoryPicker?.();
     if (!directoryHandle) {
       return { supported: false, aborted: false, images: [] };
     }
@@ -243,6 +284,7 @@ export const pickImagesFromDirectory = async (): Promise<PickImagesFromDirectory
       images,
       directoryName: directoryHandle.name,
       directoryHandle,
+      rootPath: normalizePath(directoryHandle.name),
       rootPaths: [normalizePath(directoryHandle.name)],
     };
   } catch (error) {
@@ -270,14 +312,20 @@ export type LoadSavedDirectoryResult =
       directoryName?: string;
       directoryHandle?: DirectoryHandle;
       rootPaths?: string[];
+      rootNames?: string[];
+      rootPath?: string;
     };
 
 export const loadImagesFromSavedDirectory = async (
-  _options: { promptForPermission?: boolean } = {},
+  options: { promptForPermission?: boolean } = {},
 ): Promise<LoadSavedDirectoryResult> => {
+  const { promptForPermission = false } = options;
   if (isTauriRuntime()) {
-    const result = await invoke<NativeLoadSavedRootsResult>('load_saved_roots_and_scan');
-    const hasSavedRoots = Array.isArray(result.savedRootPaths) && result.savedRootPaths.length > 0;
+    const result = await invoke<NativeLoadSavedRootsResult>(
+      'load_saved_roots_and_scan',
+    );
+    const hasSavedRoots =
+      Array.isArray(result.savedRootPaths) && result.savedRootPaths.length > 0;
     const roots = Array.isArray(result.roots) ? result.roots : [];
 
     if (!hasSavedRoots) {
@@ -296,6 +344,8 @@ export const loadImagesFromSavedDirectory = async (
       granted: true,
       images,
       directoryName: roots[0]?.directoryName || '',
+      rootPath: roots[0] ? normalizePath(roots[0].rootPath) : '',
+      rootNames: roots.map((r) => r.directoryName),
       rootPaths: result.savedRootPaths
         .map((value) => normalizePath(value))
         .filter(Boolean),
@@ -308,6 +358,185 @@ export const loadImagesFromSavedDirectory = async (
     granted: false,
     images: [],
   };
+};
+
+export const loadSavedRootPaths = async (): Promise<string[]> => {
+  if (!isTauriRuntime()) return [];
+  try {
+    const result = await invoke<string[]>('load_saved_roots_metadata');
+    if (!Array.isArray(result)) return [];
+    return result.map((value) => normalizePath(value)).filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+export const scanImagesFromRootPath = async (
+  rootPath: string,
+): Promise<PickImagesFromDirectoryResult> => {
+  const normalizedRoot = normalizePath(rootPath);
+  if (!normalizedRoot || !isTauriRuntime()) {
+    return {
+      supported: false,
+      aborted: false,
+      images: [],
+    };
+  }
+
+  try {
+    const root = await invoke<NativeRootScan>('scan_root_by_path', {
+      rootPath: normalizedRoot,
+    });
+    if (!root) {
+      return {
+        supported: true,
+        aborted: false,
+        images: [],
+        rootPath: normalizedRoot,
+      };
+    }
+
+    return {
+      supported: true,
+      aborted: false,
+      images: flattenNativeRootScans([root]),
+      directoryName: root.directoryName,
+      rootPath: normalizePath(root.rootPath || normalizedRoot),
+      rootNames: [root.directoryName],
+      rootPaths: [normalizePath(root.rootPath || normalizedRoot)],
+    };
+  } catch {
+    return {
+      supported: true,
+      aborted: false,
+      images: [],
+      rootPath: normalizedRoot,
+    };
+  }
+};
+
+const toRelativeTail = (rootName: string, folderPath: string): string => {
+  const normalizedRootName = normalizePath(rootName);
+  const normalizedFolderPath = normalizePath(folderPath);
+  if (!normalizedRootName || !normalizedFolderPath) return '';
+
+  if (normalizedFolderPath === normalizedRootName) return '';
+  if (normalizedFolderPath.startsWith(`${normalizedRootName}/`)) {
+    return normalizedFolderPath.slice(normalizedRootName.length + 1);
+  }
+  return '';
+};
+
+export const scanImagesFromFolderPath = async (params: {
+  rootPath: string;
+  rootName: string;
+  folderPath: string;
+  recursive: boolean;
+  offset?: number;
+  limit?: number;
+}): Promise<PickImagesFromDirectoryResult> => {
+  const normalizedRootPath = normalizePath(params.rootPath);
+  const normalizedRootName = normalizePath(params.rootName);
+  const normalizedFolderPath = normalizePath(params.folderPath);
+  if (
+    !isTauriRuntime() ||
+    !normalizedRootPath ||
+    !normalizedRootName ||
+    !normalizedFolderPath
+  ) {
+    return {
+      supported: false,
+      aborted: false,
+      images: [],
+    };
+  }
+
+  const relativePath = toRelativeTail(normalizedRootName, normalizedFolderPath);
+  try {
+    const root = await invoke<NativeRootScan>('scan_folder_by_path_command', {
+      rootPath: normalizedRootPath,
+      rootName: normalizedRootName,
+      relativePath,
+      recursive: Boolean(params.recursive),
+      offset: Math.max(0, Math.floor(Number(params.offset ?? 0) || 0)),
+      limit: Math.max(0, Math.floor(Number(params.limit ?? 0) || 0)),
+    });
+
+    if (!root) {
+      return {
+        supported: true,
+        aborted: false,
+        images: [],
+        directoryName: normalizedRootName,
+        rootPath: normalizedRootPath,
+        rootNames: [normalizedRootName],
+        rootPaths: [normalizedRootPath],
+      };
+    }
+
+    return {
+      supported: true,
+      aborted: false,
+      images: flattenNativeRootScans([root]),
+      directoryName: root.directoryName || normalizedRootName,
+      rootPath: normalizePath(root.rootPath || normalizedRootPath),
+      rootNames: [root.directoryName || normalizedRootName],
+      rootPaths: [normalizePath(root.rootPath || normalizedRootPath)],
+    };
+  } catch {
+    return {
+      supported: true,
+      aborted: false,
+      images: [],
+      directoryName: normalizedRootName,
+      rootPath: normalizedRootPath,
+      rootNames: [normalizedRootName],
+      rootPaths: [normalizedRootPath],
+    };
+  }
+};
+
+export const listDirectoryChildren = async (params: {
+  rootPath: string;
+  rootName: string;
+  folderPath: string;
+}): Promise<FolderNode[]> => {
+  const normalizedRootPath = normalizePath(params.rootPath);
+  const normalizedRootName = normalizePath(params.rootName);
+  const normalizedFolderPath = normalizePath(params.folderPath);
+
+  if (!isTauriRuntime() || !normalizedRootPath || !normalizedRootName) {
+    return [];
+  }
+
+  const relativePath = toRelativeTail(normalizedRootName, normalizedFolderPath);
+
+  try {
+    const children = await invoke<NativeDirectoryChild[]>(
+      'list_directory_children_by_path',
+      {
+        rootPath: normalizedRootPath,
+        rootName: normalizedRootName,
+        relativePath,
+      },
+    );
+    if (!Array.isArray(children)) return [];
+
+    return children
+      .map(
+        (child): FolderNode => ({
+          path: normalizePath(child.path),
+          name: String(child.name || '').trim(),
+          depth: Math.max(0, Number(child.depth || 0)),
+          count: 0,
+          expandable: true,
+        }),
+      )
+      .filter((child) => Boolean(child.path) && Boolean(child.name))
+      .sort((a, b) => a.path.localeCompare(b.path));
+  } catch {
+    return [];
+  }
 };
 
 export const clearSavedDirectoryHandle = async () => {

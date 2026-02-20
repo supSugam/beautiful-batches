@@ -2,7 +2,7 @@
   position: relative;
   isolation: isolate;
   background: var(--bg-surface);
-  border-radius: var(--radius);
+  border-radius: 8px;
   overflow: hidden;
   transition: box-shadow var(--transition-spring), background var(--transition-spring);
   cursor: pointer;
@@ -18,7 +18,7 @@
   width: 100%;
   background: var(--bg-base);
   overflow: hidden;
-  border-radius: calc(var(--radius) - 2px);
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;

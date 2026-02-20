@@ -86,6 +86,10 @@ export interface RawUploadImage {
   thumbnailUrl?: string;
   /** File size in bytes from native scan metadata. */
   nativeSize?: number;
+  /** Image width in pixels from native scan metadata. */
+  nativeWidth?: number;
+  /** Image height in pixels from native scan metadata. */
+  nativeHeight?: number;
 }
 
 export interface GalleryImage extends RawUploadImage {
@@ -95,6 +99,7 @@ export interface GalleryImage extends RawUploadImage {
   naturalWidth: number;
   naturalHeight: number;
   naturalRatio: number;
+  dimensionsLoaded: boolean;
   sourceLastModified: number;
   sourceSize: number;
   loadedAt: number;
@@ -110,6 +115,7 @@ export interface FolderNode {
   name: string;
   depth: number;
   count: number;
+  expandable?: boolean;
 }
 
 export interface FolderDraftSummary {
@@ -156,6 +162,7 @@ export type DirectoryEntryHandle = DirectoryHandle | FileHandle;
 
 export interface DirectoryRoot {
   rootPath: string;
+  rootName: string;
   handle: DirectoryHandle | null;
 }
 

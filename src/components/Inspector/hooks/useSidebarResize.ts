@@ -6,13 +6,32 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 
+export type SidebarResizeOptions = {
+  side?: 'left' | 'right';
+  minWidth?: number | ((vw: number) => number);
+  maxWidth?: number | ((vw: number) => number);
+  defaultFallback?: number;
+};
+
 export const useSidebarResize = (
   initialWidth: number,
   onResizeCommit: (width: number) => void,
+  options: SidebarResizeOptions = {},
 ) => {
+  const {
+    side = 'right',
+    minWidth = (vw: number) => Math.max(360, vw * 0.32),
+    maxWidth = (vw: number) => vw * 0.94,
+    defaultFallback = 360,
+  } = options;
+
   const [isResizing, setIsResizing] = useState(false);
-  const [liveWidth, setLiveWidth] = useState(() => Math.max(360, initialWidth || 360));
-  const liveWidthRef = useRef(Math.max(360, initialWidth || 360));
+  const [liveWidth, setLiveWidth] = useState(() =>
+    Math.max(defaultFallback, initialWidth || defaultFallback),
+  );
+  const liveWidthRef = useRef(
+    Math.max(defaultFallback, initialWidth || defaultFallback),
+  );
   const [viewportWidth, setViewportWidth] = useState(() =>
     Math.max(1, typeof window !== 'undefined' ? window.innerWidth : 1440),
   );
@@ -33,23 +52,33 @@ export const useSidebarResize = (
 
   useEffect(() => {
     if (isResizing) return;
-    const minW = Math.max(360, window.innerWidth * 0.32);
-    const maxW = window.innerWidth * 0.94;
-    const next = Math.max(minW, Math.min(Math.max(360, Number(initialWidth) || 360), maxW));
+    const minW =
+      typeof minWidth === 'function' ? minWidth(window.innerWidth) : minWidth;
+    const maxW =
+      typeof maxWidth === 'function' ? maxWidth(window.innerWidth) : maxWidth;
+    const next = Math.max(
+      minW,
+      Math.min(
+        Math.max(defaultFallback, Number(initialWidth) || defaultFallback),
+        maxW,
+      ),
+    );
     liveWidthRef.current = next;
     setLiveWidth((prev) => (Math.abs(prev - next) < 0.5 ? prev : next));
-  }, [initialWidth, isResizing]);
+  }, [initialWidth, isResizing, minWidth, maxWidth, defaultFallback]);
 
   useEffect(() => {
     if (isResizing) return;
-    const minW = Math.max(360, window.innerWidth * 0.32);
-    const maxW = window.innerWidth * 0.94;
+    const minW =
+      typeof minWidth === 'function' ? minWidth(window.innerWidth) : minWidth;
+    const maxW =
+      typeof maxWidth === 'function' ? maxWidth(window.innerWidth) : maxWidth;
     const clamped = Math.max(minW, Math.min(liveWidthRef.current, maxW));
     if (Math.abs(clamped - liveWidthRef.current) < 0.5) return;
     liveWidthRef.current = clamped;
     setLiveWidth(clamped);
     onResizeCommit(Math.round(clamped));
-  }, [viewportWidth, isResizing, onResizeCommit]);
+  }, [viewportWidth, isResizing, onResizeCommit, minWidth, maxWidth]);
 
   useEffect(() => {
     if (!isResizing) return;
@@ -58,15 +87,21 @@ export const useSidebarResize = (
     let latestX: number | null = null;
 
     const clampWidth = (value: number): number => {
-      const minW = Math.max(360, window.innerWidth * 0.32);
-      const maxW = window.innerWidth * 0.94;
+      const minW =
+        typeof minWidth === 'function' ? minWidth(window.innerWidth) : minWidth;
+      const maxW =
+        typeof maxWidth === 'function' ? maxWidth(window.innerWidth) : maxWidth;
       return Math.max(minW, Math.min(value, maxW));
     };
 
     const doResize = (clientX: number) => {
-      const nextWidth = clampWidth(window.innerWidth - clientX);
+      const nextWidth = clampWidth(
+        side === 'left' ? clientX : window.innerWidth - clientX,
+      );
       liveWidthRef.current = nextWidth;
-      setLiveWidth((prev) => (Math.abs(prev - nextWidth) < 0.5 ? prev : nextWidth));
+      setLiveWidth((prev) =>
+        Math.abs(prev - nextWidth) < 0.5 ? prev : nextWidth,
+      );
     };
 
     const handlePointerMove = (e: PointerEvent) => {
@@ -108,7 +143,7 @@ export const useSidebarResize = (
       window.removeEventListener('pointercancel', stopResize);
       document.body.style.userSelect = '';
     };
-  }, [isResizing, onResizeCommit]);
+  }, [isResizing, onResizeCommit, side, minWidth, maxWidth]);
 
   return { isResizing, startResizing, viewportWidth, liveWidth };
 };

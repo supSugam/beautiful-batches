@@ -131,7 +131,6 @@ export const Inspector = ({
       <div className="inspector-scroll">
         <div className="inspector-preview-section">
           <InspectorPreview
-            key={logic.cropperKey}
             isProcessing={logic.isProcessing}
             imageObjectUrl={image.objectUrl}
             editor={logic.editor}

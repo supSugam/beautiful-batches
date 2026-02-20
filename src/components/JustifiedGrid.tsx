@@ -1,11 +1,28 @@
-import React, { useMemo } from 'react';
-import { RowsPhotoAlbum } from 'react-photo-album';
-import 'react-photo-album/rows.css';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { computeRowsLayout } from 'react-photo-album';
+import { Virtuoso } from 'react-virtuoso';
 import { ImageCard } from './ImageCard';
 import useStore from '../store/useStore';
 import { normalizeStoredCoordinates } from '../utils/cropCoordinates';
 import type { GalleryImage } from '../types/app';
 import './JustifiedGrid.css';
+
+const THUMB_SIZE_BUCKETS = [192, 256, 320, 384, 512, 640];
+
+const resolveThumbnailSize = (targetRowHeight: number): number => {
+  const dpr =
+    typeof window === 'undefined'
+      ? 1
+      : Math.max(1, Number(window.devicePixelRatio || 1));
+  const requested = Math.max(
+    THUMB_SIZE_BUCKETS[0],
+    Math.round(Math.max(1, Number(targetRowHeight || 1)) * dpr * 1.2),
+  );
+  return (
+    THUMB_SIZE_BUCKETS.find((bucket) => bucket >= requested) ||
+    THUMB_SIZE_BUCKETS[THUMB_SIZE_BUCKETS.length - 1]
+  );
+};
 
 const getRotatedRatio = (
   width: number,
@@ -30,6 +47,7 @@ type JustifiedGridProps = {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onDelete: (id: string) => void;
+  onEndReached?: () => void;
 };
 
 type GridPhoto = {
@@ -44,36 +62,50 @@ const JustifiedGrid = ({
   images,
   targetRowHeight,
   padding = 8,
-  showAllFooters: _showAllFooters,
   selectedId,
   onSelect,
   onDelete,
+  onEndReached,
 }: JustifiedGridProps) => {
   const cropLayoutVersion = useStore((state) => state.cropLayoutVersion);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollerElementRef = useRef<HTMLElement | null>(null);
+  const lastEndReachedAtRef = useRef(0);
+  const [containerWidth, setContainerWidth] = useState<number>(0);
+  const thumbnailSize = useMemo(
+    () => resolveThumbnailSize(targetRowHeight),
+    [targetRowHeight],
+  );
 
-  // Photos for the grid components.
-  // Recalculate row layout only when a crop change affects visual card ratio.
-  // We explicitly intentionally DO NOT subscribe to `cropData` here because we 
-  // only want to recalculate row layouts when a crop change affects the *visual card ratio*,
-  // which is correctly signaled by `cropLayoutVersion`.
-  // Panning/zooming inside an established crop box does not change the ratio.
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const readViewportWidth = (fallbackWidth: number) => {
+      const scrollerWidth = scrollerElementRef.current?.clientWidth || 0;
+      if (scrollerWidth > 0) return Math.floor(scrollerWidth);
+      return Math.floor(fallbackWidth);
+    };
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(readViewportWidth(entry.contentRect.width));
+      }
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   const photos = useMemo(() => {
     if (!images || images.length === 0) return [];
-    
-    // Read the current state of cropData without subscribing to every coordinate tick
     const cropData = useStore.getState().cropData;
 
     return images.map((img): GridPhoto => {
       const cropEntry = cropData.get(img.id);
       let ratio = img.naturalRatio || 1;
 
-      // 1. If we have active crop coordinates, use them for the aspect ratio of the card
       const coordinates = normalizeStoredCoordinates(cropEntry?.coordinates);
       if (coordinates) {
         ratio = coordinates.width / coordinates.height;
-      }
-      // 2. Otherwise, fall back to rotation-based swap logic if coordinates aren't set yet
-      else if (cropEntry?.transforms?.rotate) {
+      } else if (cropEntry?.transforms?.rotate) {
         ratio = getRotatedRatio(
           img.naturalWidth,
           img.naturalHeight,
@@ -81,9 +113,7 @@ const JustifiedGrid = ({
         );
       }
       const stableRatio =
-        Number.isFinite(ratio) && ratio > 0
-          ? Math.round(ratio * 200) / 200
-          : 1;
+        Number.isFinite(ratio) && ratio > 0 ? Math.round(ratio * 200) / 200 : 1;
 
       return {
         src: img.objectUrl,
@@ -95,42 +125,99 @@ const JustifiedGrid = ({
     });
   }, [images, cropLayoutVersion]);
 
-  // Disable per-card layout animation to avoid large reflow spikes on selection/open.
-  const disableLayoutAnimation = true;
+  const layout = useMemo(() => {
+    if (!photos.length || containerWidth <= 0) return null;
+    const computedLayout = computeRowsLayout(
+      photos,
+      padding,
+      0,
+      containerWidth,
+      targetRowHeight,
+    );
+
+    if (computedLayout?.tracks) {
+      computedLayout.tracks.forEach((track) => {
+        const rowHeight = track.photos[0]?.height || 0;
+        // If a row (usually the last row or a single image) was stretched significantly
+        // to fill the container, constrain its height. This prevents "blowout" where
+        // a single image stretches to fill a massive screen width.
+        if (rowHeight > targetRowHeight * 1.5) {
+          const capHeight = targetRowHeight * 1.25; // allow slight stretch
+          const scale = capHeight / rowHeight;
+          track.photos.forEach((p) => {
+            p.width = p.width * scale;
+            p.height = capHeight;
+          });
+        }
+      });
+    }
+
+    return computedLayout;
+  }, [photos, padding, containerWidth, targetRowHeight]);
+
+  if (!images.length) return null;
+
+  const handleEndReached = () => {
+    if (!onEndReached) return;
+    const now = Date.now();
+    if (now - lastEndReachedAtRef.current < 250) return;
+    lastEndReachedAtRef.current = now;
+    onEndReached();
+  };
 
   return (
     <div
+      ref={containerRef}
       className="justified-grid-container"
-      style={{ width: '100%' }}
-      dir="ltr"
+      style={{ width: '100%', height: '100%' }}
     >
-      <RowsPhotoAlbum
-        photos={photos}
-        targetRowHeight={targetRowHeight}
-        spacing={padding}
-        padding={0} // Outer padding
-        render={{
-          photo: (props, { photo, width, height }) => (
+      {layout && (
+        <Virtuoso
+          style={{ height: '100%', overflowX: 'hidden' }}
+          data={layout.tracks}
+          overscan={120}
+          endReached={handleEndReached}
+          scrollerRef={(ref) => {
+            const element = ref instanceof HTMLElement ? ref : null;
+            scrollerElementRef.current = element;
+            if (element) {
+              setContainerWidth(Math.floor(element.clientWidth));
+            }
+          }}
+          itemContent={(index, track) => (
             <div
-              key={photo.id}
+              key={index}
               style={{
-                width,
-                height,
-                position: 'relative',
+                display: 'flex',
+                gap: padding,
+                marginBottom: padding,
+                direction: 'ltr',
               }}
             >
-              <ImageCard
-                image={photo.originalImage}
-                rowHeight={height}
-                selected={selectedId === photo.id}
-                onSelect={onSelect}
-                onDelete={onDelete}
-                disableLayoutAnimation={disableLayoutAnimation}
-              />
+              {track.photos.map((photo) => (
+                <div
+                  key={photo.photo.id}
+                  style={{
+                    width: photo.width,
+                    height: photo.height,
+                    position: 'relative',
+                  }}
+                >
+                  <ImageCard
+                    image={photo.photo.originalImage}
+                    rowHeight={photo.height}
+                    thumbnailSize={thumbnailSize}
+                    selected={selectedId === photo.photo.id}
+                    onSelect={onSelect}
+                    onDelete={onDelete}
+                    disableLayoutAnimation={true}
+                  />
+                </div>
+              ))}
             </div>
-          ),
-        }}
-      />
+          )}
+        />
+      )}
     </div>
   );
 };

@@ -60,17 +60,17 @@
 }
 
 .resizer-handle:hover::before,
-.inspector.resizing .resizer-handle::before {
+.resizing .resizer-handle::before {
   opacity: 1;
 }
 
 .resizer-handle:hover::after,
-.inspector.resizing .resizer-handle::after {
+.resizing .resizer-handle::after {
   opacity: 1;
   border-color: rgba(129, 140, 248, 0.62);
 }
 
-.inspector.resizing .resizer-handle::after {
+.resizing .resizer-handle::after {
   animation: none;
 }
 
