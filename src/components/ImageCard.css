@@ -1,0 +1,139 @@
+.image-card {
+  position: relative;
+  isolation: isolate;
+  background: var(--bg-surface);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: box-shadow var(--transition-spring), background var(--transition-spring);
+  cursor: pointer;
+  user-select: none;
+}
+
+.image-card.selected {
+  box-shadow: 0 0 0 2px var(--accent-dim), var(--shadow-glow);
+}
+
+.card-preview {
+  position: relative;
+  width: 100%;
+  background: var(--bg-base);
+  overflow: hidden;
+  border-radius: calc(var(--radius) - 2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-padding-shell {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+}
+
+.preview-padding-shell.has-padding {
+  background: var(--bg-elevated);
+}
+
+.preview-padding-content {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.preview-image {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  display: block;
+  object-fit: cover;
+}
+
+.preview-image--fallback {
+  z-index: 1;
+}
+
+.preview-image--canvas {
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.preview-image--canvas.visible {
+  opacity: 1;
+}
+
+.preview-image--fallback.hidden {
+  opacity: 0;
+}
+
+.card-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0);
+  transition: background 0.2s ease;
+  pointer-events: none;
+}
+
+.image-card:hover .card-overlay {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.card-overlay button {
+  pointer-events: auto;
+}
+
+.card-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 41;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.image-card:hover .card-delete {
+  opacity: 1;
+}
+
+.card-delete:hover {
+  background: var(--danger);
+}
+
+.selection-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 41;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
+  border: 2px solid var(--bg-surface);
+  animation: slideIn 0.3s var(--transition-spring);
+}
+
+@keyframes slideIn {
+  from { transform: scale(0) rotate(-45deg); opacity: 0; }
+  to { transform: scale(1) rotate(0); opacity: 1; }
+}
