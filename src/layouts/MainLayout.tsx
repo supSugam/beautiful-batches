@@ -32,10 +32,9 @@ type MainLayoutProps = {
   onResetFolderFilter: () => void;
   onAddFolder: () => void | Promise<void>;
   onRemoveFolder: (path: string) => void | Promise<void>;
+  onClearFolderDrafts: (path: string) => void | Promise<void>;
   expandedPaths: Set<string>;
   onToggleExpand: (path: string) => void;
-  recursiveScan: boolean;
-  setRecursiveScan: (recursive: boolean) => void;
   loadingFolderPaths?: Set<string>;
   isActiveFolderLoading?: boolean;
 };
@@ -63,10 +62,9 @@ const MainLayout = ({
   onResetFolderFilter,
   onAddFolder,
   onRemoveFolder,
+  onClearFolderDrafts,
   expandedPaths,
   onToggleExpand,
-  recursiveScan,
-  setRecursiveScan,
   loadingFolderPaths,
   isActiveFolderLoading,
 }: MainLayoutProps) => {
@@ -82,10 +80,9 @@ const MainLayout = ({
         totalImageCount={totalImageCount}
         onAddFolder={onAddFolder}
         onRemoveFolder={onRemoveFolder}
+        onClearFolderDrafts={onClearFolderDrafts}
         expandedPaths={expandedPaths}
         onToggleExpand={onToggleExpand}
-        recursiveScan={recursiveScan}
-        setRecursiveScan={setRecursiveScan}
         explorerWidth={explorerWidth}
         setExplorerWidth={setExplorerWidth}
         loadingFolderPaths={loadingFolderPaths}
@@ -109,15 +106,6 @@ const MainLayout = ({
         ) : (
           <div className="grid-empty-state">
             <p>No images in this folder selection.</p>
-            {!recursiveScan && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => setRecursiveScan(true)}
-              >
-                Enable Recursive Scan
-              </button>
-            )}
             <button
               type="button"
               className="btn btn-secondary btn-sm"

@@ -54,7 +54,7 @@ pub async fn pick_and_scan_root(app: AppHandle) -> Result<PickAndScanRootResult,
             &canonical_root,
             &directory_name,
             "",
-            true,
+            false,
             0,
             PICK_SCAN_PREVIEW_LIMIT,
         )
@@ -94,7 +94,6 @@ pub async fn scan_folder_by_path_command(
     root_path: String,
     root_name: String,
     relative_path: String,
-    recursive: bool,
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<crate::models::NativeRootScan, String> {
@@ -108,7 +107,7 @@ pub async fn scan_folder_by_path_command(
             Path::new(&normalized_root),
             root_name.trim(),
             relative_path.trim(),
-            recursive,
+            false,
             offset.unwrap_or(0),
             limit.unwrap_or(0),
         )

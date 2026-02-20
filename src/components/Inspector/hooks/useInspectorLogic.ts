@@ -59,10 +59,13 @@ export function useInspectorLogic({
   const imageId = image?.id || '';
   const naturalWidth = image?.naturalWidth || 1;
   const naturalHeight = image?.naturalHeight || 1;
+  // Keep a ref to current cropState to merge non-editor fields
+  const cropStateRef = useRef<CropEntry | undefined>(cropState);
+  cropStateRef.current = cropState;
 
   // ── Build initial state from cropState ──────────────────
   const initialState = useMemo(() => {
-    if (!cropState) return null;
+    if (!cropState) return undefined;
     return {
       coordinates: cropState.coordinates || null,
       transforms: cropState.transforms || {
@@ -72,7 +75,7 @@ export function useInspectorLogic({
       aspect: cropState.aspect ?? null,
       editorView: cropState.editorView || null,
     };
-  }, [imageId]); // Re-derive exactly when the image ID changes
+  }, [cropState, imageId]);
 
   // ── Editor engine ───────────────────────────────────────
   const editor = useImageEditor({
@@ -95,10 +98,6 @@ export function useInspectorLogic({
       [imageId, onCropChange],
     ),
   });
-
-  // Keep a ref to current cropState to merge non-editor fields
-  const cropStateRef = useRef<CropEntry | undefined>(cropState);
-  cropStateRef.current = cropState;
 
   // ── Derived pixel dimensions ────────────────────────────
   const currentPixelWidth = Math.round(editor.effectiveCrop.w);
@@ -237,7 +236,7 @@ export function useInspectorLogic({
 
   useEffect(() => {
     setOutputWidth(cropState?.outputWidth ?? null);
-  }, [imageId]);
+  }, [cropState?.outputWidth, imageId]);
 
   const handleResizeToggle = useCallback(() => {
     const nextValue = outputWidth ? null : currentPixelWidth;
@@ -307,7 +306,15 @@ export function useInspectorLogic({
     );
     setPaddingFillValue(cropState?.paddingFillValue || '');
     setPaddingImageUrl(cropState?.paddingImageUrl || null);
-  }, [imageId]);
+  }, [
+    cropState?.cornerRadius,
+    cropState?.padding,
+    cropState?.paddingFillType,
+    cropState?.paddingFillValue,
+    cropState?.paddingImageUrl,
+    cropState?.paddingMode,
+    imageId,
+  ]);
 
   const syncToStore = useCallback(
     (partialUpdate: Partial<CropEntry>) => {

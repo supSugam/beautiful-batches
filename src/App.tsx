@@ -20,17 +20,19 @@ import ProgressBar from './components/common/ProgressBar';
 import MainLayout from './layouts/MainLayout';
 import useStore from './store/useStore';
 import {
+  clearFolderDraft,
+  type FolderDraftPayload,
+  type FolderDraftPayloadByPath,
   loadFolderDraftPayloads,
-  loadFolderDraftSummaries,
   persistFolderDrafts,
   resolveDraftsForImages,
 } from './utils/editDraftPersistence';
 import { useImageUpload } from './hooks/useImageUpload';
 import { useExportLogic } from './hooks/useExportLogic';
 import type {
+  CropEntry,
   DirectoryHandle,
   DirectoryRoot,
-  DraftRestorePrompt,
   FolderNode,
   GalleryImage,
 } from './types/app';
@@ -41,7 +43,6 @@ const EXPANDED_PATHS_STORAGE_KEY = 'bb-expanded-paths';
 const ACTIVE_FOLDER_STORAGE_KEY = 'bb-active-folder-path';
 const LINKED_ROOT_NAMES_STORAGE_KEY = 'bb-linked-root-names';
 const ALL_FOLDERS_VALUE = '__all__';
-const RECURSIVE_SCAN_STORAGE_KEY = 'bb-recursive-scan';
 const FOLDER_INITIAL_IMAGE_BATCH = 240;
 const FOLDER_LOAD_MORE_BATCH = 180;
 const nameCollator = new Intl.Collator(undefined, {
@@ -56,19 +57,23 @@ const getFolderNameFromPath = (value: unknown): string => {
   const parts = normalized.split('/').filter(Boolean);
   return parts[parts.length - 1] || normalized;
 };
-const hasRootLevelImages = (
-  images: Array<{ relativePath?: string }>,
-): boolean => {
-  return images.some((image) => {
-    const relativePath = normalizePath(image?.relativePath);
-    const parts = relativePath.split('/').filter(Boolean);
-    return parts.length <= 2;
-  });
-};
 const getRootFolderPathFromRelativePath = (relativePath: string): string =>
   normalizePath(relativePath).split('/').filter(Boolean)[0] || '';
 const getRootTokenFromPath = (value: string): string =>
   normalizePath(value).split('/').filter(Boolean)[0] || '';
+const isDirectImageChildOfFolder = (
+  relativePath: string,
+  folderPath: string,
+): boolean => {
+  const normalizedRelativePath = normalizePath(relativePath);
+  const normalizedFolderPath = normalizePath(folderPath);
+  if (!normalizedRelativePath || !normalizedFolderPath) return false;
+  if (!normalizedRelativePath.startsWith(`${normalizedFolderPath}/`)) {
+    return false;
+  }
+  const remainder = normalizedRelativePath.slice(normalizedFolderPath.length + 1);
+  return remainder.length > 0 && !remainder.includes('/');
+};
 
 const readStoredBoolean = (key: string, fallback: boolean): boolean => {
   if (typeof window === 'undefined') return fallback;
@@ -158,6 +163,7 @@ function App() {
   const applyPersistedImageDrafts = useStore(
     (state) => state.applyPersistedImageDrafts,
   );
+  const clearDraftsForFolder = useStore((state) => state.clearDraftsForFolder);
   const deleteFolder = useStore((state) => state.deleteFolder);
   const processing = useStore((state) => state.processing);
   const folderNodes = useStore((state) => state.folderNodes);
@@ -166,8 +172,6 @@ function App() {
   const expandedPaths = useStore((state) => state.expandedPaths);
   const toggleExpandedPath = useStore((state) => state.toggleExpandedPath);
   const setExpandedPaths = useStore((state) => state.setExpandedPaths);
-  const recursiveScan = useStore((state) => state.recursiveScan);
-  const setRecursiveScan = useStore((state) => state.setRecursiveScan);
 
   const addMoreRef = useRef<HTMLInputElement | null>(null);
   const {
@@ -186,7 +190,11 @@ function App() {
   const folderScanNextOffsetRef = useRef<Map<string, number>>(new Map());
   const folderScanHasMoreRef = useRef<Map<string, boolean>>(new Map());
   const draftPersistTimerRef = useRef<number>(0);
-  const resolvedDraftFoldersRef = useRef<Set<string>>(new Set());
+  const restoredDraftImageIdsRef = useRef<Set<string>>(new Set());
+  const loadedDraftPayloadByFolderRef = useRef<Map<string, FolderDraftPayload | null>>(
+    new Map(),
+  );
+  const loadingDraftPayloadFoldersRef = useRef<Set<string>>(new Set());
   const [explorerOpen, setExplorerOpen] = useState(() =>
     readStoredBoolean(EXPLORER_OPEN_STORAGE_KEY, true),
   );
@@ -205,8 +213,6 @@ function App() {
     return Array.from(new Set(names.filter(Boolean)));
   });
   const [startupRootsResolved, setStartupRootsResolved] = useState(false);
-  const [draftRestorePrompt, setDraftRestorePrompt] =
-    useState<DraftRestorePrompt | null>(null);
   const [loadingFolderPaths, setLoadingFolderPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -274,8 +280,9 @@ function App() {
 
   useEffect(() => {
     if (images.length !== 0) return;
-    resolvedDraftFoldersRef.current = new Set();
-    setDraftRestorePrompt(null);
+    restoredDraftImageIdsRef.current = new Set();
+    loadedDraftPayloadByFolderRef.current = new Map();
+    loadingDraftPayloadFoldersRef.current = new Set();
   }, [images.length]);
 
   useEffect(() => {
@@ -347,13 +354,7 @@ function App() {
         console.error('Failed to parse stored expanded paths:', err);
       }
     }
-
-    // Recursive scan restoration
-    const storedRecursive = localStorage.getItem(RECURSIVE_SCAN_STORAGE_KEY);
-    if (storedRecursive !== null) {
-      setRecursiveScan(storedRecursive === 'true');
-    }
-  }, [setExpandedPaths, setRecursiveScan]);
+  }, [setExpandedPaths]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -361,13 +362,6 @@ function App() {
       JSON.stringify(Array.from(expandedPaths)),
     );
   }, [expandedPaths]);
-
-  useEffect(() => {
-    persistStorageValue(
-      RECURSIVE_SCAN_STORAGE_KEY,
-      recursiveScan ? 'true' : 'false',
-    );
-  }, [recursiveScan]);
 
   const mergeTreeNodes = useCallback(
     (nextNodes: FolderNode[], options: { pruneToRoots?: string[] } = {}) => {
@@ -603,7 +597,6 @@ function App() {
 
   const filteredImages = useMemo(() => {
     if (activeFolderPath === ALL_FOLDERS_VALUE) {
-      if (recursiveScan) return images;
       return images.filter((image) => {
         const relativePath = normalizePath(image.relativePath);
         const parts = relativePath.split('/').filter(Boolean);
@@ -614,11 +607,10 @@ function App() {
     return images.filter((image) => {
       const relativePath = normalizePath(image.relativePath);
       if (!relativePath.startsWith(prefix)) return false;
-      if (recursiveScan) return true;
       const remainder = relativePath.substring(prefix.length);
       return !remainder.includes('/');
     });
-  }, [activeFolderPath, images, recursiveScan]);
+  }, [activeFolderPath, images]);
 
   const visibleImages = useMemo(() => {
     const next = filteredImages.map((image, originalIndex) => ({
@@ -716,7 +708,7 @@ function App() {
       if (!resolved) return;
 
       const { root, rootToken } = resolved;
-      const scanKey = `${normalizedFolderPath}::${recursiveScan ? 'recursive' : 'direct'}`;
+      const scanKey = `${normalizedFolderPath}::direct`;
       if (!append && loadedFolderScanKeysRef.current.has(scanKey)) return;
       if (append && folderScanHasMoreRef.current.get(scanKey) === false) return;
       if (loadingFolderScanKeysRef.current.has(scanKey)) return;
@@ -743,7 +735,6 @@ function App() {
           rootPath: root.rootPath,
           rootName: root.rootName,
           folderPath: normalizedFolderPath,
-          recursive: recursiveScan,
           offset,
           limit,
         });
@@ -760,7 +751,7 @@ function App() {
         markFolderLoading(loadingKeys, false);
       }
     },
-    [addImages, markFolderLoading, recursiveScan, resolveRootForFolderPath],
+    [addImages, markFolderLoading, resolveRootForFolderPath],
   );
 
   const handleSelectFolder = useCallback(
@@ -793,13 +784,25 @@ function App() {
 
   useEffect(() => {
     if (activeFolderPath === ALL_FOLDERS_VALUE) return;
+    if (!startupRootsResolved) return;
     void loadTreeChildrenForPath(activeFolderPath);
-  }, [activeFolderPath, loadTreeChildrenForPath]);
+  }, [
+    activeFolderPath,
+    directoryRootsVersion,
+    loadTreeChildrenForPath,
+    startupRootsResolved,
+  ]);
 
   useEffect(() => {
     if (activeFolderPath === ALL_FOLDERS_VALUE) return;
+    if (!startupRootsResolved) return;
     void loadImagesForFolderPath(activeFolderPath);
-  }, [activeFolderPath, loadImagesForFolderPath]);
+  }, [
+    activeFolderPath,
+    directoryRootsVersion,
+    loadImagesForFolderPath,
+    startupRootsResolved,
+  ]);
 
   useEffect(() => {
     expandedPaths.forEach((path) => {
@@ -902,71 +905,149 @@ function App() {
     let cancelled = false;
 
     if (images.length === 0 || loadedRootPaths.length === 0) {
-      setDraftRestorePrompt(null);
+      restoredDraftImageIdsRef.current = new Set();
+      loadedDraftPayloadByFolderRef.current = new Map();
+      loadingDraftPayloadFoldersRef.current = new Set();
       return () => {
         cancelled = true;
       };
     }
 
-    const currentSessionModifiedAt = useStore.getState().sessionModifiedAt;
-    if (currentSessionModifiedAt.size > 0) {
-      images.forEach((image) => {
-        if (!currentSessionModifiedAt.has(image.id)) return;
-        const root = getRootFolderPathFromRelativePath(image.relativePath);
-        if (root) {
-          resolvedDraftFoldersRef.current.add(root);
+    const currentImageIds = new Set(images.map((image) => image.id));
+    restoredDraftImageIdsRef.current = new Set(
+      Array.from(restoredDraftImageIdsRef.current).filter((id) =>
+        currentImageIds.has(id),
+      ),
+    );
+
+    const activeRoots = new Set(loadedRootPaths);
+    Array.from(loadedDraftPayloadByFolderRef.current.keys()).forEach(
+      (folderPath) => {
+        if (activeRoots.has(folderPath)) return;
+        loadedDraftPayloadByFolderRef.current.delete(folderPath);
+      },
+    );
+
+    const applyDraftsFromCache = () => {
+      if (cancelled) return;
+
+      const pendingImages = images.filter(
+        (image) => !restoredDraftImageIdsRef.current.has(image.id),
+      );
+      if (pendingImages.length === 0) return;
+
+      const folderDraftPayloads: FolderDraftPayloadByPath = {};
+      loadedRootPaths.forEach((folderPath) => {
+        const payload = loadedDraftPayloadByFolderRef.current.get(folderPath);
+        if (payload) {
+          folderDraftPayloads[folderPath] = payload;
         }
       });
-    }
+      if (Object.keys(folderDraftPayloads).length === 0) return;
 
-    const unresolvedFolders = loadedRootPaths.filter(
-      (folderPath) => !resolvedDraftFoldersRef.current.has(folderPath),
-    );
-    if (unresolvedFolders.length === 0) {
-      setDraftRestorePrompt(null);
-      return () => {
-        cancelled = true;
-      };
-    }
+      const resolvedDrafts = resolveDraftsForImages({
+        images: pendingImages,
+        folderDraftPayloads,
+      });
 
-    loadFolderDraftSummaries(unresolvedFolders).then((summaries) => {
-      if (cancelled) return;
-      const items = summaries
-        .filter((item) => item.count > 0)
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .map((item) => ({
-          ...item,
-          selected: true,
-        }));
+      const currentState = useStore.getState();
+      const candidateIds = new Set<string>([
+        ...Object.keys(resolvedDrafts.cropEntriesById || {}),
+        ...Object.keys(resolvedDrafts.captionsById || {}),
+        ...Object.keys(resolvedDrafts.modifiedAtById || {}),
+      ]);
+      if (candidateIds.size === 0) return;
 
-      if (items.length === 0) {
-        setDraftRestorePrompt(null);
+      const applyIds = Array.from(candidateIds).filter((id) => {
+        if (restoredDraftImageIdsRef.current.has(id)) return false;
+        // Do not override an edit if it was already changed in this session.
+        return !currentState.sessionModifiedAt.has(id);
+      });
+      if (applyIds.length === 0) return;
+
+      const cropEntriesById: Record<string, CropEntry> = {};
+      const captionsById: Record<string, string> = {};
+      const modifiedAtById: Record<string, number> = {};
+
+      applyIds.forEach((id) => {
+        const crop = resolvedDrafts.cropEntriesById[id];
+        if (crop) {
+          cropEntriesById[id] = crop;
+        }
+        if (Object.prototype.hasOwnProperty.call(resolvedDrafts.captionsById, id)) {
+          captionsById[id] = resolvedDrafts.captionsById[id];
+        }
+        const ts = Number(resolvedDrafts.modifiedAtById[id] || 0);
+        if (ts > 0) {
+          modifiedAtById[id] = ts;
+        }
+      });
+
+      if (
+        Object.keys(cropEntriesById).length === 0 &&
+        Object.keys(captionsById).length === 0
+      ) {
         return;
       }
 
-      setDraftRestorePrompt((previous: DraftRestorePrompt | null) => {
-        if (!previous?.items?.length) {
-          return { items };
-        }
-
-        const selectedByFolder = new Map(
-          previous.items.map((item) => [item.folderPath, item.selected]),
-        );
-        return {
-          items: items.map((item) => ({
-            ...item,
-            selected: selectedByFolder.has(item.folderPath)
-              ? selectedByFolder.get(item.folderPath)
-              : item.selected,
-          })),
-        };
+      applyPersistedImageDrafts({
+        cropEntriesById,
+        captionsById,
+        modifiedAtById,
       });
+      applyIds.forEach((id) => {
+        restoredDraftImageIdsRef.current.add(id);
+      });
+    };
+
+    const missingFolders = loadedRootPaths.filter(
+      (folderPath) =>
+        !loadedDraftPayloadByFolderRef.current.has(folderPath) &&
+        !loadingDraftPayloadFoldersRef.current.has(folderPath),
+    );
+
+    if (missingFolders.length === 0) {
+      applyDraftsFromCache();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    applyDraftsFromCache();
+
+    missingFolders.forEach((folderPath) => {
+      loadingDraftPayloadFoldersRef.current.add(folderPath);
     });
+
+    loadFolderDraftPayloads(missingFolders)
+      .then((payloads) => {
+        if (cancelled) return;
+        missingFolders.forEach((folderPath) => {
+          loadedDraftPayloadByFolderRef.current.set(
+            folderPath,
+            payloads[folderPath] || null,
+          );
+        });
+        applyDraftsFromCache();
+      })
+      .catch((error) => {
+        console.warn('Failed to auto-restore folder drafts:', error);
+        if (cancelled) return;
+        missingFolders.forEach((folderPath) => {
+          loadedDraftPayloadByFolderRef.current.set(folderPath, null);
+        });
+        applyDraftsFromCache();
+      })
+      .finally(() => {
+        missingFolders.forEach((folderPath) => {
+          loadingDraftPayloadFoldersRef.current.delete(folderPath);
+        });
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [images, loadedRootPaths]); // Removed sessionModifiedAt from dependency array
+  }, [applyPersistedImageDrafts, images, loadedRootPaths]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1024,11 +1105,9 @@ function App() {
       return;
     }
 
-    const pickedImages = Array.isArray(result.images) ? result.images : [];
-
     const rootPath = normalizePath(result.rootPath);
     const rootName = result.directoryName || getFolderNameFromPath(rootPath);
-    if (!rootPath && pickedImages.length === 0) {
+    if (!rootPath) {
       return;
     }
     const nextHandle = result.directoryHandle;
@@ -1114,39 +1193,13 @@ function App() {
       );
     }
 
-    if (
-      !recursiveScan &&
-      pickedImages.length > 0 &&
-      !hasRootLevelImages(pickedImages)
-    ) {
-      setRecursiveScan(true);
-    }
-
-    const initialImagesForStore = recursiveScan ? pickedImages : [];
-    await addImages(initialImagesForStore, rootName ? [rootName] : []);
+    await addImages([], rootName ? [rootName] : []);
     if (rootName) {
       const directKey = `${normalizePath(rootName)}::direct`;
-      const recursiveKey = `${normalizePath(rootName)}::recursive`;
       loadedFolderScanKeysRef.current.delete(directKey);
-      loadedFolderScanKeysRef.current.delete(recursiveKey);
       folderScanHasMoreRef.current.delete(directKey);
-      folderScanHasMoreRef.current.delete(recursiveKey);
       folderScanNextOffsetRef.current.delete(directKey);
-      folderScanNextOffsetRef.current.delete(recursiveKey);
-
-      if (initialImagesForStore.length > 0) {
-        loadedFolderScanKeysRef.current.add(recursiveKey);
-        folderScanNextOffsetRef.current.set(
-          recursiveKey,
-          initialImagesForStore.length,
-        );
-        folderScanHasMoreRef.current.set(
-          recursiveKey,
-          initialImagesForStore.length >= FOLDER_INITIAL_IMAGE_BATCH,
-        );
-      } else {
-        void loadImagesForFolderPath(rootName);
-      }
+      void loadImagesForFolderPath(rootName);
       setActiveFolderPath(rootName);
       void loadTreeChildrenForPath(rootName);
     }
@@ -1156,8 +1209,6 @@ function App() {
     handlePickFolderViaDirectoryPicker,
     loadImagesForFolderPath,
     loadTreeChildrenForPath,
-    recursiveScan,
-    setRecursiveScan,
     setActiveFolderPath,
   ]);
 
@@ -1265,53 +1316,39 @@ function App() {
     [deleteFolder, markFolderLoading],
   );
 
-  const handleToggleDraftFolderSelection = useCallback((folderPath: string) => {
-    setDraftRestorePrompt((previous) => {
-      if (!previous?.items?.length) return previous;
-      return {
-        items: previous.items.map((item) =>
-          item.folderPath === folderPath
-            ? { ...item, selected: !item.selected }
-            : item,
-        ),
-      };
-    });
-  }, []);
+  const handleClearFolderDrafts = useCallback(
+    async (folderPath: string) => {
+      const normalizedFolderPath = normalizePath(folderPath);
+      if (!normalizedFolderPath || normalizedFolderPath === ALL_FOLDERS_VALUE) {
+        return;
+      }
 
-  const handleSkipDraftRestore = useCallback(() => {
-    if (!draftRestorePrompt?.items?.length) return;
-    draftRestorePrompt.items.forEach((item) =>
-      resolvedDraftFoldersRef.current.add(item.folderPath),
-    );
-    setDraftRestorePrompt(null);
-  }, [draftRestorePrompt]);
+      await clearFolderDraft(normalizedFolderPath);
+      clearDraftsForFolder(normalizedFolderPath);
 
-  const handleApplyDraftRestore = useCallback(async () => {
-    if (!draftRestorePrompt?.items?.length) return;
+      const rootToken = getRootTokenFromPath(normalizedFolderPath);
+      if (rootToken) {
+        loadedDraftPayloadByFolderRef.current.delete(rootToken);
+        loadingDraftPayloadFoldersRef.current.delete(rootToken);
+      }
 
-    const selectedFolders = draftRestorePrompt.items
-      .filter((item) => item.selected)
-      .map((item) => item.folderPath);
-    if (selectedFolders.length === 0) return;
-
-    const folderDraftPayloads = await loadFolderDraftPayloads(selectedFolders);
-    const resolvedDrafts = resolveDraftsForImages({
-      images,
-      folderDraftPayloads,
-    });
-
-    const hasRestorableData =
-      Object.keys(resolvedDrafts.cropEntriesById).length > 0 ||
-      Object.keys(resolvedDrafts.captionsById).length > 0;
-    if (hasRestorableData) {
-      applyPersistedImageDrafts(resolvedDrafts);
-    }
-
-    draftRestorePrompt.items.forEach((item) =>
-      resolvedDraftFoldersRef.current.add(item.folderPath),
-    );
-    setDraftRestorePrompt(null);
-  }, [applyPersistedImageDrafts, draftRestorePrompt, images]);
+      const currentImages = useStore.getState().images;
+      const imageById = new Map(
+        currentImages.map((image) => [image.id, normalizePath(image.relativePath)] as const),
+      );
+      restoredDraftImageIdsRef.current = new Set(
+        Array.from(restoredDraftImageIdsRef.current).filter((id) => {
+          const relativePath = imageById.get(id);
+          if (!relativePath) return false;
+          return !isDirectImageChildOfFolder(
+            relativePath,
+            normalizedFolderPath,
+          );
+        }),
+      );
+    },
+    [clearDraftsForFolder],
+  );
 
   if (
     images.length === 0 &&
@@ -1350,51 +1387,6 @@ function App() {
         processing={processing}
       />
 
-      {draftRestorePrompt?.items?.length > 0 && (
-        <div className="draft-restore-banner" role="status">
-          <div className="draft-restore-heading">
-            Found saved image drafts for these folders
-          </div>
-          <div className="draft-restore-list">
-            {draftRestorePrompt.items.map((item) => (
-              <label key={item.folderPath} className="draft-restore-item">
-                <input
-                  type="checkbox"
-                  checked={item.selected}
-                  onChange={() =>
-                    handleToggleDraftFolderSelection(item.folderPath)
-                  }
-                />
-                <span className="draft-restore-folder">{item.folderPath}</span>
-                <span className="draft-restore-count">{item.count}</span>
-                <span className="draft-restore-date">
-                  {item.updatedAt
-                    ? new Date(item.updatedAt).toLocaleString()
-                    : 'Unknown'}
-                </span>
-              </label>
-            ))}
-          </div>
-          <div className="draft-restore-actions">
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={handleSkipDraftRestore}
-            >
-              Skip for now
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={handleApplyDraftRestore}
-              disabled={!draftRestorePrompt.items.some((item) => item.selected)}
-            >
-              Restore selected
-            </button>
-          </div>
-        </div>
-      )}
-
       <ProgressBar current={processing?.current} total={processing?.total} />
 
       <MainLayout
@@ -1420,10 +1412,9 @@ function App() {
         onResetFolderFilter={() => setActiveFolderPath(ALL_FOLDERS_VALUE)}
         onAddFolder={handleAddFolder}
         onRemoveFolder={handleRemoveFolder}
+        onClearFolderDrafts={handleClearFolderDrafts}
         expandedPaths={expandedPaths}
         onToggleExpand={handleToggleExpand}
-        recursiveScan={recursiveScan}
-        setRecursiveScan={setRecursiveScan}
         onLoadMoreImages={handleLoadMoreActiveFolder}
         loadingFolderPaths={explorerLoadingFolderPaths}
         isActiveFolderLoading={isActiveFolderLoading}

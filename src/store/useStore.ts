@@ -133,6 +133,20 @@ const getGridRatioSignature = (entry: CropEntry | undefined): number | null => {
 const normalizePath = (value: unknown): string =>
   String(value || '').replace(/\\/g, '/');
 
+const isDirectImageChildOfFolder = (
+  relativePath: string,
+  folderPath: string,
+): boolean => {
+  const normalizedRelativePath = normalizePath(relativePath);
+  const normalizedFolderPath = normalizePath(folderPath);
+  if (!normalizedRelativePath || !normalizedFolderPath) return false;
+  if (!normalizedRelativePath.startsWith(`${normalizedFolderPath}/`)) {
+    return false;
+  }
+  const remainder = normalizedRelativePath.slice(normalizedFolderPath.length + 1);
+  return remainder.length > 0 && !remainder.includes('/');
+};
+
 const buildFolderNodes = (
   images: GalleryImage[],
   rootNames: string[],
@@ -405,6 +419,7 @@ export interface UseStoreState {
   deleteImage: (id: string) => void;
   clearImages: () => void;
   deleteFolder: (folderPath: string) => void;
+  clearDraftsForFolder: (folderPath: string) => void;
   setSelectedId: (id: string | null) => void;
   selectNext: () => void;
   selectPrev: () => void;
@@ -424,8 +439,6 @@ export interface UseStoreState {
   expandedPaths: Set<string>;
   toggleExpandedPath: (path: string) => void;
   setExpandedPaths: (paths: Set<string>) => void;
-  recursiveScan: boolean;
-  setRecursiveScan: (recursiveScan: boolean) => void;
 }
 
 const useStore = create<UseStoreState>((set, get) => {
@@ -634,7 +647,6 @@ const useStore = create<UseStoreState>((set, get) => {
     explorerWidth: getDefaultExplorerWidth(),
     sortOption: 'last_modified',
     expandedPaths: new Set<string>(),
-    recursiveScan: false,
 
     // --- Actions ---
 
@@ -954,6 +966,53 @@ const useStore = create<UseStoreState>((set, get) => {
         removeIdsFromMetadataQueue(removedIds);
       }
     },
+
+    clearDraftsForFolder: (folderPath) => {
+      const normalizedFolderPath = String(folderPath || '').replace(/\\/g, '/');
+      if (!normalizedFolderPath) return;
+
+      set((state) => {
+        let didChange = false;
+        let shouldBumpLayoutVersion = false;
+        const nextCropData = new Map<string, CropEntry>(state.cropData);
+        const nextCaptionById = new Map<string, string>(state.captionById);
+        const nextSessionModifiedAt = new Map<string, number>(
+          state.sessionModifiedAt,
+        );
+
+        state.images.forEach((image) => {
+          const relativePath = normalizePath(image?.relativePath);
+          if (!isDirectImageChildOfFolder(relativePath, normalizedFolderPath)) {
+            return;
+          }
+
+          if (nextCaptionById.delete(image.id)) {
+            didChange = true;
+          }
+          if (nextSessionModifiedAt.delete(image.id)) {
+            didChange = true;
+          }
+
+          const previousEntry = nextCropData.get(image.id);
+          if (!previousEntry) return;
+          nextCropData.delete(image.id);
+          didChange = true;
+          if (hasGridLayoutAffectingChange(previousEntry, undefined)) {
+            shouldBumpLayoutVersion = true;
+          }
+        });
+
+        if (!didChange) return {};
+        return {
+          cropData: nextCropData,
+          captionById: nextCaptionById,
+          sessionModifiedAt: nextSessionModifiedAt,
+          cropLayoutVersion: shouldBumpLayoutVersion
+            ? state.cropLayoutVersion + 1
+            : state.cropLayoutVersion,
+        };
+      });
+    },
     // Selection
     setSelectedId: (id) => {
       set({ selectedId: id });
@@ -1266,7 +1325,6 @@ const useStore = create<UseStoreState>((set, get) => {
       return { expandedPaths: next };
     }),
   setExpandedPaths: (expandedPaths) => set({ expandedPaths }),
-  setRecursiveScan: (recursiveScan) => set({ recursiveScan }),
   };
 });
 

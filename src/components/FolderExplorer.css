@@ -137,8 +137,12 @@
   color: var(--text-bright);
 }
 
-.folder-item.is-removable {
+.folder-item.has-single-action {
   padding-right: 28px;
+}
+
+.folder-item.has-dual-actions {
+  padding-right: 52px;
 }
 
 .folder-item:hover {
@@ -154,11 +158,19 @@
 .folder-item-label {
   display: flex;
   align-items: center;
-  gap: 6px;
   width: 100%;
   min-width: 0;
   font-size: 0.75rem;
   font-weight: 500;
+}
+
+.folder-item-main-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
 }
 
 .folder-item-name {
@@ -180,10 +192,33 @@
   font-weight: 400;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+  margin-left: 8px;
+  max-width: 48px;
+  overflow: hidden;
+  white-space: nowrap;
   letter-spacing: 0.02em;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease,
+    max-width 0.24s ease,
+    margin-left 0.24s ease,
+    padding 0.24s ease,
+    border-color 0.24s ease;
+}
+
+.folder-item-count-pill.is-hidden {
+  opacity: 0;
+  transform: scale(0.9);
+  max-width: 0;
+  margin-left: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-color: transparent;
 }
 
 .folder-item-count-pill.is-loading {
@@ -205,12 +240,19 @@
   }
 }
 
-.folder-remove-btn {
+.folder-row-actions {
   position: absolute;
   top: 50%;
   right: 7px;
   transform: translateY(-50%);
   z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.folder-remove-btn,
+.folder-clear-drafts-btn {
   width: 18px;
   height: 18px;
   border: none;
@@ -230,5 +272,11 @@
 .folder-remove-btn:hover {
   color: var(--danger);
   background: rgba(248, 113, 113, 0.1);
+  opacity: 1;
+}
+
+.folder-clear-drafts-btn:hover {
+  color: var(--accent);
+  background: rgba(129, 140, 248, 0.14);
   opacity: 1;
 }

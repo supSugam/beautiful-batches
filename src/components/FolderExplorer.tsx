@@ -4,19 +4,28 @@ import { Virtuoso } from 'react-virtuoso';
 import {
   ChevronDown,
   ChevronRight,
+  Eraser,
   FolderOpen,
   FolderPlus,
   Image as ImageIcon,
-  Layers,
   Loader2,
-  Square,
   Trash2,
 } from 'lucide-react';
 import type { FolderNode } from '../types/app';
 import { useSidebarResize } from './Inspector/hooks/useSidebarResize';
+import useStore from '../store/useStore';
 import './FolderExplorer.css';
 
 const ALL_FOLDERS_VALUE = '__all__';
+const normalizePath = (value: unknown): string =>
+  String(value || '').replace(/\\/g, '/');
+
+const getDirectParentFolderPath = (relativePath: string): string => {
+  const normalized = normalizePath(relativePath);
+  const lastSlash = normalized.lastIndexOf('/');
+  if (lastSlash <= 0) return '';
+  return normalized.slice(0, lastSlash);
+};
 
 type FolderRow = FolderNode & {
   parentPath: string;
@@ -33,10 +42,9 @@ type FolderExplorerProps = {
   totalImageCount: number;
   onAddFolder?: () => void | Promise<void>;
   onRemoveFolder?: (path: string) => void | Promise<void>;
+  onClearFolderDrafts?: (path: string) => void | Promise<void>;
   expandedPaths: Set<string>;
   onToggleExpand: (path: string) => void;
-  recursiveScan: boolean;
-  setRecursiveScan: (recursive: boolean) => void;
   explorerWidth: number;
   setExplorerWidth: (width: number) => void;
   loadingFolderPaths?: Set<string>;
@@ -50,14 +58,32 @@ const FolderExplorer = ({
   totalImageCount,
   onAddFolder,
   onRemoveFolder,
+  onClearFolderDrafts,
   expandedPaths,
   onToggleExpand,
-  recursiveScan,
-  setRecursiveScan,
   explorerWidth,
   setExplorerWidth,
   loadingFolderPaths,
 }: FolderExplorerProps) => {
+  const images = useStore((state) => state.images);
+  const sessionModifiedAt = useStore((state) => state.sessionModifiedAt);
+
+  const clearableFolderPaths = useMemo(() => {
+    const next = new Set<string>();
+    if (!Array.isArray(images) || images.length === 0) return next;
+    if (!(sessionModifiedAt instanceof Map) || sessionModifiedAt.size === 0) {
+      return next;
+    }
+
+    images.forEach((image) => {
+      if (!sessionModifiedAt.has(image.id)) return;
+      const parentPath = getDirectParentFolderPath(image.relativePath);
+      if (!parentPath) return;
+      next.add(parentPath);
+    });
+    return next;
+  }, [images, sessionModifiedAt]);
+
   const visibleFolders = useMemo(() => {
     const expandablePaths = new Set<string>();
     const rows = folders.map((folder) => {
@@ -104,71 +130,103 @@ const FolderExplorer = ({
       });
   }, [expandedPaths, folders, loadingFolderPaths]);
 
-  const renderFolderRow = (folder: FolderRow) => (
-    <div
-      className={`folder-item-row ${activeFolderPath === folder.path ? 'active' : ''} ${
-        folder.depth === 0 ? 'has-remove' : ''
-      }`}
-    >
-      <button
-        type="button"
-        className={`folder-expansion-toggle ${
-          folder.isExpandable || folder.isLoading ? 'is-visible' : ''
-        }`}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (folder.isLoading) return;
-          if (!folder.isExpandable && !folder.isExpanded) return;
-          onToggleExpand(folder.path);
-        }}
-        style={{ '--folder-depth': folder.depth } as React.CSSProperties}
-      >
-        {folder.isLoading ? (
-          <Loader2 size={14} className="folder-loading-spinner" />
-        ) : folder.isExpanded ? (
-          <ChevronDown size={14} />
-        ) : (
-          <ChevronRight size={14} />
-        )}
-      </button>
+  const renderFolderRow = (folder: FolderRow) => {
+    const canClearDrafts =
+      Boolean(onClearFolderDrafts) && clearableFolderPaths.has(folder.path);
+    const canRemoveFolder = folder.depth === 0;
+    const hasActionButtons = canClearDrafts || canRemoveFolder;
+    const actionClassName = hasActionButtons
+      ? canClearDrafts && canRemoveFolder
+        ? 'has-dual-actions'
+        : 'has-single-action'
+      : '';
 
-      <button
-        type="button"
-        role="treeitem"
-        className={`folder-item ${activeFolderPath === folder.path ? 'active' : ''} ${
-          folder.depth === 0 ? 'is-removable' : ''
-        }`}
-        style={
-          {
-            '--folder-depth': folder.depth,
-            '--has-chevron': folder.isExpandable || folder.isLoading ? 1 : 0,
-          } as React.CSSProperties
-        }
-        onClick={() => onSelectFolder(folder.path)}
-        title={folder.path}
+    return (
+      <div
+        className={`folder-item-row ${activeFolderPath === folder.path ? 'active' : ''}`}
       >
-        <span className="folder-item-label">
-          <FolderOpen size={13} />
-          <span className="folder-item-name">{folder.name}</span>
-          <span
-            className={`folder-item-count-pill ${folder.isLoading ? 'is-loading' : ''}`}
-          >
-            {folder.isLoading ? '...' : folder.count}
-          </span>
-        </span>
-      </button>
-      {folder.depth === 0 && (
         <button
           type="button"
-          className="folder-remove-btn"
-          onClick={() => onRemoveFolder?.(folder.path)}
-          title={`Remove folder ${folder.name}`}
+          className={`folder-expansion-toggle ${
+            folder.isExpandable || folder.isLoading ? 'is-visible' : ''
+          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (folder.isLoading) return;
+            if (!folder.isExpandable && !folder.isExpanded) return;
+            onToggleExpand(folder.path);
+          }}
+          style={{ '--folder-depth': folder.depth } as React.CSSProperties}
         >
-          <Trash2 size={12} />
+          {folder.isLoading ? (
+            <Loader2 size={14} className="folder-loading-spinner" />
+          ) : folder.isExpanded ? (
+            <ChevronDown size={14} />
+          ) : (
+            <ChevronRight size={14} />
+          )}
         </button>
-      )}
-    </div>
-  );
+
+        <button
+          type="button"
+          role="treeitem"
+          className={`folder-item ${activeFolderPath === folder.path ? 'active' : ''} ${actionClassName}`}
+          style={
+            {
+              '--folder-depth': folder.depth,
+              '--has-chevron': folder.isExpandable || folder.isLoading ? 1 : 0,
+            } as React.CSSProperties
+          }
+          onClick={() => onSelectFolder(folder.path)}
+          title={folder.path}
+        >
+          <span className="folder-item-label">
+            <span className="folder-item-main-label">
+              <FolderOpen size={13} />
+              <span className="folder-item-name">{folder.name}</span>
+            </span>
+            <span
+              className={`folder-item-count-pill ${
+                folder.isLoading ? 'is-loading' : ''
+              } ${folder.isLoading || folder.count > 0 ? '' : 'is-hidden'}`}
+            >
+              {folder.isLoading ? '...' : folder.count}
+            </span>
+          </span>
+        </button>
+        {hasActionButtons && (
+          <div className="folder-row-actions">
+            {canClearDrafts && (
+              <button
+                type="button"
+                className="folder-clear-drafts-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onClearFolderDrafts?.(folder.path);
+                }}
+                title={`Clear saved drafts for ${folder.name}`}
+              >
+                <Eraser size={12} />
+              </button>
+            )}
+            {canRemoveFolder && (
+              <button
+                type="button"
+                className="folder-remove-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onRemoveFolder?.(folder.path);
+                }}
+                title={`Remove folder ${folder.name}`}
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const { isResizing, startResizing, liveWidth } = useSidebarResize(
     explorerWidth,
@@ -195,18 +253,6 @@ const FolderExplorer = ({
         <div className="folder-explorer-header">
           <span>Explorer</span>
           <div className="folder-explorer-header-actions">
-            <button
-              type="button"
-              className={`folder-header-action ${recursiveScan ? 'active' : ''}`}
-              onClick={() => setRecursiveScan(!recursiveScan)}
-              title={
-                recursiveScan
-                  ? 'Recursive Scan: Enabled'
-                  : 'Recursive Scan: Disabled (Direct Only)'
-              }
-            >
-              {recursiveScan ? <Layers size={13} /> : <Square size={13} />}
-            </button>
             <button
               type="button"
               className="folder-header-action"

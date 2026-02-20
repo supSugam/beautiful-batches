@@ -19,14 +19,14 @@ type PersistedDraftImageEntry = {
   modifiedAt: number;
 };
 
-type FolderDraftPayload = {
+export type FolderDraftPayload = {
   version: number;
   folderPath: string;
   updatedAt: number;
   images: Record<string, PersistedDraftImageEntry>;
 };
 
-type FolderDraftPayloadByPath = Record<string, FolderDraftPayload>;
+export type FolderDraftPayloadByPath = Record<string, FolderDraftPayload>;
 
 type BuildDraftPayloadArgs = {
   images: GalleryImage[];
@@ -41,6 +41,20 @@ const getRootFolderPath = (relativePath: string): string => {
   const normalized = normalizePath(relativePath);
   const first = normalized.split('/').filter(Boolean)[0];
   return first || '';
+};
+
+const isDirectImageChildOfFolder = (
+  relativePath: string,
+  folderPath: string,
+): boolean => {
+  const normalizedRelativePath = normalizePath(relativePath);
+  const normalizedFolderPath = normalizePath(folderPath);
+  if (!normalizedRelativePath || !normalizedFolderPath) return false;
+  if (!normalizedRelativePath.startsWith(`${normalizedFolderPath}/`)) {
+    return false;
+  }
+  const remainder = normalizedRelativePath.slice(normalizedFolderPath.length + 1);
+  return remainder.length > 0 && !remainder.includes('/');
 };
 
 const safeClone = <T>(value: T): T | null => {
@@ -96,6 +110,18 @@ const idbSet = (db: IDBDatabase | null, key: string, value: unknown) =>
     tx.objectStore(DRAFT_STORE).put(value, key);
   });
 
+const idbDelete = (db: IDBDatabase | null, key: string) =>
+  new Promise<boolean>((resolve, reject) => {
+    if (!db) {
+      resolve(false);
+      return;
+    }
+    const tx = db.transaction(DRAFT_STORE, 'readwrite');
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+    tx.objectStore(DRAFT_STORE).delete(key);
+  });
+
 const localStorageKey = (folderPath: string) =>
   `${LOCAL_STORAGE_PREFIX}${normalizePath(folderPath)}`;
 
@@ -120,6 +146,16 @@ const writeLocalStorageDraft = (
       localStorageKey(folderPath),
       JSON.stringify(payload),
     );
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const deleteLocalStorageDraft = (folderPath: string): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    window.localStorage.removeItem(localStorageKey(folderPath));
     return true;
   } catch {
     return false;
@@ -168,55 +204,42 @@ const normalizePersistedPayload = (
   };
 };
 
-const buildDraftPayloadByFolder = ({
-  images,
-  cropData,
-  captionById,
-  sessionModifiedAt,
-}: BuildDraftPayloadArgs) => {
-  const folderPayloads = new Map<string, FolderDraftPayload>();
-  const loadedRootPaths = new Set<string>();
-
+const groupImagesByFolder = (images: GalleryImage[]) => {
+  const grouped = new Map<string, GalleryImage[]>();
   images.forEach((image) => {
     const relativePath = normalizePath(image?.relativePath);
     if (!relativePath) return;
     const folderPath = getRootFolderPath(relativePath);
     if (!folderPath) return;
-    loadedRootPaths.add(folderPath);
 
-    if (!folderPayloads.has(folderPath)) {
-      folderPayloads.set(folderPath, {
-        version: DRAFT_SCHEMA_VERSION,
-        folderPath,
-        updatedAt: Date.now(),
-        images: {},
-      });
+    if (!grouped.has(folderPath)) {
+      grouped.set(folderPath, []);
     }
-
-    const isModified = sessionModifiedAt.has(image.id);
-    const caption = String(captionById.get(image.id) || '');
-    const crop = cropData.get(image.id);
-    if (!isModified && caption.trim() === '') return;
-
-    const safeCrop = safeClone(crop);
-    if (!safeCrop && caption.trim() === '') return;
-
-    const folderPayload = folderPayloads.get(folderPath);
-    if (!folderPayload) return;
-
-    folderPayload.images[relativePath] = {
-      crop: safeCrop,
-      caption,
-      sourceLastModified: Number(image?.sourceLastModified || 0) || 0,
-      sourceSize: Number(image?.sourceSize || 0) || 0,
-      modifiedAt: Number(sessionModifiedAt.get(image.id) || 0) || Date.now(),
-    };
+    grouped.get(folderPath)?.push(image);
   });
+  return grouped;
+};
 
-  return {
-    folderPayloads,
-    loadedRootPaths: Array.from(loadedRootPaths),
-  };
+const areEntriesEqual = (
+  a: PersistedDraftImageEntry | undefined,
+  b: PersistedDraftImageEntry,
+): boolean => {
+  if (!a) return false;
+  if (a.caption !== b.caption) return false;
+  if (Number(a.sourceLastModified || 0) !== Number(b.sourceLastModified || 0)) {
+    return false;
+  }
+  if (Number(a.sourceSize || 0) !== Number(b.sourceSize || 0)) {
+    return false;
+  }
+  if (Number(a.modifiedAt || 0) !== Number(b.modifiedAt || 0)) {
+    return false;
+  }
+  try {
+    return JSON.stringify(a.crop ?? null) === JSON.stringify(b.crop ?? null);
+  } catch {
+    return false;
+  }
 };
 
 export const persistFolderDrafts = async ({
@@ -230,12 +253,8 @@ export const persistFolderDrafts = async ({
   if (!(captionById instanceof Map)) return;
   if (!(sessionModifiedAt instanceof Map)) return;
 
-  const { folderPayloads, loadedRootPaths } = buildDraftPayloadByFolder({
-    images,
-    cropData,
-    captionById,
-    sessionModifiedAt,
-  });
+  const loadedImagesByFolder = groupImagesByFolder(images);
+  if (loadedImagesByFolder.size === 0) return;
 
   let db: IDBDatabase | null = null;
   try {
@@ -243,14 +262,90 @@ export const persistFolderDrafts = async ({
       db = await openDraftDb();
     }
 
-    for (const folderPath of loadedRootPaths) {
-      const payload = folderPayloads.get(folderPath);
-      const hasEntries = payload && Object.keys(payload.images).length > 0;
-      if (!hasEntries) continue;
-      if (db) {
-        await idbSet(db, folderPath, payload);
+    for (const [folderPath, folderImages] of loadedImagesByFolder.entries()) {
+      const existingRaw = await loadFolderDraft(db, folderPath);
+      const existingPayload = normalizePersistedPayload(folderPath, existingRaw);
+      const nextImages = {
+        ...(existingPayload?.images || {}),
+      } as Record<string, PersistedDraftImageEntry>;
+
+      let didChange = false;
+      const now = Date.now();
+
+      folderImages.forEach((image) => {
+        const relativePath = normalizePath(image?.relativePath);
+        if (!relativePath) return;
+
+        const caption = String(captionById.get(image.id) || '');
+        const safeCaption = caption.trim();
+        const isModified = sessionModifiedAt.has(image.id);
+        const safeCrop = safeClone(cropData.get(image.id));
+        const hasDraft = isModified || safeCaption.length > 0;
+
+        if (!hasDraft) {
+          if (nextImages[relativePath]) {
+            delete nextImages[relativePath];
+            didChange = true;
+          }
+          return;
+        }
+
+        if (!safeCrop && safeCaption.length === 0) {
+          if (nextImages[relativePath]) {
+            delete nextImages[relativePath];
+            didChange = true;
+          }
+          return;
+        }
+
+        const nextEntry: PersistedDraftImageEntry = {
+          crop: safeCrop,
+          caption,
+          sourceLastModified: Number(image?.sourceLastModified || 0) || 0,
+          sourceSize: Number(image?.sourceSize || 0) || 0,
+          modifiedAt: Number(sessionModifiedAt.get(image.id) || 0) || now,
+        };
+
+        if (!areEntriesEqual(nextImages[relativePath], nextEntry)) {
+          nextImages[relativePath] = nextEntry;
+          didChange = true;
+        }
+      });
+
+      if (!didChange) continue;
+
+      const hasEntries = Object.keys(nextImages).length > 0;
+      if (hasEntries) {
+        const nextPayload: FolderDraftPayload = {
+          version: DRAFT_SCHEMA_VERSION,
+          folderPath,
+          updatedAt: Date.now(),
+          images: nextImages,
+        };
+
+        let written = false;
+        if (db) {
+          try {
+            written = await idbSet(db, folderPath, nextPayload);
+          } catch {
+            written = false;
+          }
+        }
+        if (!written) {
+          writeLocalStorageDraft(folderPath, nextPayload);
+        }
       } else {
-        writeLocalStorageDraft(folderPath, payload);
+        let cleared = false;
+        if (db) {
+          try {
+            cleared = await idbDelete(db, folderPath);
+          } catch {
+            cleared = false;
+          }
+        }
+        if (!cleared) {
+          deleteLocalStorageDraft(folderPath);
+        }
       }
     }
   } catch (error) {
@@ -260,12 +355,107 @@ export const persistFolderDrafts = async ({
   }
 };
 
-const loadFolderDraft = async (
+async function loadFolderDraft(
   db: IDBDatabase | null,
   folderPath: string,
-): Promise<FolderDraftPayload | null> => {
-  if (db) return idbGet<FolderDraftPayload>(db, folderPath);
+): Promise<FolderDraftPayload | null> {
+  if (db) {
+    const idbPayload = await idbGet<FolderDraftPayload>(db, folderPath);
+    if (idbPayload) return idbPayload;
+  }
   return readLocalStorageDraft(folderPath);
+}
+
+export const clearFolderDraft = async (folderPath: string): Promise<boolean> => {
+  const normalizedFolderPath = normalizePath(folderPath);
+  if (!normalizedFolderPath) return false;
+  const rootFolderPath = getRootFolderPath(normalizedFolderPath);
+  if (!rootFolderPath) return false;
+
+  let db: IDBDatabase | null = null;
+  let changed = false;
+  let saved = false;
+  try {
+    if (canUseIndexedDb()) {
+      db = await openDraftDb();
+    }
+
+    const existingRaw = await loadFolderDraft(db, rootFolderPath);
+    const existingPayload = normalizePersistedPayload(rootFolderPath, existingRaw);
+    if (!existingPayload?.images) {
+      // Cleanup any potential legacy key shape.
+      if (db) {
+        try {
+          await idbDelete(db, normalizedFolderPath);
+          changed = true;
+        } catch {
+          // Ignore IDB cleanup failures; local cleanup may still succeed.
+        }
+      }
+      if (deleteLocalStorageDraft(normalizedFolderPath)) {
+        changed = true;
+      }
+      return changed;
+    }
+
+    const nextImages: Record<string, PersistedDraftImageEntry> = {};
+    Object.entries(existingPayload.images).forEach(([relativePath, entry]) => {
+      if (isDirectImageChildOfFolder(relativePath, normalizedFolderPath)) {
+        changed = true;
+        return;
+      }
+      nextImages[relativePath] = entry;
+    });
+
+    if (!changed) return false;
+
+    const hasEntries = Object.keys(nextImages).length > 0;
+    if (hasEntries) {
+      const nextPayload: FolderDraftPayload = {
+        version: DRAFT_SCHEMA_VERSION,
+        folderPath: rootFolderPath,
+        updatedAt: Date.now(),
+        images: nextImages,
+      };
+
+      if (db) {
+        try {
+          saved = await idbSet(db, rootFolderPath, nextPayload);
+        } catch {
+          saved = false;
+        }
+      }
+      const localSaved = writeLocalStorageDraft(rootFolderPath, nextPayload);
+      saved = saved || localSaved;
+    } else {
+      if (db) {
+        try {
+          saved = await idbDelete(db, rootFolderPath);
+        } catch {
+          saved = false;
+        }
+      }
+      const localCleared = deleteLocalStorageDraft(rootFolderPath);
+      saved = saved || localCleared;
+    }
+
+    // Cleanup possible legacy key if it differs from root key.
+    if (normalizedFolderPath !== rootFolderPath) {
+      if (db) {
+        try {
+          await idbDelete(db, normalizedFolderPath);
+        } catch {
+          // Ignore cleanup failure.
+        }
+      }
+      deleteLocalStorageDraft(normalizedFolderPath);
+    }
+  } catch {
+    return false;
+  } finally {
+    if (db) db.close();
+  }
+  return changed && saved;
 };
 
 export const loadFolderDraftSummaries = async (

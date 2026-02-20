@@ -89,6 +89,15 @@ const clampInRange = (value: unknown, min: number, max: number): number => {
   return Math.max(min, Math.min(max, numeric));
 };
 
+const SIGNATURE_PRECISION = 1000;
+const SYNC_EPSILON = 0.001;
+
+const roundForSignature = (value: unknown): number => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.round(numeric * SIGNATURE_PRECISION) / SIGNATURE_PRECISION;
+};
+
 const clampCropToBounds = (
   crop: Partial<EditorCropRect> | null | undefined,
   bounds: Bounds,
@@ -222,6 +231,79 @@ const clampCropWithAspect = (
   return { x, y, w, h };
 };
 
+const areNumbersEquivalent = (a: number, b: number): boolean =>
+  Math.abs(a - b) <= SYNC_EPSILON;
+
+const areCropsEquivalent = (
+  a: EditorCropRect,
+  b: EditorCropRect,
+): boolean =>
+  areNumbersEquivalent(a.x, b.x) &&
+  areNumbersEquivalent(a.y, b.y) &&
+  areNumbersEquivalent(a.w, b.w) &&
+  areNumbersEquivalent(a.h, b.h);
+
+const areAnchorsEquivalent = (
+  a: EditorViewState['anchor'],
+  b: EditorViewState['anchor'],
+): boolean =>
+  areNumbersEquivalent(a.x, b.x) && areNumbersEquivalent(a.y, b.y);
+
+const areAspectsEquivalent = (
+  a: number | null,
+  b: number | null,
+): boolean => {
+  if (a === null && b === null) return true;
+  if (a === null || b === null) return false;
+  return areNumbersEquivalent(a, b);
+};
+
+const buildHydrationSignature = ({
+  imageId,
+  naturalWidth,
+  naturalHeight,
+  state,
+}: {
+  imageId: string;
+  naturalWidth: number;
+  naturalHeight: number;
+  state?: CropEntry;
+}): string => {
+  const coordinates = state?.coordinates || null;
+  const transforms = state?.transforms || null;
+  const anchor = state?.editorView?.anchor || null;
+
+  return JSON.stringify({
+    imageId: String(imageId || ''),
+    naturalWidth: roundForSignature(naturalWidth),
+    naturalHeight: roundForSignature(naturalHeight),
+    coordinates: coordinates
+      ? {
+          left: roundForSignature(coordinates.left),
+          top: roundForSignature(coordinates.top),
+          width: roundForSignature(coordinates.width),
+          height: roundForSignature(coordinates.height),
+        }
+      : null,
+    transforms: {
+      rotate: roundForSignature(normalizeRotation(transforms?.rotate || 0)),
+      flipH: Boolean(transforms?.flip?.horizontal),
+      flipV: Boolean(transforms?.flip?.vertical),
+    },
+    aspect:
+      state?.aspect === null || state?.aspect === undefined
+        ? null
+        : roundForSignature(state.aspect),
+    editorView: {
+      zoom: roundForSignature(clampZoom(state?.editorView?.zoom ?? MIN_ZOOM)),
+      anchor: {
+        x: roundForSignature(clampAnchor(anchor?.x ?? 0.5)),
+        y: roundForSignature(clampAnchor(anchor?.y ?? 0.5)),
+      },
+    },
+  });
+};
+
 /**
  * useImageEditor — unified state machine for image editing.
  *
@@ -307,58 +389,187 @@ export function useImageEditor({
     return clampCropToBounds(initialCrop, initialBounds);
   });
 
-  // Track the ID to forcibly update state when image swaps
-  const lastImageIdRef = useRef(imageId);
+  const cropRef = useRef(crop);
+  cropRef.current = crop;
+  const rotationRef = useRef(rotation);
+  rotationRef.current = rotation;
+  const flipHRef = useRef(flipH);
+  flipHRef.current = flipH;
+  const flipVRef = useRef(flipV);
+  flipVRef.current = flipV;
+  const aspectRef = useRef(aspect);
+  aspectRef.current = aspect;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const zoomAnchorRef = useRef(zoomAnchor);
+  zoomAnchorRef.current = zoomAnchor;
+  const isInteractingRef = useRef(false);
+  const lastHydrationSignatureRef = useRef('');
+  const lastEmittedSignatureRef = useRef('');
+  const pendingHydrationRef = useRef<{
+    signature: string;
+    state: CropEntry | undefined;
+    naturalWidth: number;
+    naturalHeight: number;
+  } | null>(null);
 
-  useEffect(() => {
-    if (imageId !== lastImageIdRef.current) {
-      lastImageIdRef.current = imageId;
-
-      const newRotation = normalizeRotation(
-        initialState?.transforms?.rotate || 0,
-      );
+  const applyHydrationState = useCallback(
+    ({
+      signature,
+      state,
+      naturalWidth: stateNaturalWidth,
+      naturalHeight: stateNaturalHeight,
+    }: {
+      signature: string;
+      state: CropEntry | undefined;
+      naturalWidth: number;
+      naturalHeight: number;
+    }) => {
+      const newRotation = normalizeRotation(state?.transforms?.rotate || 0);
       const newBounds = getRotatedBounds(
-        naturalWidth,
-        naturalHeight,
+        stateNaturalWidth,
+        stateNaturalHeight,
         newRotation,
       );
       const newCrop = clampCropToBounds(
         toEditorCropCoordinates(
-          initialState?.coordinates,
+          state?.coordinates,
           newBounds.width,
           newBounds.height,
         ),
         newBounds,
       );
-      const newAspect = initialState?.aspect ?? null;
-      const newZoom = clampZoom(initialState?.editorView?.zoom ?? MIN_ZOOM);
+      const newFlipH = Boolean(state?.transforms?.flip?.horizontal);
+      const newFlipV = Boolean(state?.transforms?.flip?.vertical);
+      const newAspect = state?.aspect ?? null;
+      const newZoom = clampZoom(state?.editorView?.zoom ?? MIN_ZOOM);
       const newZoomAnchor = {
-        x: toFiniteAnchor(initialState?.editorView?.anchor?.x, 0.5),
-        y: toFiniteAnchor(initialState?.editorView?.anchor?.y, 0.5),
+        x: toFiniteAnchor(state?.editorView?.anchor?.x, 0.5),
+        y: toFiniteAnchor(state?.editorView?.anchor?.y, 0.5),
       };
 
-      setRotationRaw(newRotation);
-      rotationRef.current = newRotation;
+      const rotationChanged = !areNumbersEquivalent(
+        rotationRef.current,
+        newRotation,
+      );
+      const flipHChanged = flipHRef.current !== newFlipH;
+      const flipVChanged = flipVRef.current !== newFlipV;
+      const aspectChanged = !areAspectsEquivalent(aspectRef.current, newAspect);
+      const zoomChanged = !areNumbersEquivalent(zoomRef.current, newZoom);
+      const zoomAnchorChanged = !areAnchorsEquivalent(
+        zoomAnchorRef.current,
+        newZoomAnchor,
+      );
+      const cropChanged = !areCropsEquivalent(cropRef.current, newCrop);
 
-      setFlipH(Boolean(initialState?.transforms?.flip?.horizontal));
-      flipHRef.current = Boolean(initialState?.transforms?.flip?.horizontal);
+      if (
+        !rotationChanged &&
+        !flipHChanged &&
+        !flipVChanged &&
+        !aspectChanged &&
+        !zoomChanged &&
+        !zoomAnchorChanged &&
+        !cropChanged
+      ) {
+        lastHydrationSignatureRef.current = signature;
+        return false;
+      }
 
-      setFlipV(Boolean(initialState?.transforms?.flip?.vertical));
-      flipVRef.current = Boolean(initialState?.transforms?.flip?.vertical);
+      if (rotationChanged) {
+        setRotationRaw(newRotation);
+        rotationRef.current = newRotation;
+      }
+      if (flipHChanged) {
+        setFlipH(newFlipH);
+        flipHRef.current = newFlipH;
+      }
+      if (flipVChanged) {
+        setFlipV(newFlipV);
+        flipVRef.current = newFlipV;
+      }
+      if (aspectChanged) {
+        setAspectState(newAspect);
+        aspectRef.current = newAspect;
+      }
+      if (zoomChanged) {
+        setZoomRaw(newZoom);
+        zoomRef.current = newZoom;
+      }
+      if (zoomAnchorChanged) {
+        setZoomAnchorRaw(newZoomAnchor);
+        zoomAnchorRef.current = newZoomAnchor;
+      }
+      if (cropChanged) {
+        setCropRaw(newCrop);
+        cropRef.current = newCrop;
+      }
 
-      setAspectState(newAspect);
-      aspectRef.current = newAspect;
+      lastHydrationSignatureRef.current = signature;
+      return true;
+    },
+    [],
+  );
 
-      setZoomRaw(newZoom);
-      zoomRef.current = newZoom;
+  const flushPendingHydration = useCallback(() => {
+    const pending = pendingHydrationRef.current;
+    if (!pending) return false;
+    pendingHydrationRef.current = null;
 
-      setZoomAnchorRaw(newZoomAnchor);
-      zoomAnchorRef.current = newZoomAnchor;
-
-      setCropRaw(newCrop);
-      cropRef.current = newCrop;
+    if (pending.signature === lastHydrationSignatureRef.current) {
+      return false;
     }
-  }, [imageId, naturalWidth, naturalHeight, initialState]);
+    if (pending.signature === lastEmittedSignatureRef.current) {
+      lastHydrationSignatureRef.current = pending.signature;
+      return false;
+    }
+
+    return applyHydrationState(pending);
+  }, [applyHydrationState]);
+
+  useEffect(() => {
+    const incomingSignature = buildHydrationSignature({
+      imageId,
+      naturalWidth,
+      naturalHeight,
+      state: initialState,
+    });
+
+    if (incomingSignature === lastHydrationSignatureRef.current) {
+      pendingHydrationRef.current = null;
+      return;
+    }
+
+    // Ignore our own state echoes to avoid snapping while editing.
+    if (incomingSignature === lastEmittedSignatureRef.current) {
+      lastHydrationSignatureRef.current = incomingSignature;
+      pendingHydrationRef.current = null;
+      return;
+    }
+
+    if (isInteractingRef.current) {
+      pendingHydrationRef.current = {
+        signature: incomingSignature,
+        state: initialState,
+        naturalWidth,
+        naturalHeight,
+      };
+      return;
+    }
+
+    pendingHydrationRef.current = null;
+    applyHydrationState({
+      signature: incomingSignature,
+      state: initialState,
+      naturalWidth,
+      naturalHeight,
+    });
+  }, [
+    applyHydrationState,
+    imageId,
+    naturalWidth,
+    naturalHeight,
+    initialState,
+  ]);
 
   // ── Effective (Visual) Crop ──────────────────────────────
   // This accounts for the current zoom and pan (zoomAnchor) to define
@@ -389,22 +600,7 @@ export function useImageEditor({
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
-  const cropRef = useRef(crop);
-  cropRef.current = crop;
-  const rotationRef = useRef(rotation);
-  rotationRef.current = rotation;
-  const flipHRef = useRef(flipH);
-  flipHRef.current = flipH;
-  const flipVRef = useRef(flipV);
-  flipVRef.current = flipV;
-  const aspectRef = useRef(aspect);
-  aspectRef.current = aspect;
-  const zoomRef = useRef(zoom);
-  zoomRef.current = zoom;
-  const zoomAnchorRef = useRef(zoomAnchor);
-  zoomAnchorRef.current = zoomAnchor;
   const notifyFrameRef = useRef<number>(0);
-  const isInteractingRef = useRef(false);
   const wheelTimeoutRef = useRef<number | null>(null);
 
   const notifyChange = useCallback(() => {
@@ -422,7 +618,7 @@ export function useImageEditor({
         rawAnchor,
       );
 
-      onChangeRef.current?.({
+      const nextState: CropEntry = {
         coordinates: toStoredCoordinates(instantaneousEffectiveCrop),
         transforms: {
           rotate: rotationRef.current,
@@ -437,9 +633,17 @@ export function useImageEditor({
           zoom: 1,
           anchor: { x: 0.5, y: 0.5 },
         },
+      };
+
+      lastEmittedSignatureRef.current = buildHydrationSignature({
+        imageId,
+        naturalWidth,
+        naturalHeight,
+        state: nextState,
       });
+      onChangeRef.current?.(nextState);
     }, 100) as unknown as number;
-  }, [computeEffectiveCrop]);
+  }, [computeEffectiveCrop, imageId, naturalHeight, naturalWidth]);
 
   useEffect(() => {
     return () => {
@@ -708,7 +912,7 @@ export function useImageEditor({
         const centerX = previous.x + previous.w / 2;
         const centerY = previous.y + previous.h / 2;
 
-        return clampCropToBounds(
+        const next = clampCropToBounds(
           {
             x: centerX - w / 2,
             y: centerY - h / 2,
@@ -717,6 +921,8 @@ export function useImageEditor({
           },
           bounds,
         );
+        cropRef.current = next;
+        return next;
       });
       notifyChange();
     },
@@ -742,10 +948,12 @@ export function useImageEditor({
       rotationRef.current = nextRotation;
       setRotationRaw(nextRotation);
       setCropRaw((previous) => {
-        if (options.remapMode === 'coverage') {
-          return remapCropByCoverage(previous, previousBounds, nextBounds);
-        }
-        return remapCropToBounds(previous, previousBounds, nextBounds);
+        const nextCrop =
+          options.remapMode === 'coverage'
+            ? remapCropByCoverage(previous, previousBounds, nextBounds)
+            : remapCropToBounds(previous, previousBounds, nextBounds);
+        cropRef.current = nextCrop;
+        return nextCrop;
       });
 
       if (options.resetZoom) {
@@ -818,12 +1026,14 @@ export function useImageEditor({
     setZoomAnchorRaw({ x: 0.5, y: 0.5 });
 
     const resetBounds = getBoundsForRotation(0);
-    setCropRaw({
+    const resetCrop = {
       x: 0,
       y: 0,
       w: resetBounds.width,
       h: resetBounds.height,
-    });
+    };
+    cropRef.current = resetCrop;
+    setCropRaw(resetCrop);
     notifyChange();
   }, [getBoundsForRotation, notifyChange]);
 
@@ -842,12 +1052,14 @@ export function useImageEditor({
     setAspectState(null);
 
     const resetBounds = getBoundsForRotation(0);
-    setCropRaw({
+    const resetCrop = {
       x: 0,
       y: 0,
       w: resetBounds.width,
       h: resetBounds.height,
-    });
+    };
+    cropRef.current = resetCrop;
+    setCropRaw(resetCrop);
     notifyChange();
   }, [getBoundsForRotation, notifyChange]);
 
@@ -1043,7 +1255,10 @@ export function useImageEditor({
       }
       wheelTimeoutRef.current = window.setTimeout(() => {
         isInteractingRef.current = false;
-        notifyChange();
+        const appliedPendingHydration = flushPendingHydration();
+        if (!appliedPendingHydration) {
+          notifyChange();
+        }
       }, 150);
 
       updateZoomAnchorFromClientPoint({
@@ -1058,7 +1273,12 @@ export function useImageEditor({
       setZoomRaw(nextZoom);
       scheduleViewCommit();
     },
-    [scheduleViewCommit, updateZoomAnchorFromClientPoint, notifyChange],
+    [
+      scheduleViewCommit,
+      updateZoomAnchorFromClientPoint,
+      notifyChange,
+      flushPendingHydration,
+    ],
   );
 
   // ── Drag start/end (for CropOverlay) ────────────────────
@@ -1067,8 +1287,11 @@ export function useImageEditor({
   }, []);
   const onDragEnd = useCallback(() => {
     isInteractingRef.current = false;
-    notifyChange();
-  }, [notifyChange]);
+    const appliedPendingHydration = flushPendingHydration();
+    if (!appliedPendingHydration) {
+      notifyChange();
+    }
+  }, [notifyChange, flushPendingHydration]);
 
   // ── Return full API ─────────────────────────────────────
   return {
