@@ -3,6 +3,8 @@ import { ChevronLeft, ChevronRight, RotateCcw, Trash2, X } from 'lucide-react';
 
 type InspectorHeaderProps = {
   imageName: string;
+  onOpenImageInExplorer?: () => void;
+  canOpenImageInExplorer?: boolean;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -14,6 +16,8 @@ type InspectorHeaderProps = {
 
 const InspectorHeader = ({
   imageName,
+  onOpenImageInExplorer,
+  canOpenImageInExplorer = false,
   onClose,
   onPrev,
   onNext,
@@ -26,7 +30,19 @@ const InspectorHeader = ({
     <div className="inspector-header">
       <div className="inspector-title">
         <span>Editing Selection</span>
-        <strong>{imageName}</strong>
+        <button
+          type="button"
+          className={`inspector-title-file ${canOpenImageInExplorer ? 'is-openable' : ''}`}
+          onClick={onOpenImageInExplorer}
+          disabled={!canOpenImageInExplorer || typeof onOpenImageInExplorer !== 'function'}
+          title={
+            canOpenImageInExplorer
+              ? `Reveal in file explorer: ${imageName}`
+              : imageName
+          }
+        >
+          {imageName}
+        </button>
       </div>
       <div className="header-actions">
         <div className="nav-arrows">

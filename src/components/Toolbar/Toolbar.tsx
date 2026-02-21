@@ -5,6 +5,7 @@ import {
   Clock3,
   Type,
   Scale,
+  Shuffle,
   Check,
   ChevronDown,
   Grid3x3,
@@ -64,6 +65,11 @@ const SORT_OPTIONS: Array<{
     value: 'size_asc',
     label: 'Size Small-Large',
     Icon: Scale,
+  },
+  {
+    value: 'shuffle',
+    label: 'Shuffle',
+    Icon: Shuffle,
   },
 ];
 

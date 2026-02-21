@@ -99,6 +99,87 @@ pub async fn open_folder_in_file_explorer(folder_path: String) -> Result<(), Str
 }
 
 #[tauri::command]
+pub async fn reveal_file_in_file_explorer(file_path: String) -> Result<(), String> {
+    let normalized = file_path.trim().to_string();
+    if normalized.is_empty() {
+        return Err("File path is empty".to_string());
+    }
+
+    let input_path = PathBuf::from(&normalized);
+    let target_path = std::fs::canonicalize(&input_path).unwrap_or(input_path);
+    if !target_path.exists() || !target_path.is_file() {
+        return Err(format!("File path is not accessible: {}", target_path.display()));
+    }
+
+    let target = target_path.to_string_lossy().to_string();
+    let target_ref = target.as_str();
+
+    #[cfg(target_os = "windows")]
+    {
+        let select_arg = format!("/select,{target_ref}");
+        return spawn_detached("explorer.exe", &[select_arg.as_str()])
+            .or_else(|_| spawn_detached("explorer", &[select_arg.as_str()]))
+            .map_err(|error| format!("Failed to reveal file in file explorer: {error}"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return spawn_detached("/usr/bin/open", &["-R", target_ref])
+            .or_else(|_| spawn_detached("open", &["-R", target_ref]))
+            .map_err(|error| format!("Failed to reveal file in file explorer: {error}"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let mut last_error = String::new();
+
+        let select_candidates: Vec<(&str, Vec<&str>)> = vec![
+            ("/usr/bin/nautilus", vec!["--select", target_ref]),
+            ("nautilus", vec!["--select", target_ref]),
+            ("/usr/bin/dolphin", vec!["--select", target_ref]),
+            ("dolphin", vec!["--select", target_ref]),
+            ("/usr/bin/thunar", vec!["--select", target_ref]),
+            ("thunar", vec!["--select", target_ref]),
+            ("/usr/bin/nemo", vec!["--browser", target_ref]),
+            ("nemo", vec!["--browser", target_ref]),
+        ];
+
+        for (command, args) in select_candidates {
+            match spawn_detached(command, &args) {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = error,
+            }
+        }
+
+        let parent = target_path
+            .parent()
+            .map(|path| path.to_string_lossy().to_string())
+            .filter(|path| !path.trim().is_empty())
+            .unwrap_or_else(|| target.clone());
+        let parent_ref = parent.as_str();
+
+        let fallback_candidates: Vec<(&str, Vec<&str>)> = vec![
+            ("/usr/bin/xdg-open", vec![parent_ref]),
+            ("/bin/xdg-open", vec![parent_ref]),
+            ("xdg-open", vec![parent_ref]),
+            ("/usr/bin/gio", vec!["open", parent_ref]),
+            ("gio", vec!["open", parent_ref]),
+        ];
+
+        for (command, args) in fallback_candidates {
+            match spawn_detached(command, &args) {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = error,
+            }
+        }
+
+        return Err(format!(
+            "Failed to reveal file in file explorer: {last_error}"
+        ));
+    }
+}
+
+#[tauri::command]
 pub async fn read_sidecar_caption_for_image(
     image_path: String,
 ) -> Result<SidecarCaptionResult, String> {

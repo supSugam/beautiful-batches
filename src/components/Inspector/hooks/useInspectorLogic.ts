@@ -3,7 +3,6 @@ import { useImageEditor } from './useImageEditor';
 import type {
   CropEntry,
   PaddingFillType,
-  PaddingMode,
 } from '../../../types/app';
 
 type InspectorLogicImage = {
@@ -224,7 +223,6 @@ export function useInspectorLogic({
         cornerRadius: '',
         paddingFillType: 'empty',
         paddingFillValue: '',
-        paddingMode: 'outer',
       });
     }
   }, [editor, imageId, onCropChange]);
@@ -296,9 +294,6 @@ export function useInspectorLogic({
   const [paddingInput, setPaddingInput] = useState(() =>
     typeof cropState?.padding === 'string' ? cropState.padding : '',
   );
-  const [paddingMode, setPaddingMode] = useState(
-    () => (cropState?.paddingMode || 'outer') as PaddingMode,
-  );
   const [cornerRadiusInput, setCornerRadiusInput] = useState(() =>
     typeof cropState?.cornerRadius === 'string' ? cropState.cornerRadius : '',
   );
@@ -316,7 +311,6 @@ export function useInspectorLogic({
     setPaddingInput(
       typeof cropState?.padding === 'string' ? cropState.padding : '',
     );
-    setPaddingMode((cropState?.paddingMode || 'outer') as PaddingMode);
     setCornerRadiusInput(
       typeof cropState?.cornerRadius === 'string' ? cropState.cornerRadius : '',
     );
@@ -331,7 +325,6 @@ export function useInspectorLogic({
     cropState?.paddingFillType,
     cropState?.paddingFillValue,
     cropState?.paddingImageUrl,
-    cropState?.paddingMode,
     imageId,
   ]);
 
@@ -356,14 +349,6 @@ export function useInspectorLogic({
   );
 
   const handlePaddingInputBlur = useCallback(() => {}, []);
-
-  const handlePaddingModeChange = useCallback(
-    (mode: PaddingMode) => {
-      setPaddingMode(mode);
-      syncToStore({ paddingMode: mode });
-    },
-    [syncToStore],
-  );
 
   // cornerRadiusInput is also a string
   const handleCornerRadiusInputChange = useCallback(
@@ -459,14 +444,12 @@ export function useInspectorLogic({
 
     // Padding
     paddingInput,
-    paddingMode,
     cornerRadiusInput,
     paddingFillType,
     paddingFillValue,
     paddingImageUrl,
     handlePaddingInputChange,
     handlePaddingInputBlur,
-    handlePaddingModeChange,
     handleCornerRadiusInputChange,
     handleCornerRadiusInputBlur,
     handlePaddingFillTypeChange,

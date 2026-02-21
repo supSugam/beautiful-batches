@@ -1,25 +1,14 @@
-import React, {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { X, Check } from 'lucide-react';
-import { useShallow } from 'zustand/react/shallow';
 import useStore from '../store/useStore';
 import { normalizeStoredCoordinates } from '../utils/cropCoordinates';
-import type {
-  CornerRadiusValues,
-  CropEntry,
-  GalleryImage,
-  PaddingValues,
-} from '../types/app';
+import {
+  clampCornerRadiusToReference,
+  clampPaddingToReference,
+} from '../utils/boxValues';
+import type { GalleryImage } from '../types/app';
 import './ImageCard.css';
-
-const MAX_TRANSFORM_PREVIEW_DIM = 1536;
 const EMPTY_PADDING = Object.freeze({
   top: 0,
   right: 0,
@@ -33,105 +22,17 @@ const EMPTY_CORNER_RADIUS = Object.freeze({
   bottomLeft: 0,
 });
 const DEFAULT_PADDING_FILL_VALUE = '#ffffff';
-const MAX_PADDING_PX = 640;
-const MAX_CORNER_RADIUS_PX = 360;
-const INNER_PADDING_SIDE_RATIO = 0.4;
-const OUTER_PADDING_SIDE_RATIO = 0.75;
 
 const normalizePaddingFillType = (value: unknown): 'empty' | 'color' | 'image' => {
   if (value === 'color' || value === 'image') return value;
   return 'empty';
 };
 
-const clampPaddingValue = (value: number): number => {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.round(value));
-};
-
-const normalizePadding = (
-  padding: Partial<PaddingValues> | string | null | undefined,
-): PaddingValues => ({
-  top: clampPaddingValue(
-    Number((padding && typeof padding === 'object' ? padding.top : 0) ?? 0),
-  ),
-  right: clampPaddingValue(
-    Number((padding && typeof padding === 'object' ? padding.right : 0) ?? 0),
-  ),
-  bottom: clampPaddingValue(
-    Number((padding && typeof padding === 'object' ? padding.bottom : 0) ?? 0),
-  ),
-  left: clampPaddingValue(
-    Number((padding && typeof padding === 'object' ? padding.left : 0) ?? 0),
-  ),
-});
-
-const clampPaddingByMode = (
-  padding: Partial<PaddingValues> | string | null | undefined,
-  mode: 'inner' | 'outer',
-  referenceWidth: number,
-  referenceHeight: number,
-): PaddingValues => {
-  const normalized = normalizePadding(padding);
-  const safeWidth = Math.max(1, Number(referenceWidth) || 1);
-  const safeHeight = Math.max(1, Number(referenceHeight) || 1);
-  const ratio =
-    mode === 'outer' ? OUTER_PADDING_SIDE_RATIO : INNER_PADDING_SIDE_RATIO;
-  const horizontalCap = Math.max(
-    0,
-    Math.min(MAX_PADDING_PX, Math.round(safeWidth * ratio)),
-  );
-  const verticalCap = Math.max(
-    0,
-    Math.min(MAX_PADDING_PX, Math.round(safeHeight * ratio)),
-  );
-
-  return {
-    top: Math.min(normalized.top, verticalCap),
-    right: Math.min(normalized.right, horizontalCap),
-    bottom: Math.min(normalized.bottom, verticalCap),
-    left: Math.min(normalized.left, horizontalCap),
-  };
-};
-
-const normalizeCornerRadius = (
-  radius: Partial<CornerRadiusValues> | string | null | undefined,
-): CornerRadiusValues => ({
-  topLeft: clampPaddingValue(
-    Number((radius && typeof radius === 'object' ? radius.topLeft : 0) ?? 0),
-  ),
-  topRight: clampPaddingValue(
-    Number((radius && typeof radius === 'object' ? radius.topRight : 0) ?? 0),
-  ),
-  bottomRight: clampPaddingValue(
-    Number((radius && typeof radius === 'object' ? radius.bottomRight : 0) ?? 0),
-  ),
-  bottomLeft: clampPaddingValue(
-    Number((radius && typeof radius === 'object' ? radius.bottomLeft : 0) ?? 0),
-  ),
-});
-
-const clampCornerRadiusByReference = (
-  radius: Partial<CornerRadiusValues> | string | null | undefined,
-  referenceWidth: number,
-  referenceHeight: number,
-): CornerRadiusValues => {
-  const normalized = normalizeCornerRadius(radius);
-  const safeWidth = Math.max(1, Number(referenceWidth) || 1);
-  const safeHeight = Math.max(1, Number(referenceHeight) || 1);
-  const maxRadius = Math.max(
-    0,
-    Math.min(
-      MAX_CORNER_RADIUS_PX,
-      Math.round(Math.min(safeWidth, safeHeight) * 0.5),
-    ),
-  );
-
-  return {
-    topLeft: Math.min(normalized.topLeft, maxRadius),
-    topRight: Math.min(normalized.topRight, maxRadius),
-    bottomRight: Math.min(normalized.bottomRight, maxRadius),
-    bottomLeft: Math.min(normalized.bottomLeft, maxRadius),
-  };
+const formatPreviewPx = (value: number): string => {
+  const safe = Math.max(0, Number(value) || 0);
+  if (safe <= 0.0001) return '0px';
+  const rounded = Math.round(safe * 1000) / 1000;
+  return `${String(rounded).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')}px`;
 };
 
 export const ImageCard = memo(
@@ -179,34 +80,63 @@ export const ImageCard = memo(
     const coords = normalizeStoredCoordinates(cropState?.coordinates);
     const cw = coords?.width;
     const ch = coords?.height;
-    const previewPaddingMode =
-      cropState?.paddingMode === 'outer' ? 'outer' : 'inner';
-    const previewReferenceWidth = Math.max(
-      1,
-      Number(cw ?? image.naturalWidth ?? 1) || 1,
-    );
-    const previewReferenceHeight = Math.max(
-      1,
-      Number(ch ?? image.naturalHeight ?? 1) || 1,
-    );
-    const previewPadding = clampPaddingByMode(
+    const nw = Math.max(1, image.naturalWidth || 1);
+    const nh = Math.max(1, image.naturalHeight || 1);
+    const previewRotate = Number(transforms.rotate) || 0;
+
+    // 1. Calculate the bounding box of the rotated original image.
+    const radians = (previewRotate * Math.PI) / 180;
+    const cos = Math.abs(Math.cos(radians));
+    const sin = Math.abs(Math.sin(radians));
+    const boxW = Math.max(1, nw * cos + nh * sin);
+    const boxH = Math.max(1, nw * sin + nh * cos);
+
+    // 2. Fetch the crop coordinates.
+    // If no crop is set, the crop box is the rotated bounding box.
+    const hasCoords = Boolean(coords && cw && ch && cw > 0 && ch > 0);
+    const cropLeft = hasCoords ? Number(coords?.left) || 0 : 0;
+    const cropTop = hasCoords ? Number(coords?.top) || 0 : 0;
+    const cropW = hasCoords ? Number(cw) || 1 : boxW;
+    const cropH = hasCoords ? Number(ch) || 1 : boxH;
+
+    const previewPadding = clampPaddingToReference(
       cropState?.padding || EMPTY_PADDING,
-      previewPaddingMode,
-      previewReferenceWidth,
-      previewReferenceHeight,
+      cropW,
+      cropH,
     );
-    const previewPaddingCss = `${previewPadding.top}px ${previewPadding.right}px ${previewPadding.bottom}px ${previewPadding.left}px`;
-    const previewCornerRadius = clampCornerRadiusByReference(
-      cropState?.cornerRadius || EMPTY_CORNER_RADIUS,
-      previewReferenceWidth,
-      previewReferenceHeight,
-    );
-    const previewCornerRadiusCss = `${previewCornerRadius.topLeft}px ${previewCornerRadius.topRight}px ${previewCornerRadius.bottomRight}px ${previewCornerRadius.bottomLeft}px`;
     const hasPreviewPadding =
       previewPadding.top > 0 ||
       previewPadding.right > 0 ||
       previewPadding.bottom > 0 ||
       previewPadding.left > 0;
+    const previewScale = Math.max(1, Number(rowHeight) || 1) / Math.max(1, cropH);
+    const scaledPreviewPadding = {
+      top: previewPadding.top * previewScale,
+      right: previewPadding.right * previewScale,
+      bottom: previewPadding.bottom * previewScale,
+      left: previewPadding.left * previewScale,
+    };
+    const previewPaddingCss = `${formatPreviewPx(scaledPreviewPadding.top)} ${formatPreviewPx(
+      scaledPreviewPadding.right,
+    )} ${formatPreviewPx(scaledPreviewPadding.bottom)} ${formatPreviewPx(
+      scaledPreviewPadding.left,
+    )}`;
+    const previewCornerRadius = clampCornerRadiusToReference(
+      cropState?.cornerRadius || EMPTY_CORNER_RADIUS,
+      cropW,
+      cropH,
+    );
+    const scaledPreviewCornerRadius = {
+      topLeft: previewCornerRadius.topLeft * previewScale,
+      topRight: previewCornerRadius.topRight * previewScale,
+      bottomRight: previewCornerRadius.bottomRight * previewScale,
+      bottomLeft: previewCornerRadius.bottomLeft * previewScale,
+    };
+    const previewCornerRadiusCss = `${formatPreviewPx(
+      scaledPreviewCornerRadius.topLeft,
+    )} ${formatPreviewPx(scaledPreviewCornerRadius.topRight)} ${formatPreviewPx(
+      scaledPreviewCornerRadius.bottomRight,
+    )} ${formatPreviewPx(scaledPreviewCornerRadius.bottomLeft)}`;
     const previewPaddingFillType = normalizePaddingFillType(
       cropState?.paddingFillType,
     );
@@ -217,20 +147,24 @@ export const ImageCard = memo(
         : DEFAULT_PADDING_FILL_VALUE;
     const previewPaddingImageUrl =
       typeof cropState?.paddingImageUrl === 'string'
-        ? cropState.paddingImageUrl
+        ? cropState.paddingImageUrl.trim()
         : '';
+    const effectivePreviewPaddingFillType =
+      previewPaddingFillType === 'image' && !previewPaddingImageUrl
+        ? 'empty'
+        : previewPaddingFillType;
     const previewPaddingBackgroundStyle = useMemo(() => {
       if (!hasPreviewPadding) {
         return undefined;
       }
 
-      if (previewPaddingFillType === 'color') {
+      if (effectivePreviewPaddingFillType === 'color') {
         return {
           background: previewPaddingFillValue,
         };
       }
 
-      if (previewPaddingFillType === 'image' && previewPaddingImageUrl) {
+      if (effectivePreviewPaddingFillType === 'image' && previewPaddingImageUrl) {
         return {
           backgroundImage: `url(${previewPaddingImageUrl})`,
           backgroundSize: 'cover',
@@ -244,30 +178,10 @@ export const ImageCard = memo(
       };
     }, [
       hasPreviewPadding,
-      previewPaddingFillType,
+      effectivePreviewPaddingFillType,
       previewPaddingFillValue,
       previewPaddingImageUrl,
     ]);
-
-    // CSS Math for precise crop preview mapping
-    const nw = Math.max(1, image.naturalWidth || 1);
-    const nh = Math.max(1, image.naturalHeight || 1);
-    const previewRotate = Number(transforms.rotate) || 0;
-    
-    // 1. Calculate the bounding box of the rotated original image
-    const radians = (previewRotate * Math.PI) / 180;
-    const cos = Math.abs(Math.cos(radians));
-    const sin = Math.abs(Math.sin(radians));
-    const boxW = Math.max(1, nw * cos + nh * sin);
-    const boxH = Math.max(1, nw * sin + nh * cos);
-
-    // 2. Fetch the crop coordinates. 
-    // If no crop is set, the crop box IS the rotated bounding box.
-    const hasCoords = Boolean(coords && cw && ch && cw > 0 && ch > 0);
-    const cropLeft = hasCoords ? Number(coords?.left) || 0 : 0;
-    const cropTop = hasCoords ? Number(coords?.top) || 0 : 0;
-    const cropW = hasCoords ? Number(cw) || 1 : boxW;
-    const cropH = hasCoords ? Number(ch) || 1 : boxH;
 
     // 3. Aspect ratio for the grid container
     const previewAspectRatio = `${cropW} / ${cropH}`;

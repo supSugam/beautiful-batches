@@ -112,6 +112,7 @@ fn main() {
             commands::load_saved_roots_and_scan,
             commands::load_saved_roots_metadata,
             commands::open_folder_in_file_explorer,
+            commands::reveal_file_in_file_explorer,
             commands::read_sidecar_caption_for_image,
             commands::scan_root_by_path,
             commands::scan_folder_by_path_command,

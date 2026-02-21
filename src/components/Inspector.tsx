@@ -1,4 +1,5 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
 import {
   MousePointer2,
@@ -75,6 +76,24 @@ const InspectorSession = ({
   onApplyTo,
 }: InspectorSessionProps) => {
   const cropState = useStore((state) => state.cropData.get(image.id));
+  const normalizedImagePath = String(image?.absolutePath || '')
+    .replace(/\\/g, '/')
+    .trim();
+  const canOpenImageInExplorer =
+    normalizedImagePath.length > 0 &&
+    typeof window !== 'undefined' &&
+    '__TAURI_INTERNALS__' in window;
+
+  const handleOpenImageInExplorer = useCallback(async () => {
+    if (!canOpenImageInExplorer) return;
+    try {
+      await invoke('reveal_file_in_file_explorer', {
+        filePath: normalizedImagePath,
+      });
+    } catch (error) {
+      console.error('Failed to reveal image in file explorer:', error);
+    }
+  }, [canOpenImageInExplorer, normalizedImagePath]);
 
   const logic = useInspectorLogic({
     image,
@@ -132,6 +151,8 @@ const InspectorSession = ({
     <>
       <InspectorHeader
         imageName={image.name}
+        onOpenImageInExplorer={handleOpenImageInExplorer}
+        canOpenImageInExplorer={canOpenImageInExplorer}
         onClose={logic.handleClose}
         onPrev={logic.navigatePrev}
         onNext={logic.navigateNext}
@@ -202,14 +223,12 @@ const InspectorSession = ({
           <section className="settings-section-card settings-section-card--tweaks">
             <PaddingSection
               paddingInput={logic.paddingInput}
-              paddingMode={logic.paddingMode}
               cornerRadiusInput={logic.cornerRadiusInput}
               paddingFillType={logic.paddingFillType}
               paddingFillValue={logic.paddingFillValue}
               paddingImageUrl={logic.paddingImageUrl}
               handlePaddingInputChange={logic.handlePaddingInputChange}
               handlePaddingInputBlur={logic.handlePaddingInputBlur}
-              handlePaddingModeChange={logic.handlePaddingModeChange}
               handleCornerRadiusInputChange={
                 logic.handleCornerRadiusInputChange
               }

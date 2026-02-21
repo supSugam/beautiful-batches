@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Upload, Trash2 } from 'lucide-react';
 import DesignSlider from '../../common/DesignSlider';
 import { ACCEPTED_IMAGE_TYPES } from '../../../utils/directoryPicker';
-import type { PaddingFillType, PaddingMode } from '../../../types/app';
+import type { PaddingFillType } from '../../../types/app';
 
 const DEFAULT_SOLID = '#ffffff';
 const DEFAULT_GRADIENT_START = '#ffffff';
@@ -22,6 +23,15 @@ const COLOR_PRESETS = Object.freeze([
   '#818cf8',
   '#ec4899',
 ]);
+const FILL_TYPE_OPTIONS: Array<{
+  type: PaddingFillType;
+  label: string;
+  title: string;
+}> = [
+  { type: 'empty', label: 'Empty', title: 'Neutral fill' },
+  { type: 'color', label: 'Color', title: 'Color fill' },
+  { type: 'image', label: 'Image', title: 'Image fill' },
+];
 let colorCanvasContext: CanvasRenderingContext2D | null = null;
 
 type ParsedGradient = {
@@ -214,6 +224,10 @@ const buildLinearGradient = (start: string, end: string, angle: number): string 
   `linear-gradient(${angle}deg, ${start}, ${end})`;
 
 const NUMERIC_TOKEN_REGEX = /-?\d+(?:\.\d+)?/g;
+const REVEAL_SECTION_TRANSITION = {
+  duration: 0.22,
+  ease: [0.22, 1, 0.36, 1] as const,
+};
 
 const getActiveNumericToken = (
   value: string,
@@ -283,14 +297,12 @@ const stepValueAtCursor = (
 
 type PaddingSectionProps = {
   paddingInput: string;
-  paddingMode: PaddingMode;
   cornerRadiusInput: string;
   paddingFillType: PaddingFillType;
   paddingFillValue: string;
   paddingImageUrl: string;
   handlePaddingInputChange: (value: string) => void;
   handlePaddingInputBlur: () => void;
-  handlePaddingModeChange: (mode: PaddingMode) => void;
   handleCornerRadiusInputChange: (value: string) => void;
   handleCornerRadiusInputBlur: () => void;
   handlePaddingFillTypeChange: (type: PaddingFillType) => void;
@@ -300,14 +312,12 @@ type PaddingSectionProps = {
 
 const PaddingSection = ({
   paddingInput,
-  paddingMode,
   cornerRadiusInput,
   paddingFillType,
   paddingFillValue,
   paddingImageUrl,
   handlePaddingInputChange,
   handlePaddingInputBlur,
-  handlePaddingModeChange,
   handleCornerRadiusInputChange,
   handleCornerRadiusInputBlur,
   handlePaddingFillTypeChange,
@@ -561,6 +571,10 @@ const PaddingSection = ({
     colorMode === 'solid'
       ? solidColor
       : `${gradientAngle}deg • ${gradientStart} -> ${gradientEnd}`;
+  const activeFillTypeIndex = Math.max(
+    0,
+    FILL_TYPE_OPTIONS.findIndex((option) => option.type === paddingFillType),
+  );
 
   return (
     <section className="control-section padding-section">
@@ -569,36 +583,16 @@ const PaddingSection = ({
       <div className="padding-input-row">
         <div className="padding-input-group">
           <label>Padding</label>
-          <div className="padding-input-shell">
-            <input
-              type="text"
-              value={paddingInput}
-              placeholder="0 0 0 0"
-              onChange={(e) => handlePaddingInputChange(e.target.value)}
-              onBlur={handlePaddingInputBlur}
-              onKeyDown={(e) =>
-                handleSteppedNumericKeyDown(e, handlePaddingInputChange)
-              }
-            />
-            <div className="padding-mode-float" aria-label="Padding mode">
-              <button
-                type="button"
-                className={`padding-mode-chip ${paddingMode === 'inner' ? 'active' : ''}`}
-                onClick={() => handlePaddingModeChange('inner')}
-                title="Inner padding"
-              >
-                Inner
-              </button>
-              <button
-                type="button"
-                className={`padding-mode-chip ${paddingMode === 'outer' ? 'active' : ''}`}
-                onClick={() => handlePaddingModeChange('outer')}
-                title="Outer padding"
-              >
-                Outer
-              </button>
-            </div>
-          </div>
+          <input
+            type="text"
+            value={paddingInput}
+            placeholder="0 0 0 0"
+            onChange={(e) => handlePaddingInputChange(e.target.value)}
+            onBlur={handlePaddingInputBlur}
+            onKeyDown={(e) =>
+              handleSteppedNumericKeyDown(e, handlePaddingInputChange)
+            }
+          />
         </div>
 
         <div className="padding-input-group">
@@ -616,161 +610,202 @@ const PaddingSection = ({
         </div>
       </div>
 
-      <div className="padding-fill-grid">
-        <button
-          type="button"
-          className={`padding-fill-btn ${paddingFillType === 'empty' ? 'active' : ''}`}
-          onClick={() => handlePaddingFillTypeChange('empty')}
-          title="Neutral fill"
-        >
-          Empty
-        </button>
-        <button
-          type="button"
-          className={`padding-fill-btn ${paddingFillType === 'color' ? 'active' : ''}`}
-          onClick={() => handlePaddingFillTypeChange('color')}
-          title="Color fill"
-        >
-          Color
-        </button>
-        <button
-          type="button"
-          className={`padding-fill-btn ${paddingFillType === 'image' ? 'active' : ''}`}
-          onClick={() => handlePaddingFillTypeChange('image')}
-          title="Image fill"
-        >
-          Image
-        </button>
+      <div className="padding-fill-capsule" aria-label="Padding fill type">
+        <motion.span
+          className="padding-fill-capsule-track"
+          initial={false}
+          animate={{ x: `${activeFillTypeIndex * 100}%` }}
+          transition={{
+            type: 'spring',
+            stiffness: 520,
+            damping: 36,
+            mass: 0.35,
+          }}
+        />
+        {FILL_TYPE_OPTIONS.map((option) => {
+          const isActive = paddingFillType === option.type;
+          return (
+            <button
+              key={option.type}
+              type="button"
+              className={`padding-fill-capsule-btn ${isActive ? 'active' : ''}`}
+              onClick={() => handlePaddingFillTypeChange(option.type)}
+              title={option.title}
+            >
+              <span className="padding-fill-capsule-label">{option.label}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {paddingFillType === 'color' && (
-        <div className="padding-color-panel">
-          <div className="padding-color-header">
-            <div className="padding-color-summary">
-              <div
-                className="padding-color-preview"
-                style={{ background: colorPreview }}
-              />
-              <div className="padding-color-summary-text">{colorSummary}</div>
-            </div>
-            <button
-              type="button"
-              className={`padding-editor-toggle ${showColorEditor ? 'active' : ''}`}
-              onClick={() => setShowColorEditor((prev) => !prev)}
-            >
-              {showColorEditor ? 'Hide' : 'Customize'}
-            </button>
-          </div>
-
-          {showColorEditor && (
-            <div className="padding-color-editor">
-              <div className="padding-color-editor-label">Style</div>
-              <div className="padding-color-mode-grid">
+      <AnimatePresence mode="wait" initial={false}>
+        {paddingFillType === 'color' && (
+          <motion.div
+            key="padding-color-panel"
+            initial={{ opacity: 0, height: 0, y: -6 }}
+            animate={{ opacity: 1, height: 'auto', y: 0 }}
+            exit={{ opacity: 0, height: 0, y: -6 }}
+            transition={REVEAL_SECTION_TRANSITION}
+            style={{ overflow: 'hidden' }}
+          >
+            <div className="padding-color-panel">
+              <div className="padding-color-header">
+                <div className="padding-color-summary">
+                  <div
+                    className="padding-color-preview"
+                    style={{ background: colorPreview }}
+                  />
+                  <div className="padding-color-summary-text">{colorSummary}</div>
+                </div>
                 <button
                   type="button"
-                  className={`padding-color-mode-btn ${colorMode === 'solid' ? 'active' : ''}`}
-                  onClick={() => applySolidColor(solidColor)}
+                  className={`padding-editor-toggle ${showColorEditor ? 'active' : ''}`}
+                  onClick={() => setShowColorEditor((prev) => !prev)}
                 >
-                  Solid
-                </button>
-                <button
-                  type="button"
-                  className={`padding-color-mode-btn ${colorMode === 'gradient' ? 'active' : ''}`}
-                  onClick={() =>
-                    applyGradient(gradientStart, gradientEnd, gradientAngle)
-                  }
-                >
-                  Gradient
+                  {showColorEditor ? 'Hide' : 'Customize'}
                 </button>
               </div>
 
-              <div className="padding-color-fields">
-                {colorMode === 'solid' ? (
-                  renderColorField({
-                    label: 'Color',
-                    color: solidColor,
-                    pickerKey: 'solid',
-                    onColorChange: applySolidColor,
-                  })
-                ) : (
-                  <>
-                    {renderColorField({
-                      label: 'Start',
-                      color: gradientStart,
-                      pickerKey: 'gradient-start',
-                      onColorChange: (nextStart) =>
-                        applyGradient(nextStart, gradientEnd, gradientAngle),
-                    })}
-                    {renderColorField({
-                      label: 'End',
-                      color: gradientEnd,
-                      pickerKey: 'gradient-end',
-                      onColorChange: (nextEnd) =>
-                        applyGradient(gradientStart, nextEnd, gradientAngle),
-                    })}
-
-                    <div className="padding-gradient-panel">
-                      <div className="padding-angle-row">
-                        <label>Angle: {gradientAngle}°</label>
-                        <DesignSlider
-                          className="padding-angle-slider"
-                          min={-180}
-                          max={180}
-                          step={1}
-                          value={gradientAngle}
-                          ariaLabel="Gradient angle"
-                          onChange={(nextValue) =>
-                            applyGradient(
-                              gradientStart,
-                              gradientEnd,
-                              Math.round(nextValue),
-                            )
-                          }
-                        />
-                      </div>
-                      <div
-                        className="padding-gradient-preview"
-                        style={{ background: gradientPreview }}
-                      />
+              <AnimatePresence initial={false}>
+                {showColorEditor && (
+                  <motion.div
+                    key="padding-color-editor"
+                    className="padding-color-editor"
+                    initial={{ opacity: 0, height: 0, y: -4 }}
+                    animate={{ opacity: 1, height: 'auto', y: 0 }}
+                    exit={{ opacity: 0, height: 0, y: -4 }}
+                    transition={REVEAL_SECTION_TRANSITION}
+                    style={{ overflow: 'hidden' }}
+                  >
+                    <div className="padding-color-editor-label">Style</div>
+                    <div className="padding-color-mode-grid">
+                      <button
+                        type="button"
+                        className={`padding-color-mode-btn ${colorMode === 'solid' ? 'active' : ''}`}
+                        onClick={() => applySolidColor(solidColor)}
+                      >
+                        Solid
+                      </button>
+                      <button
+                        type="button"
+                        className={`padding-color-mode-btn ${colorMode === 'gradient' ? 'active' : ''}`}
+                        onClick={() =>
+                          applyGradient(gradientStart, gradientEnd, gradientAngle)
+                        }
+                      >
+                        Gradient
+                      </button>
                     </div>
-                  </>
+
+                    <div className="padding-color-fields">
+                      {colorMode === 'solid' ? (
+                        renderColorField({
+                          label: 'Color',
+                          color: solidColor,
+                          pickerKey: 'solid',
+                          onColorChange: applySolidColor,
+                        })
+                      ) : (
+                        <>
+                          {renderColorField({
+                            label: 'Start',
+                            color: gradientStart,
+                            pickerKey: 'gradient-start',
+                            onColorChange: (nextStart) =>
+                              applyGradient(nextStart, gradientEnd, gradientAngle),
+                          })}
+                          {renderColorField({
+                            label: 'End',
+                            color: gradientEnd,
+                            pickerKey: 'gradient-end',
+                            onColorChange: (nextEnd) =>
+                              applyGradient(gradientStart, nextEnd, gradientAngle),
+                          })}
+
+                          <div className="padding-gradient-panel">
+                            <div className="padding-angle-row">
+                              <label>Angle: {gradientAngle}°</label>
+                              <DesignSlider
+                                className="padding-angle-slider"
+                                min={-180}
+                                max={180}
+                                step={1}
+                                value={gradientAngle}
+                                ariaLabel="Gradient angle"
+                                onChange={(nextValue) =>
+                                  applyGradient(
+                                    gradientStart,
+                                    gradientEnd,
+                                    Math.round(nextValue),
+                                  )
+                                }
+                              />
+                            </div>
+                            <div
+                              className="padding-gradient-preview"
+                              style={{ background: gradientPreview }}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </motion.div>
                 )}
-              </div>
+              </AnimatePresence>
             </div>
-          )}
-        </div>
-      )}
+          </motion.div>
+        )}
 
-      {paddingFillType === 'image' && (
-        <div className="padding-image-panel">
-          <label className="padding-image-upload">
-            <Upload size={14} />
-            <span>Choose Image</span>
-            <input
-              type="file"
-              accept={ACCEPTED_IMAGE_TYPES}
-              onChange={onImageFileChange}
-            />
-          </label>
+        {paddingFillType === 'image' && (
+          <motion.div
+            key="padding-image-panel"
+            initial={{ opacity: 0, height: 0, y: -6 }}
+            animate={{ opacity: 1, height: 'auto', y: 0 }}
+            exit={{ opacity: 0, height: 0, y: -6 }}
+            transition={REVEAL_SECTION_TRANSITION}
+            style={{ overflow: 'hidden' }}
+          >
+            <div className="padding-image-panel">
+              <label className="padding-image-upload">
+                <Upload size={14} />
+                <span>Choose Image</span>
+                <input
+                  type="file"
+                  accept={ACCEPTED_IMAGE_TYPES}
+                  onChange={onImageFileChange}
+                />
+              </label>
 
-          {paddingImageUrl && (
-            <div className="padding-image-preview-wrap">
-              <div
-                className="padding-image-preview"
-                style={{ backgroundImage: `url(${paddingImageUrl})` }}
-              />
-              <button
-                type="button"
-                className="btn-icon-subtle"
-                title="Remove selected image"
-                onClick={() => handlePaddingImageFileChange(null)}
-              >
-                <Trash2 size={12} />
-              </button>
+              <AnimatePresence initial={false}>
+                {paddingImageUrl && (
+                  <motion.div
+                    key="padding-image-preview-wrap"
+                    className="padding-image-preview-wrap"
+                    initial={{ opacity: 0, height: 0, y: -4 }}
+                    animate={{ opacity: 1, height: 'auto', y: 0 }}
+                    exit={{ opacity: 0, height: 0, y: -4 }}
+                    transition={REVEAL_SECTION_TRANSITION}
+                    style={{ overflow: 'hidden' }}
+                  >
+                    <div
+                      className="padding-image-preview"
+                      style={{ backgroundImage: `url(${paddingImageUrl})` }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-icon-subtle"
+                      title="Remove selected image"
+                      onClick={() => handlePaddingImageFileChange(null)}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-          )}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </section>
   );
 };

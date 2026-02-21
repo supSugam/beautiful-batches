@@ -24,19 +24,20 @@ const resolveThumbnailSize = (targetRowHeight: number): number => {
   );
 };
 
-const getRotatedRatio = (
+const getRotatedBounds = (
   width: number,
   height: number,
   rotation: number,
-): number => {
+): { width: number; height: number } => {
   const safeWidth = Math.max(1, Number(width) || 1);
   const safeHeight = Math.max(1, Number(height) || 1);
   const radians = ((Number(rotation) || 0) * Math.PI) / 180;
   const cos = Math.abs(Math.cos(radians));
   const sin = Math.abs(Math.sin(radians));
-  const rotatedWidth = safeWidth * cos + safeHeight * sin;
-  const rotatedHeight = safeWidth * sin + safeHeight * cos;
-  return rotatedWidth / Math.max(1, rotatedHeight);
+  return {
+    width: safeWidth * cos + safeHeight * sin,
+    height: safeWidth * sin + safeHeight * cos,
+  };
 };
 
 type JustifiedGridProps = {
@@ -103,18 +104,23 @@ const JustifiedGrid = ({
 
     return images.map((img): GridPhoto => {
       const cropEntry = cropData.get(img.id);
-      let ratio = img.naturalRatio || 1;
+      let contentWidth = Math.max(1, Number(img.naturalWidth) || 1);
+      let contentHeight = Math.max(1, Number(img.naturalHeight) || 1);
 
       const coordinates = normalizeStoredCoordinates(cropEntry?.coordinates);
       if (coordinates) {
-        ratio = coordinates.width / coordinates.height;
-      } else if (cropEntry?.transforms?.rotate) {
-        ratio = getRotatedRatio(
+        contentWidth = Math.max(1, Number(coordinates.width) || 1);
+        contentHeight = Math.max(1, Number(coordinates.height) || 1);
+      } else {
+        const rotatedBounds = getRotatedBounds(
           img.naturalWidth,
           img.naturalHeight,
-          cropEntry.transforms.rotate,
+          Number(cropEntry?.transforms?.rotate || 0),
         );
+        contentWidth = Math.max(1, rotatedBounds.width);
+        contentHeight = Math.max(1, rotatedBounds.height);
       }
+      const ratio = contentWidth / contentHeight;
       const stableRatio =
         Number.isFinite(ratio) && ratio > 0 ? Math.round(ratio * 200) / 200 : 1;
 

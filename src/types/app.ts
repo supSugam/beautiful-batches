@@ -4,7 +4,8 @@ export type SortOption =
   | 'name_asc'
   | 'name_desc'
   | 'size_desc'
-  | 'size_asc';
+  | 'size_asc'
+  | 'shuffle';
 
 export type ExportFormat = 'png' | 'jpeg' | 'webp';
 
@@ -51,7 +52,7 @@ export interface CornerRadiusValues {
   bottomLeft: number;
 }
 
-export type PaddingMode = 'inner' | 'outer';
+export type PaddingMode = 'inner';
 export type PaddingFillType = 'empty' | 'color' | 'image';
 
 export interface CropEntry {

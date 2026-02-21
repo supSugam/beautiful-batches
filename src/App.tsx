@@ -35,6 +35,7 @@ import type {
   DirectoryRoot,
   FolderNode,
   GalleryImage,
+  SortOption,
 } from './types/app';
 import './App.css';
 
@@ -48,6 +49,7 @@ const FOLDER_LOAD_MORE_BATCH = 180;
 const MIN_ROW_HEIGHT = 150;
 const MAX_ROW_HEIGHT = 500;
 const ROW_HEIGHT_STEP = 4;
+const SHUFFLE_SEED_MAX = 0x7fffffff;
 const nameCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: 'base',
@@ -156,6 +158,18 @@ const getEffectiveModifiedTimestamp = (
   return Math.max(sessionTs, baseTs);
 };
 
+const randomInt = (maxExclusive: number): number =>
+  Math.floor(Math.random() * maxExclusive);
+
+const getShuffleScore = (value: string, seed: number): number => {
+  let hash = (seed ^ 0x9e3779b9) >>> 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash;
+};
+
 function App() {
   const images = useStore((state) => state.images);
   const rowHeight = useStore((state) => state.rowHeight);
@@ -221,6 +235,9 @@ function App() {
     }
     return Array.from(new Set(names.filter(Boolean)));
   });
+  const [shuffleSeed, setShuffleSeed] = useState<number>(() =>
+    randomInt(SHUFFLE_SEED_MAX),
+  );
   const [startupRootsResolved, setStartupRootsResolved] = useState(false);
   const [loadingFolderPaths, setLoadingFolderPaths] = useState<Set<string>>(
     () => new Set(),
@@ -285,6 +302,16 @@ function App() {
       });
     },
     [setRowHeight],
+  );
+
+  const handleSetSortOption = useCallback(
+    (option: SortOption) => {
+      if (option === 'shuffle') {
+        setShuffleSeed(randomInt(SHUFFLE_SEED_MAX));
+      }
+      setSortOption(option);
+    },
+    [setSortOption],
   );
 
   useEffect(() => {
@@ -647,6 +674,11 @@ function App() {
       } else if (sortOption === 'size_asc') {
         const bySize = (a.sourceSize || 0) - (b.sourceSize || 0);
         if (bySize !== 0) return bySize;
+      } else if (sortOption === 'shuffle') {
+        const byShuffle =
+          getShuffleScore(a.id || a.relativePath || a.name || '', shuffleSeed) -
+          getShuffleScore(b.id || b.relativePath || b.name || '', shuffleSeed);
+        if (byShuffle !== 0) return byShuffle;
       } else if (
         sortOption === 'last_modified_oldest' ||
         sortOption === 'last_modified'
@@ -682,7 +714,7 @@ function App() {
     });
 
     return next.map((entry) => entry.image);
-  }, [filteredImages, sortOption]); // Deliberately omitting sessionModifiedAt to avoid lag
+  }, [filteredImages, shuffleSeed, sortOption]); // Deliberately omitting sessionModifiedAt to avoid lag
 
   const visibleImageIds = useMemo(
     () => new Set(visibleImages.map((image) => image.id)),
@@ -1467,7 +1499,7 @@ function App() {
       <Toolbar
         folderName={folderName}
         sortOption={sortOption}
-        setSortOption={setSortOption}
+        setSortOption={handleSetSortOption}
         explorerOpen={explorerOpen}
         onToggleExplorer={() => setExplorerOpen((previous) => !previous)}
         activeFolderLabel={activeFolderLabel}

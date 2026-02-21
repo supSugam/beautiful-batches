@@ -3,6 +3,7 @@ import {
   normalizeStoredCoordinates,
   toStoredCoordinates,
 } from '../utils/cropCoordinates';
+import { normalizeCornerRadiusInput, normalizePaddingInput } from '../utils/boxValues';
 import type {
   CornerRadiusValues,
   CropEntry,
@@ -116,11 +117,36 @@ const GRID_RATIO_PRECISION = 200;
 const quantizeGridRatio = (value: number) =>
   Math.round(Number(value || 0) * GRID_RATIO_PRECISION) / GRID_RATIO_PRECISION;
 
-const getGridRatioSignature = (entry: CropEntry | undefined): number | null => {
+const getGridRatioSignature = (
+  entry: CropEntry | undefined,
+  image?: GalleryImage,
+): number | null => {
   const coordinates = normalizeStoredCoordinates(entry?.coordinates);
-  const width = coordinates?.width;
-  const height = coordinates?.height;
-  if (!Number.isFinite(width) || !Number.isFinite(height) || height === 0) {
+  const coordinatesWidth = Number(coordinates?.width || 0);
+  const coordinatesHeight = Number(coordinates?.height || 0);
+
+  let width = 0;
+  let height = 0;
+  if (
+    Number.isFinite(coordinatesWidth) &&
+    Number.isFinite(coordinatesHeight) &&
+    coordinatesWidth > 0 &&
+    coordinatesHeight > 0
+  ) {
+    width = coordinatesWidth;
+    height = coordinatesHeight;
+  } else if (image) {
+    const quarterTurn = getQuarterTurn(entry);
+    const swapAxes = quarterTurn % 2 === 1;
+    width = Math.max(
+      1,
+      Number(swapAxes ? image.naturalHeight : image.naturalWidth) || 1,
+    );
+    height = Math.max(
+      1,
+      Number(swapAxes ? image.naturalWidth : image.naturalHeight) || 1,
+    );
+  } else {
     return null;
   }
 
@@ -218,9 +244,10 @@ const getQuarterTurn = (entry: CropEntry | undefined): number => {
 const hasGridLayoutAffectingChange = (
   previousEntry: CropEntry | undefined,
   nextEntry: CropEntry | undefined,
+  image?: GalleryImage,
 ): boolean => {
-  const prevRatio = getGridRatioSignature(previousEntry);
-  const nextRatio = getGridRatioSignature(nextEntry);
+  const prevRatio = getGridRatioSignature(previousEntry, image);
+  const nextRatio = getGridRatioSignature(nextEntry, image);
   if (prevRatio !== nextRatio) return true;
 
   // Fallback when no explicit crop size exists yet.
@@ -230,20 +257,6 @@ const hasGridLayoutAffectingChange = (
 
   return false;
 };
-
-const DEFAULT_PADDING = Object.freeze({
-  top: 0,
-  right: 0,
-  bottom: 0,
-  left: 0,
-});
-
-const DEFAULT_CORNER_RADIUS = Object.freeze({
-  topLeft: 0,
-  topRight: 0,
-  bottomRight: 0,
-  bottomLeft: 0,
-});
 
 const approxEqual = (a: number, b: number, tolerance = 0.51) =>
   Math.abs(Number(a || 0) - Number(b || 0)) <= tolerance;
@@ -292,36 +305,6 @@ const clampStoredCoordinatesToBounds = (
   };
 };
 
-const normalizePaddingValue = (value: number): number => {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.round(value));
-};
-
-const normalizePadding = (
-  padding: Partial<PaddingValues> | string | undefined,
-): PaddingValues => {
-  const source =
-    padding && typeof padding === 'object' ? padding : {};
-  return {
-    top: normalizePaddingValue(Number(source.top ?? 0)),
-    right: normalizePaddingValue(Number(source.right ?? 0)),
-    bottom: normalizePaddingValue(Number(source.bottom ?? 0)),
-    left: normalizePaddingValue(Number(source.left ?? 0)),
-  };
-};
-
-const normalizeCornerRadius = (
-  radius: Partial<CornerRadiusValues> | string | undefined,
-): CornerRadiusValues => {
-  const source = radius && typeof radius === 'object' ? radius : {};
-  return {
-    topLeft: normalizePaddingValue(Number(source.topLeft ?? 0)),
-    topRight: normalizePaddingValue(Number(source.topRight ?? 0)),
-    bottomRight: normalizePaddingValue(Number(source.bottomRight ?? 0)),
-    bottomLeft: normalizePaddingValue(Number(source.bottomLeft ?? 0)),
-  };
-};
-
 const normalizeEditorView = (
   editorView: Partial<EditorViewState> | undefined,
 ): EditorViewState => {
@@ -364,12 +347,10 @@ const hasMeaningfulImageChange = (
 
   if (entry?.clearImageMetadata) return true;
 
-  const normalizedPadding = normalizePadding(entry?.padding || DEFAULT_PADDING);
+  const normalizedPadding = normalizePaddingInput(entry?.padding);
   if (hasAnyPadding(normalizedPadding)) return true;
 
-  const normalizedCornerRadius = normalizeCornerRadius(
-    entry?.cornerRadius || DEFAULT_CORNER_RADIUS,
-  );
+  const normalizedCornerRadius = normalizeCornerRadiusInput(entry?.cornerRadius);
   if (hasAnyCornerRadius(normalizedCornerRadius)) return true;
 
   const editorView = normalizeEditorView(entry?.editorView);
@@ -1053,7 +1034,7 @@ const useStore = create<UseStoreState>((set, get) => {
           if (!previousEntry) return;
           nextCropData.delete(image.id);
           didChange = true;
-          if (hasGridLayoutAffectingChange(previousEntry, undefined)) {
+          if (hasGridLayoutAffectingChange(previousEntry, undefined, image)) {
             shouldBumpLayoutVersion = true;
           }
         });
@@ -1129,6 +1110,7 @@ const useStore = create<UseStoreState>((set, get) => {
         const shouldBumpLayoutVersion = hasGridLayoutAffectingChange(
           previousEntry,
           normalizedCoords,
+          image,
         );
 
         return {
@@ -1269,7 +1251,7 @@ const useStore = create<UseStoreState>((set, get) => {
             nextSessionModifiedAt.delete(id);
           }
 
-          if (hasGridLayoutAffectingChange(previousEntry, nextEntry)) {
+          if (hasGridLayoutAffectingChange(previousEntry, nextEntry, targetImg)) {
             shouldBumpLayoutVersion = true;
           }
         });
@@ -1392,7 +1374,13 @@ const useStore = create<UseStoreState>((set, get) => {
             imagesById.get(id),
           );
           nextCropData.set(id, normalizedValue);
-          if (hasGridLayoutAffectingChange(previousEntry, normalizedValue)) {
+          if (
+            hasGridLayoutAffectingChange(
+              previousEntry,
+              normalizedValue,
+              imagesById.get(id),
+            )
+          ) {
             shouldBumpLayoutVersion = true;
           }
         });
@@ -1453,7 +1441,8 @@ const useStore = create<UseStoreState>((set, get) => {
           sortOption === 'name_asc' ||
           sortOption === 'name_desc' ||
           sortOption === 'size_desc' ||
-          sortOption === 'size_asc'
+          sortOption === 'size_asc' ||
+          sortOption === 'shuffle'
             ? sortOption
             : 'last_modified',
       }),
