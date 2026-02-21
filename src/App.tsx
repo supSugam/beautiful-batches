@@ -17,7 +17,6 @@ import {
 } from './utils/directoryPicker';
 import { DropZone } from './components/DropZone';
 import Toolbar from './components/Toolbar/Toolbar';
-import ProgressBar from './components/common/ProgressBar';
 import MainLayout from './layouts/MainLayout';
 import useStore from './store/useStore';
 import {
@@ -29,7 +28,6 @@ import {
   resolveDraftsForImages,
 } from './utils/editDraftPersistence';
 import { useImageUpload } from './hooks/useImageUpload';
-import { useExportLogic } from './hooks/useExportLogic';
 import type {
   CropEntry,
   DirectoryHandle,
@@ -46,6 +44,9 @@ const LINKED_ROOT_NAMES_STORAGE_KEY = 'bb-linked-root-names';
 const ALL_FOLDERS_VALUE = '__all__';
 const FOLDER_INITIAL_IMAGE_BATCH = 240;
 const FOLDER_LOAD_MORE_BATCH = 180;
+const MIN_ROW_HEIGHT = 150;
+const MAX_ROW_HEIGHT = 500;
+const ROW_HEIGHT_STEP = 4;
 const nameCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: 'base',
@@ -62,6 +63,14 @@ const getRootFolderPathFromRelativePath = (relativePath: string): string =>
   normalizePath(relativePath).split('/').filter(Boolean)[0] || '';
 const getRootTokenFromPath = (value: string): string =>
   normalizePath(value).split('/').filter(Boolean)[0] || '';
+const snapRowHeight = (value: number): number => {
+  const safeValue = Number.isFinite(value) ? value : MIN_ROW_HEIGHT;
+  const clamped = Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, safeValue));
+  const snapped =
+    MIN_ROW_HEIGHT +
+    Math.round((clamped - MIN_ROW_HEIGHT) / ROW_HEIGHT_STEP) * ROW_HEIGHT_STEP;
+  return Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, snapped));
+};
 const isDirectImageChildOfFolder = (
   relativePath: string,
   folderPath: string,
@@ -166,7 +175,6 @@ function App() {
   );
   const clearDraftsForFolder = useStore((state) => state.clearDraftsForFolder);
   const deleteFolder = useStore((state) => state.deleteFolder);
-  const processing = useStore((state) => state.processing);
   const folderNodes = useStore((state) => state.folderNodes);
   const rootNames = useStore((state) => state.rootNames);
   const addImages = useStore((state) => state.addImages);
@@ -180,7 +188,6 @@ function App() {
     handleAddMore,
     handlePickFolderViaDirectoryPicker,
   } = useImageUpload();
-  const { handleExport } = useExportLogic();
   const linkedRootsHydratedRef = useRef<boolean>(false);
   const cachedRootNamesBootstrappedRef = useRef<boolean>(false);
   const rowHeightRafRef = useRef<number>(0);
@@ -265,11 +272,15 @@ function App() {
 
   const handleRowHeightChange = useCallback(
     (nextValue: number) => {
-      pendingRowHeightRef.current = nextValue;
+      const snappedValue = snapRowHeight(nextValue);
+      if (pendingRowHeightRef.current === snappedValue) return;
+      pendingRowHeightRef.current = snappedValue;
       if (rowHeightRafRef.current) return;
       rowHeightRafRef.current = requestAnimationFrame(() => {
         rowHeightRafRef.current = 0;
-        setRowHeight(pendingRowHeightRef.current);
+        const nextSnappedValue = pendingRowHeightRef.current;
+        if (useStore.getState().rowHeight === nextSnappedValue) return;
+        setRowHeight(nextSnappedValue);
       });
     },
     [setRowHeight],
@@ -1420,11 +1431,7 @@ function App() {
         activeFolderLabel={activeFolderLabel}
         rowHeight={rowHeight}
         setRowHeight={handleRowHeightChange}
-        onExport={handleExport}
-        processing={processing}
       />
-
-      <ProgressBar current={processing?.current} total={processing?.total} />
 
       <MainLayout
         images={visibleImages}

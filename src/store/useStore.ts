@@ -12,7 +12,6 @@ import type {
   GalleryImage,
   IfFileExistsMode,
   PaddingValues,
-  ProcessingState,
   RawUploadImage,
   SortOption,
 } from '../types/app';
@@ -400,7 +399,6 @@ export interface UseStoreState {
   cropLayoutVersion: number;
   folderNodes: FolderNode[];
   selectedId: string | null;
-  processing: ProcessingState | null;
   rowHeight: number;
   format: ExportFormat;
   quality: number;
@@ -435,7 +433,6 @@ export interface UseStoreState {
   setInspectorWidth: (inspectorWidth: number) => void;
   setExplorerWidth: (explorerWidth: number) => void;
   setSortOption: (sortOption: SortOption) => void;
-  setProcessing: (processing: ProcessingState | null) => void;
   expandedPaths: Set<string>;
   toggleExpandedPath: (path: string) => void;
   setExpandedPaths: (paths: Set<string>) => void;
@@ -635,7 +632,6 @@ const useStore = create<UseStoreState>((set, get) => {
     folderNodes: [],
     rootNames: [],
     selectedId: null,
-    processing: null,
 
     // --- UI Settings ---
     rowHeight: 250,
@@ -1311,7 +1307,6 @@ const useStore = create<UseStoreState>((set, get) => {
           ? sortOption
           : 'last_modified',
     }),
-  setProcessing: (processing) => set({ processing }),
 
   // Expanded Paths
   toggleExpandedPath: (path) =>

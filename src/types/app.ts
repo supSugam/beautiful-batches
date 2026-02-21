@@ -105,11 +105,6 @@ export interface GalleryImage extends RawUploadImage {
   loadedAt: number;
 }
 
-export interface ProcessingState {
-  current: number;
-  total: number;
-}
-
 export interface FolderNode {
   path: string;
   name: string;

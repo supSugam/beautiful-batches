@@ -9,16 +9,26 @@ import {
   ChevronDown,
   Grid3x3,
   Maximize as MaximizeIcon,
-  Download,
-  Loader2,
   X,
   Minus,
   Square,
 } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { LucideIcon } from 'lucide-react';
-import type { ProcessingState, SortOption } from '../../types/app';
+import type { SortOption } from '../../types/app';
 import './Toolbar.css';
+
+const MIN_ROW_HEIGHT = 150;
+const MAX_ROW_HEIGHT = 500;
+const ROW_HEIGHT_STEP = 4;
+const snapRowHeight = (value: number): number => {
+  const safeValue = Number.isFinite(value) ? value : MIN_ROW_HEIGHT;
+  const clamped = Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, safeValue));
+  const snapped =
+    MIN_ROW_HEIGHT +
+    Math.round((clamped - MIN_ROW_HEIGHT) / ROW_HEIGHT_STEP) * ROW_HEIGHT_STEP;
+  return Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, snapped));
+};
 
 const SORT_OPTIONS: Array<{
   value: SortOption;
@@ -74,8 +84,6 @@ type ToolbarProps = {
   activeFolderLabel: string;
   rowHeight: number;
   setRowHeight: (value: number) => void;
-  onExport: () => void;
-  processing: ProcessingState | null;
 };
 
 const Toolbar = ({
@@ -87,8 +95,6 @@ const Toolbar = ({
   activeFolderLabel,
   rowHeight,
   setRowHeight,
-  onExport,
-  processing,
 }: ToolbarProps) => {
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -143,6 +149,16 @@ const Toolbar = ({
   const folderPathLabel = useMemo(
     () => truncateMiddle(folderPathRaw, 44),
     [folderPathRaw],
+  );
+  const sliderFillPercent = useMemo(() => {
+    const clamped = snapRowHeight(Number(rowHeight) || MIN_ROW_HEIGHT);
+    return (
+      ((clamped - MIN_ROW_HEIGHT) / (MAX_ROW_HEIGHT - MIN_ROW_HEIGHT)) * 100
+    );
+  }, [rowHeight]);
+  const snappedRowHeight = useMemo(
+    () => snapRowHeight(Number(rowHeight) || MIN_ROW_HEIGHT),
+    [rowHeight],
   );
 
   useEffect(() => {
@@ -255,36 +271,22 @@ const Toolbar = ({
           <input
             type="range"
             className="size-slider"
-            min={150}
-            max={500}
-            value={rowHeight}
-            onChange={(e) => setRowHeight(Number(e.target.value))}
+            min={MIN_ROW_HEIGHT}
+            max={MAX_ROW_HEIGHT}
+            step={ROW_HEIGHT_STEP}
+            value={snappedRowHeight}
+            onChange={(e) => setRowHeight(snapRowHeight(Number(e.target.value)))}
+            style={
+              {
+                '--toolbar-slider-fill': `${sliderFillPercent}%`,
+              } as React.CSSProperties
+            }
           />
           <MaximizeIcon size={14} className="toolbar-dim" />
         </div>
       </div>
 
       <div className="toolbar-section toolbar-actions">
-        <button
-          className="btn btn-primary"
-          onClick={onExport}
-          disabled={!!processing}
-        >
-          {processing ? (
-            <>
-              <Loader2 size={14} className="spin" />
-              <span>
-                {processing.current}/{processing.total}
-              </span>
-            </>
-          ) : (
-            <>
-              <Download size={14} />
-              <span>Export All</span>
-            </>
-          )}
-        </button>
-
         {/* Standard Window Controls */}
         <div className="toolbar-window-controls">
           <button

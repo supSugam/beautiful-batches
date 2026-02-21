@@ -347,7 +347,9 @@ export const ImageCard = memo(
                   alt={image.name}
                   loading="lazy"
                   decoding="async"
-                  fetchPriority={selected ? 'high' : 'low'}
+                  {...({
+                    fetchpriority: selected ? 'high' : 'low',
+                  } as Record<string, string>)}
                   draggable={false}
                   style={{
                     position: 'absolute',
