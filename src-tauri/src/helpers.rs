@@ -61,15 +61,6 @@ pub fn output_extension(format: &str) -> &'static str {
     }
 }
 
-/// Normalize the "if file exists" strategy.
-pub fn normalize_if_exists(raw: Option<&str>) -> &'static str {
-    match raw.unwrap_or("append").trim().to_ascii_lowercase().as_str() {
-        "skip" => "skip",
-        "overwrite" => "overwrite",
-        _ => "append",
-    }
-}
-
 /// Generate a unique file name by appending a numeric suffix.
 pub fn append_suffix_name(stem: &str, ext: &str, entries: &HashMap<String, Vec<u8>>) -> String {
     let mut index = 2usize;

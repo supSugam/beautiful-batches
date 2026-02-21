@@ -219,6 +219,7 @@ export function useInspectorLogic({
         transforms: { rotate: 0, flip: { horizontal: false, vertical: false } },
         aspect: null,
         outputWidth: null,
+        clearImageMetadata: false,
         padding: '',
         cornerRadius: '',
         paddingFillType: 'empty',
@@ -234,9 +235,14 @@ export function useInspectorLogic({
   );
   const [manualOutputWidth, setManualOutputWidth] = useState('');
 
+  const [clearImageMetadata, setClearImageMetadata] = useState(
+    cropState?.clearImageMetadata ?? false,
+  );
+
   useEffect(() => {
     setOutputWidth(cropState?.outputWidth ?? null);
-  }, [cropState?.outputWidth, imageId]);
+    setClearImageMetadata(cropState?.clearImageMetadata ?? false);
+  }, [cropState?.outputWidth, cropState?.clearImageMetadata, imageId]);
 
   const handleResizeToggle = useCallback(() => {
     const nextValue = outputWidth ? null : currentPixelWidth;
@@ -270,6 +276,19 @@ export function useInspectorLogic({
   const handleOutputWidthBlur = useCallback(() => {
     setManualOutputWidth('');
   }, []);
+
+  const handleClearImageMetadataChange = useCallback(
+    (value: boolean) => {
+      setClearImageMetadata(value);
+      if (imageId) {
+        onCropChange?.(imageId, {
+          ...cropStateRef.current,
+          clearImageMetadata: value,
+        });
+      }
+    },
+    [imageId, onCropChange],
+  );
 
   // ── Padding & Corner Radius (string format: "T R B L") ──
   // PaddingSection expects plain strings like "0 0 0 0" or "10", not objects
@@ -460,6 +479,9 @@ export function useInspectorLogic({
     handleResizeToggle,
     handleOutputWidthChange,
     handleOutputWidthBlur,
+
+    clearImageMetadata,
+    handleClearImageMetadataChange,
 
     // Navigation & actions
     navigateNext,

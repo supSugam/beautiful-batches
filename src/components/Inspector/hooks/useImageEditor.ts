@@ -238,6 +238,22 @@ const clampCropWithAspect = (
   return { x, y, w, h };
 };
 
+const normalizeCoordinatesForEmit = (
+  coordinates: ReturnType<typeof toStoredCoordinates>,
+  bounds: Bounds,
+) => {
+  if (!coordinates) return null;
+  const maxWidth = Math.max(1, Number(bounds?.width) || 1);
+  const maxHeight = Math.max(1, Number(bounds?.height) || 1);
+  const width = Math.max(1, Math.min(Math.round(coordinates.width), maxWidth));
+  const height = Math.max(1, Math.min(Math.round(coordinates.height), maxHeight));
+  const maxLeft = Math.max(0, maxWidth - width);
+  const maxTop = Math.max(0, maxHeight - height);
+  const left = Math.max(0, Math.min(Math.round(coordinates.left), maxLeft));
+  const top = Math.max(0, Math.min(Math.round(coordinates.top), maxTop));
+  return { left, top, width, height };
+};
+
 const areNumbersEquivalent = (a: number, b: number): boolean =>
   Math.abs(a - b) <= SYNC_EPSILON;
 
@@ -249,12 +265,6 @@ const areCropsEquivalent = (
   areNumbersEquivalent(a.y, b.y) &&
   areNumbersEquivalent(a.w, b.w) &&
   areNumbersEquivalent(a.h, b.h);
-
-const areAnchorsEquivalent = (
-  a: EditorViewState['anchor'],
-  b: EditorViewState['anchor'],
-): boolean =>
-  areNumbersEquivalent(a.x, b.x) && areNumbersEquivalent(a.y, b.y);
 
 const areAspectsEquivalent = (
   a: number | null,
@@ -462,7 +472,6 @@ export function useImageEditor({
         x: toFiniteAnchor(state?.editorView?.anchor?.x, 0.5),
         y: toFiniteAnchor(state?.editorView?.anchor?.y, 0.5),
       };
-
       const rotationChanged = !areNumbersEquivalent(
         rotationRef.current,
         newRotation,
@@ -471,10 +480,9 @@ export function useImageEditor({
       const flipVChanged = flipVRef.current !== newFlipV;
       const aspectChanged = !areAspectsEquivalent(aspectRef.current, newAspect);
       const zoomChanged = !areNumbersEquivalent(zoomRef.current, newZoom);
-      const zoomAnchorChanged = !areAnchorsEquivalent(
-        zoomAnchorRef.current,
-        newZoomAnchor,
-      );
+      const zoomAnchorChanged =
+        !areNumbersEquivalent(zoomAnchorRef.current.x, newZoomAnchor.x) ||
+        !areNumbersEquivalent(zoomAnchorRef.current.y, newZoomAnchor.y);
       const cropChanged = !areCropsEquivalent(cropRef.current, newCrop);
 
       if (
@@ -643,9 +651,18 @@ export function useImageEditor({
         rawZoom,
         rawAnchor,
       );
+      const currentBounds = getRotatedBounds(
+        naturalWidthRef.current,
+        naturalHeightRef.current,
+        rotationRef.current,
+      );
+      const normalizedCoordinates = normalizeCoordinatesForEmit(
+        toStoredCoordinates(instantaneousEffectiveCrop),
+        currentBounds,
+      );
 
       const nextState: CropEntry = {
-        coordinates: toStoredCoordinates(instantaneousEffectiveCrop),
+        coordinates: normalizedCoordinates,
         transforms: {
           rotate: rotationRef.current,
           flip: {

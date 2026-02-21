@@ -1,6 +1,4 @@
 import React from 'react';
-import { Check, Square } from 'lucide-react';
-import type { IfFileExistsMode } from '../../../types/app';
 
 type ExportResizeSectionProps = {
   outputWidth: number | null;
@@ -11,8 +9,8 @@ type ExportResizeSectionProps = {
   aspect: number | null;
   currentPixelWidth: number;
   currentPixelHeight: number;
-  ifFileExists: IfFileExistsMode;
-  onIfFileExistsChange: (mode: IfFileExistsMode) => void;
+  clearImageMetadata: boolean;
+  onClearImageMetadataChange: (value: boolean) => void;
   showSectionLabel?: boolean;
 };
 
@@ -25,16 +23,10 @@ const ExportResizeSection = ({
   aspect,
   currentPixelWidth,
   currentPixelHeight,
-  ifFileExists,
-  onIfFileExistsChange,
+  clearImageMetadata,
+  onClearImageMetadataChange,
   showSectionLabel = true,
 }: ExportResizeSectionProps) => {
-  const fileExistModes = [
-    { value: 'skip' as const, label: 'Skip' },
-    { value: 'append' as const, label: 'Append' },
-    { value: 'overwrite' as const, label: 'Overwrite' },
-  ];
-
   return (
     <section className="control-section">
       <div className="section-header">
@@ -43,13 +35,31 @@ const ExportResizeSection = ({
         ) : (
           <h4 className="subsection-label">Resize</h4>
         )}
-        <button
-          className={`btn-icon-subtle ${outputWidth ? 'active' : ''}`}
-          onClick={handleResizeToggle}
-          title="Enable/Disable Resize"
-        >
-          {outputWidth ? <Check size={12} /> : <Square size={12} />}
-        </button>
+        <label className="metadata-checkbox-row">
+          <input
+            type="checkbox"
+            className="metadata-checkbox-input"
+            checked={outputWidth !== null}
+            onChange={handleResizeToggle}
+            aria-label="Enable/Disable Resize"
+          />
+          <span className="metadata-checkbox-indicator" aria-hidden="true">
+            <svg
+              className="metadata-checkbox-mark"
+              viewBox="0 0 24 24"
+              fill="none"
+              style={{ transform: 'scale(1.2)' }}
+            >
+              <path
+                className="metadata-checkbox-mark-path"
+                d="M5 12l4.5 4.5L19 7"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </label>
       </div>
 
       {outputWidth !== null && (
@@ -59,9 +69,7 @@ const ExportResizeSection = ({
             <input
               type="number"
               value={
-                manualOutputWidth !== ''
-                  ? manualOutputWidth
-                  : outputWidth || ''
+                manualOutputWidth !== '' ? manualOutputWidth : outputWidth || ''
               }
               onChange={(e) => handleOutputWidthChange(e.target.value)}
               onBlur={handleOutputWidthBlur}
@@ -85,22 +93,38 @@ const ExportResizeSection = ({
         </div>
       )}
 
-      <div className="if-exists-control">
-        <div className="if-exists-label">If file exists -&gt;</div>
-        <div className="if-exists-mode-grid" role="radiogroup" aria-label="If file exists behavior">
-          {fileExistModes.map((mode) => (
-            <button
-              key={mode.value}
-              type="button"
-              role="radio"
-              aria-checked={ifFileExists === mode.value}
-              className={`if-exists-mode-btn ${ifFileExists === mode.value ? 'active' : ''}`}
-              onClick={() => onIfFileExistsChange(mode.value)}
+      <div
+        className="metadata-toggle-row"
+        title="Removes EXIF and hidden metadata from exported files."
+      >
+        <span className="metadata-toggle-label">Clear Image Metadata</span>
+        <label className="metadata-checkbox-row">
+          <input
+            type="checkbox"
+            className="metadata-checkbox-input"
+            checked={clearImageMetadata}
+            onChange={(event) =>
+              onClearImageMetadataChange(event.target.checked)
+            }
+            aria-label="Clear image metadata on export"
+          />
+          <span className="metadata-checkbox-indicator" aria-hidden="true">
+            <svg
+              className="metadata-checkbox-mark"
+              viewBox="0 0 24 24"
+              fill="none"
+              style={{ transform: 'scale(1.2)' }}
             >
-              {mode.label}
-            </button>
-          ))}
-        </div>
+              <path
+                className="metadata-checkbox-mark-path"
+                d="M5 12l4.5 4.5L19 7"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </label>
       </div>
     </section>
   );

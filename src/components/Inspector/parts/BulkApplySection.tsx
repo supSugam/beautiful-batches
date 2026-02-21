@@ -21,14 +21,37 @@ const BulkApplySection = ({ onApplyTo, showSectionLabel = true }: BulkApplySecti
       ) : (
         <h4 className="subsection-label">Bulk Apply</h4>
       )}
-      <label className="bulk-caption-toggle">
-        <input
-          type="checkbox"
-          checked={includeCaption}
-          onChange={(event) => setIncludeCaption(event.target.checked)}
-        />
-        <span>Include caption override</span>
-      </label>
+      <div
+        className="metadata-toggle-row bulk-caption-switch-row"
+        title="Bulk apply will copy the current caption override too."
+      >
+        <span className="metadata-toggle-label">Include Caption Override</span>
+        <label className="metadata-checkbox-row">
+          <input
+            type="checkbox"
+            className="metadata-checkbox-input"
+            checked={includeCaption}
+            onChange={(event) => setIncludeCaption(event.target.checked)}
+            aria-label="Include caption override in bulk apply"
+          />
+          <span className="metadata-checkbox-indicator" aria-hidden="true">
+            <svg
+              className="metadata-checkbox-mark"
+              viewBox="0 0 24 24"
+              fill="none"
+              style={{ transform: 'scale(1.2)' }}
+            >
+              <path
+                className="metadata-checkbox-mark-path"
+                d="M5 12l4.5 4.5L19 7"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </label>
+      </div>
       <div className="apply-grid">
         <button
           className="btn btn-secondary btn-sm"

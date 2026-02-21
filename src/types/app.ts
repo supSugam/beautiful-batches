@@ -6,7 +6,6 @@ export type SortOption =
   | 'size_desc'
   | 'size_asc';
 
-export type IfFileExistsMode = 'skip' | 'append' | 'overwrite';
 export type ExportFormat = 'png' | 'jpeg' | 'webp';
 
 export interface FlipState {
@@ -64,6 +63,7 @@ export interface CropEntry {
   isInteracting?: boolean;
   aspect?: number | null;
   outputWidth?: number | null;
+  clearImageMetadata?: boolean;
   editorView?: EditorViewState;
   padding?: PaddingValues | string;
   cornerRadius?: CornerRadiusValues | string;

@@ -75,8 +75,6 @@ const InspectorSession = ({
   onApplyTo,
 }: InspectorSessionProps) => {
   const cropState = useStore((state) => state.cropData.get(image.id));
-  const ifFileExists = useStore((state) => state.ifFileExists);
-  const setIfFileExists = useStore((state) => state.setIfFileExists);
 
   const logic = useInspectorLogic({
     image,
@@ -241,8 +239,8 @@ const InspectorSession = ({
               aspect={logic.aspect}
               currentPixelWidth={logic.currentPixelWidth}
               currentPixelHeight={logic.currentPixelHeight}
-              ifFileExists={ifFileExists}
-              onIfFileExistsChange={setIfFileExists}
+              clearImageMetadata={logic.clearImageMetadata}
+              onClearImageMetadataChange={logic.handleClearImageMetadataChange}
               showSectionLabel={false}
             />
             <BulkApplySection

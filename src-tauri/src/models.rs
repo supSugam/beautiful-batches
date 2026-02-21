@@ -16,7 +16,7 @@ pub struct ExportInputFile {
 pub struct ExportConfig {
     pub format: Option<String>,
     pub quality: Option<u8>,
-    pub if_file_exists: Option<String>,
+    pub clear_image_metadata: Option<bool>,
     pub crops: HashMap<String, CropConfig>,
 }
 

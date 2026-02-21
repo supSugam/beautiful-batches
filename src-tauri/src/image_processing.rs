@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Cursor, Write};
+use std::path::Path;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
@@ -11,8 +12,7 @@ use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
 use crate::helpers::{
-    append_suffix_name, clamp_to_image_bounds, normalize_if_exists, normalize_output_format,
-    output_extension,
+    append_suffix_name, clamp_to_image_bounds, normalize_output_format, output_extension,
 };
 use crate::models::{ExportConfig, ExportInputFile, ProcessBulkExportResult};
 
@@ -75,6 +75,22 @@ fn encode_image(image: &DynamicImage, output_format: &str, quality: u8) -> Resul
     }
 }
 
+fn infer_output_format_from_name(name: &str) -> Option<&'static str> {
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+
+    match extension.as_str() {
+        "jpg" | "jpeg" => Some("jpeg"),
+        "png" => Some("png"),
+        "webp" => Some("webp"),
+        _ => None,
+    }
+}
+
 /// Process a bulk export: read images from disk, apply transforms, and return
 /// a base64-encoded ZIP archive.
 pub fn process_bulk_export(
@@ -83,12 +99,12 @@ pub fn process_bulk_export(
 ) -> Result<ProcessBulkExportResult, String> {
     let output_format = normalize_output_format(config.format.as_deref());
     let quality = config.quality.unwrap_or(90).clamp(1, 100);
-    let if_file_exists = normalize_if_exists(config.if_file_exists.as_deref());
+    let clear_image_metadata = config.clear_image_metadata.unwrap_or(false);
     let output_ext = output_extension(output_format);
 
     let mut output_entries: HashMap<String, Vec<u8>> = HashMap::new();
     let mut output_order: Vec<String> = Vec::new();
-    let mut skipped_count = 0usize;
+    let skipped_count = 0usize;
 
     for payload in files {
         // Read image bytes from the file path on disk.
@@ -104,22 +120,27 @@ pub fn process_bulk_export(
             .get(&payload.filename)
             .cloned()
             .unwrap_or_default();
+        let mut has_visual_changes = false;
 
         let transforms = crop_entry.transforms.unwrap_or_default();
         if transforms.rotate.abs() > f64::EPSILON {
+            has_visual_changes = true;
             let rotated = rotate_with_expand(&image.to_rgba8(), transforms.rotate as f32);
             image = DynamicImage::ImageRgba8(rotated);
         }
 
         if transforms.flip.horizontal {
+            has_visual_changes = true;
             image = DynamicImage::ImageRgba8(imageops::flip_horizontal(&image.to_rgba8()));
         }
 
         if transforms.flip.vertical {
+            has_visual_changes = true;
             image = DynamicImage::ImageRgba8(imageops::flip_vertical(&image.to_rgba8()));
         }
 
         if let Some(coords) = crop_entry.coordinates.as_ref() {
+            has_visual_changes = true;
             let (img_width, img_height) = image.dimensions();
             if img_width > 0 && img_height > 0 {
                 let left = clamp_to_image_bounds(coords.left.floor(), img_width.saturating_sub(1));
@@ -137,6 +158,7 @@ pub fn process_bulk_export(
 
         if let Some(output_width_raw) = crop_entry.output_width {
             if output_width_raw.is_finite() && output_width_raw > 0.0 {
+                has_visual_changes = true;
                 let target_width = output_width_raw.round().max(1.0) as u32;
                 let (source_width, source_height) = image.dimensions();
                 if source_width > 0 && source_height > 0 {
@@ -155,7 +177,16 @@ pub fn process_bulk_export(
             }
         }
 
-        let output_bytes = encode_image(&image, output_format, quality)?;
+        let source_format = infer_output_format_from_name(&payload.filename)
+            .or_else(|| infer_output_format_from_name(&payload.file_path));
+        let can_passthrough_original = !clear_image_metadata
+            && !has_visual_changes
+            && source_format == Some(output_format);
+        let output_bytes = if can_passthrough_original {
+            raw_bytes.clone()
+        } else {
+            encode_image(&image, output_format, quality)?
+        };
         let original_name = crop_entry
             .original_name
             .clone()
@@ -168,19 +199,7 @@ pub fn process_bulk_export(
 
         let mut target_name = format!("{base_stem}{output_ext}");
         if output_entries.contains_key(&target_name) {
-            match if_file_exists {
-                "skip" => {
-                    skipped_count += 1;
-                    continue;
-                }
-                "overwrite" => {
-                    output_entries.insert(target_name.clone(), output_bytes);
-                    continue;
-                }
-                _ => {
-                    target_name = append_suffix_name(base_stem, output_ext, &output_entries);
-                }
-            }
+            target_name = append_suffix_name(base_stem, output_ext, &output_entries);
         }
 
         output_entries.insert(target_name.clone(), output_bytes);
