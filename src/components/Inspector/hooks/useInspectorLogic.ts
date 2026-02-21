@@ -390,16 +390,21 @@ export function useInspectorLogic({
 
   // ── Navigation ──────────────────────────────────────────
   const navigateNext = useCallback(() => {
-    if (hasNext) onNext?.();
-  }, [hasNext, onNext]);
+    if (!hasNext) return;
+    editor.commitChangeNow();
+    onNext?.();
+  }, [editor, hasNext, onNext]);
 
   const navigatePrev = useCallback(() => {
-    if (hasPrev) onPrev?.();
-  }, [hasPrev, onPrev]);
+    if (!hasPrev) return;
+    editor.commitChangeNow();
+    onPrev?.();
+  }, [editor, hasPrev, onPrev]);
 
   const handleClose = useCallback(() => {
+    editor.commitChangeNow();
     onClose?.();
-  }, [onClose]);
+  }, [editor, onClose]);
 
   // ── Processing state ────────────────────────────────────
   const isProcessing = false;

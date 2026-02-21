@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   MousePointer2,
@@ -34,15 +34,8 @@ const ASPECT_PRESETS = [
   { label: '16:9', value: 16 / 9, icon: RectangleHorizontal },
 ];
 
-const EMPTY_IMAGE = Object.freeze({
-  id: '',
-  name: '',
-  objectUrl: '',
-  naturalWidth: 1,
-  naturalHeight: 1,
-});
-
 type ApplyTargetType = 'all' | 'rest' | 'prev';
+type ApplyOptions = { includeCaption?: boolean };
 
 type InspectorProps = {
   image: GalleryImage | null;
@@ -53,12 +46,24 @@ type InspectorProps = {
   onPrev: () => void;
   hasNext: boolean;
   hasPrev: boolean;
-  onApplyTo: (type: ApplyTargetType) => void;
+  onApplyTo: (type: ApplyTargetType, options?: ApplyOptions) => void;
   width: number;
   onResize: (width: number) => void;
 };
 
-export const Inspector = ({
+type InspectorSessionProps = {
+  image: GalleryImage;
+  onCropChange: (id: string, coords: CropEntry) => void;
+  onClose: () => void;
+  onDelete: (id: string) => void;
+  onNext: () => void;
+  onPrev: () => void;
+  hasNext: boolean;
+  hasPrev: boolean;
+  onApplyTo: (type: ApplyTargetType, options?: ApplyOptions) => void;
+};
+
+const InspectorSession = ({
   image,
   onCropChange,
   onClose,
@@ -68,16 +73,13 @@ export const Inspector = ({
   hasNext,
   hasPrev,
   onApplyTo,
-  width: sidebarWidth,
-  onResize,
-}: InspectorProps) => {
-  const activeImage = image || EMPTY_IMAGE;
-  const cropState = useStore((state) => state.cropData.get(activeImage.id));
+}: InspectorSessionProps) => {
+  const cropState = useStore((state) => state.cropData.get(image.id));
   const ifFileExists = useStore((state) => state.ifFileExists);
   const setIfFileExists = useStore((state) => state.setIfFileExists);
 
   const logic = useInspectorLogic({
-    image: activeImage,
+    image,
     cropState,
     onCropChange,
     onClose,
@@ -87,29 +89,49 @@ export const Inspector = ({
     hasPrev,
   });
 
-  const { isResizing, startResizing, viewportWidth, liveWidth } =
-    useSidebarResize(sidebarWidth, onResize);
-  const isSingleColumn = liveWidth <= viewportWidth * 0.5;
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      if (!element) return false;
+      if (element.isContentEditable) return true;
 
-  if (!image) return null;
+      const tagName = String(element.tagName || '').toLowerCase();
+      if (tagName === 'textarea' || tagName === 'select') return true;
+      if (tagName === 'input') {
+        const input = element as HTMLInputElement;
+        const type = String(input.type || '').toLowerCase();
+        return type !== 'checkbox' && type !== 'radio' && type !== 'button';
+      }
+      return false;
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+
+      if (event.key === 'ArrowRight') {
+        if (!hasNext) return;
+        event.preventDefault();
+        event.stopPropagation();
+        logic.navigateNext();
+        return;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        if (!hasPrev) return;
+        event.preventDefault();
+        event.stopPropagation();
+        logic.navigatePrev();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [hasNext, hasPrev, logic.navigateNext, logic.navigatePrev]);
 
   return (
-    <motion.div
-      initial={{ x: '100%', opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: '100%', opacity: 0 }}
-      transition={{ type: 'tween', duration: 0.16, ease: 'easeOut' }}
-      className={`inspector ${isResizing ? 'resizing' : ''} ${isSingleColumn ? '' : 'inspector-dashboard'}`}
-      style={{ width: liveWidth }}
-    >
-      <div
-        className="resizer-handle"
-        role="separator"
-        aria-orientation="vertical"
-        title="Drag to resize settings panel"
-        onPointerDown={startResizing}
-      />
-
+    <>
       <InspectorHeader
         imageName={image.name}
         onClose={logic.handleClose}
@@ -118,7 +140,7 @@ export const Inspector = ({
         onReset={() => {
           logic.handleResetDraft();
           if (!image?.id) return;
-          useStore.getState().setCaptionForImage(image.id, '');
+          useStore.getState().resetCaptionForImage(image.id);
         }}
         onDelete={() => {
           onDelete(image.id);
@@ -201,7 +223,11 @@ export const Inspector = ({
           </section>
 
           <section className="settings-section-card settings-section-card--caption">
-            <CaptionSection imageId={image.id} />
+            <CaptionSection
+              imageId={image.id}
+              imageName={image.name}
+              imageAbsolutePath={image.absolutePath}
+            />
           </section>
 
           <section className="settings-section-card settings-section-card--export">
@@ -219,10 +245,68 @@ export const Inspector = ({
               onIfFileExistsChange={setIfFileExists}
               showSectionLabel={false}
             />
-            <BulkApplySection onApplyTo={onApplyTo} showSectionLabel={false} />
+            <BulkApplySection
+              onApplyTo={(target, options) => {
+                logic.editor.commitChangeNow();
+                onApplyTo(target, options);
+              }}
+              showSectionLabel={false}
+            />
           </section>
         </div>
       </div>
+    </>
+  );
+};
+
+export const Inspector = ({
+  image,
+  onCropChange,
+  onClose,
+  onDelete,
+  onNext,
+  onPrev,
+  hasNext,
+  hasPrev,
+  onApplyTo,
+  width: sidebarWidth,
+  onResize,
+}: InspectorProps) => {
+  const { isResizing, startResizing, viewportWidth, liveWidth } =
+    useSidebarResize(sidebarWidth, onResize);
+  const isSingleColumn = liveWidth <= viewportWidth * 0.5;
+
+  if (!image) return null;
+
+  return (
+    <motion.div
+      initial={{ x: '100%', opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: '100%', opacity: 0 }}
+      transition={{ type: 'tween', duration: 0.16, ease: 'easeOut' }}
+      className={`inspector ${isResizing ? 'resizing' : ''} ${isSingleColumn ? '' : 'inspector-dashboard'}`}
+      style={{ width: liveWidth }}
+    >
+      <div
+        className="resizer-handle"
+        role="separator"
+        aria-orientation="vertical"
+        title="Drag to resize settings panel"
+        onPointerDown={startResizing}
+      />
+
+      <InspectorSession
+        key={image.id}
+        image={image}
+        onCropChange={onCropChange}
+        onClose={onClose}
+        onDelete={onDelete}
+        onNext={onNext}
+        onPrev={onPrev}
+        hasNext={hasNext}
+        hasPrev={hasPrev}
+        onApplyTo={onApplyTo}
+      />
     </motion.div>
   );
 };

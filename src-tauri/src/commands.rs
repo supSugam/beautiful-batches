@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use rfd::FileDialog;
 use tauri::AppHandle;
@@ -6,16 +7,136 @@ use tauri::AppHandle;
 use crate::models::{
     ExportConfig, ExportInputFile, LoadSavedRootsResult, NativeRootScan,
     PickAndScanRootResult, ProcessBulkExportResult,
+    SidecarCaptionResult,
 };
 use crate::scanner::{list_directory_children, scan_folder_by_path, scan_single_root};
 use crate::storage;
 
 const PICK_SCAN_PREVIEW_LIMIT: usize = 240;
 
+fn spawn_detached(command: &str, args: &[&str]) -> Result<(), String> {
+    let mut cmd = Command::new(command);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|error| format!("{command}: {error}"))
+}
+
 /// Load linked/saved root paths without scanning their contents.
 #[tauri::command]
 pub async fn load_saved_roots_metadata(app: AppHandle) -> Result<Vec<String>, String> {
     storage::load_saved_root_paths(&app)
+}
+
+#[tauri::command]
+pub async fn open_folder_in_file_explorer(folder_path: String) -> Result<(), String> {
+    let normalized = folder_path.trim().to_string();
+    if normalized.is_empty() {
+        return Err("Folder path is empty".to_string());
+    }
+
+    let input_path = PathBuf::from(&normalized);
+    let target_path = std::fs::canonicalize(&input_path).unwrap_or(input_path);
+    if !target_path.exists() || !target_path.is_dir() {
+        return Err(format!("Folder path is not accessible: {}", target_path.display()));
+    }
+
+    let target = target_path.to_string_lossy().to_string();
+    let target_ref = target.as_str();
+
+    #[cfg(target_os = "windows")]
+    {
+        // Prefer the canonical executable name on Windows.
+        return spawn_detached("explorer.exe", &[target_ref])
+            .or_else(|_| spawn_detached("explorer", &[target_ref]))
+            .map_err(|error| format!("Failed to open folder in file explorer: {error}"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Use absolute path first to avoid PATH collisions (e.g. adb/open shims).
+        return spawn_detached("/usr/bin/open", &[target_ref])
+            .or_else(|_| spawn_detached("open", &[target_ref]))
+            .map_err(|error| format!("Failed to open folder in file explorer: {error}"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Prefer explicit file managers to avoid bad/default MIME handlers.
+        let direct_candidates: &[(&str, &[&str])] = &[
+            ("/usr/bin/nautilus", &[target_ref]),
+            ("nautilus", &[target_ref]),
+            ("/usr/bin/dolphin", &[target_ref]),
+            ("dolphin", &[target_ref]),
+            ("/usr/bin/thunar", &[target_ref]),
+            ("thunar", &[target_ref]),
+            ("/usr/bin/nemo", &[target_ref]),
+            ("nemo", &[target_ref]),
+            ("/usr/bin/pcmanfm", &[target_ref]),
+            ("pcmanfm", &[target_ref]),
+            ("/usr/bin/xdg-open", &[target_ref]),
+            ("/bin/xdg-open", &[target_ref]),
+            ("xdg-open", &[target_ref]),
+            ("/usr/bin/gio", &["open", target_ref]),
+            ("gio", &["open", target_ref]),
+        ];
+
+        let mut last_error = String::new();
+        for (command, args) in direct_candidates {
+            match spawn_detached(command, args) {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = error,
+            }
+        }
+
+        return Err(format!(
+            "Failed to open folder in file explorer: {last_error}"
+        ));
+    }
+}
+
+#[tauri::command]
+pub async fn read_sidecar_caption_for_image(
+    image_path: String,
+) -> Result<SidecarCaptionResult, String> {
+    let normalized = image_path.trim().to_string();
+    if normalized.is_empty() {
+        return Ok(SidecarCaptionResult {
+            exists: false,
+            content: String::new(),
+        });
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let image_path = Path::new(&normalized);
+        let mut sidecar_path = image_path.to_path_buf();
+        sidecar_path.set_extension("txt");
+
+        if !sidecar_path.exists() || !sidecar_path.is_file() {
+            return Ok(SidecarCaptionResult {
+                exists: false,
+                content: String::new(),
+            });
+        }
+
+        let bytes = std::fs::read(&sidecar_path)
+            .map_err(|error| format!("Failed to read caption sidecar file: {error}"))?;
+        let mut content = String::from_utf8_lossy(&bytes).to_string();
+        if content.starts_with('\u{feff}') {
+            content = content.trim_start_matches('\u{feff}').to_string();
+        }
+        content = content.replace("\r\n", "\n").replace('\r', "\n");
+
+        Ok(SidecarCaptionResult {
+            exists: true,
+            content,
+        })
+    })
+    .await
+    .map_err(|error| format!("Caption sidecar task failed: {error}"))?
 }
 
 /// Open the native folder picker and return a small initial preview scan.

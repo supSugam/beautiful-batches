@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   toEditorCropCoordinates,
   toStoredCoordinates,
@@ -391,6 +398,12 @@ export function useImageEditor({
 
   const cropRef = useRef(crop);
   cropRef.current = crop;
+  const imageIdRef = useRef(imageId);
+  imageIdRef.current = imageId;
+  const naturalWidthRef = useRef(naturalWidth);
+  naturalWidthRef.current = naturalWidth;
+  const naturalHeightRef = useRef(naturalHeight);
+  naturalHeightRef.current = naturalHeight;
   const rotationRef = useRef(rotation);
   rotationRef.current = rotation;
   const flipHRef = useRef(flipH);
@@ -412,6 +425,8 @@ export function useImageEditor({
     naturalWidth: number;
     naturalHeight: number;
   } | null>(null);
+  const notifyFrameRef = useRef<number>(0);
+  const wheelTimeoutRef = useRef<number | null>(null);
 
   const applyHydrationState = useCallback(
     ({
@@ -526,7 +541,20 @@ export function useImageEditor({
     return applyHydrationState(pending);
   }, [applyHydrationState]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // Treat image switches as a hard interaction boundary so stale wheel/drag
+    // timers cannot re-emit previous geometry into the next image state.
+    isInteractingRef.current = false;
+    pendingHydrationRef.current = null;
+    if (notifyFrameRef.current) {
+      window.clearTimeout(notifyFrameRef.current);
+      notifyFrameRef.current = 0;
+    }
+    if (wheelTimeoutRef.current !== null) {
+      window.clearTimeout(wheelTimeoutRef.current);
+      wheelTimeoutRef.current = null;
+    }
+
     const incomingSignature = buildHydrationSignature({
       imageId,
       naturalWidth,
@@ -600,13 +628,11 @@ export function useImageEditor({
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
-  const notifyFrameRef = useRef<number>(0);
-  const wheelTimeoutRef = useRef<number | null>(null);
-
-  const notifyChange = useCallback(() => {
-    if (notifyFrameRef.current) return;
-    notifyFrameRef.current = window.setTimeout(() => {
-      notifyFrameRef.current = 0;
+  const emitCurrentState = useCallback(
+    (expectedImageId?: string): boolean => {
+      if (expectedImageId && expectedImageId !== imageIdRef.current) {
+        return false;
+      }
 
       const rawCrop = cropRef.current;
       const rawZoom = zoomRef.current;
@@ -636,22 +662,45 @@ export function useImageEditor({
       };
 
       lastEmittedSignatureRef.current = buildHydrationSignature({
-        imageId,
-        naturalWidth,
-        naturalHeight,
+        imageId: imageIdRef.current,
+        naturalWidth: naturalWidthRef.current,
+        naturalHeight: naturalHeightRef.current,
         state: nextState,
       });
       onChangeRef.current?.(nextState);
+      return true;
+    },
+    [computeEffectiveCrop],
+  );
+
+  const notifyChange = useCallback(() => {
+    if (notifyFrameRef.current) return;
+    const scheduledImageId = imageIdRef.current;
+    notifyFrameRef.current = window.setTimeout(() => {
+      notifyFrameRef.current = 0;
+      emitCurrentState(scheduledImageId);
     }, 100) as unknown as number;
-  }, [computeEffectiveCrop, imageId, naturalHeight, naturalWidth]);
+  }, [emitCurrentState]);
+
+  const commitChangeNow = useCallback(() => {
+    if (!notifyFrameRef.current) return;
+    window.clearTimeout(notifyFrameRef.current);
+    notifyFrameRef.current = 0;
+    emitCurrentState(imageIdRef.current);
+  }, [emitCurrentState]);
+  const emitCurrentStateRef = useRef(emitCurrentState);
+  emitCurrentStateRef.current = emitCurrentState;
 
   useEffect(() => {
     return () => {
       if (notifyFrameRef.current) {
         window.clearTimeout(notifyFrameRef.current);
+        notifyFrameRef.current = 0;
+        emitCurrentStateRef.current(imageIdRef.current);
       }
       if (wheelTimeoutRef.current !== null) {
         window.clearTimeout(wheelTimeoutRef.current);
+        wheelTimeoutRef.current = null;
       }
     };
   }, []);
@@ -1348,6 +1397,7 @@ export function useImageEditor({
     // Drag
     onDragStart,
     onDragEnd,
+    commitChangeNow,
   };
 }
 

@@ -162,7 +162,9 @@ export const ImageCard = memo(
     };
 
     const isInteracting = cropState?.isInteracting ?? false;
-    const dynamicTransition = isInteracting ? 'none' : 'all var(--transition-spring)';
+    const dynamicTransition = isInteracting
+      ? 'none'
+      : 'width var(--transition-spring), height var(--transition-spring), left var(--transition-spring), top var(--transition-spring), transform var(--transition-spring)';
 
     const handleDelete = (e: React.MouseEvent<HTMLButtonElement>) => {
       e.stopPropagation();
@@ -296,11 +298,14 @@ export const ImageCard = memo(
 
     return (
       <motion.div
-        layout={!disableLayoutAnimation}
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.9 }}
-        transition={{ duration: 0.3, ease: 'easeOut' }}
+        layout={disableLayoutAnimation ? false : 'position'}
+        initial={false}
+        transition={{
+          layout: {
+            duration: 0.16,
+            ease: [0.22, 1, 0.36, 1],
+          },
+        }}
         className={`image-card ${selected ? 'selected' : ''}`}
         onClick={handleSelect}
       >

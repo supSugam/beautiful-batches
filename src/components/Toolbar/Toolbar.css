@@ -76,6 +76,27 @@
   white-space: nowrap;
 }
 
+.toolbar-folder-path-btn {
+  min-width: 0;
+  border: none;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.toolbar-folder-path-btn:hover:not(:disabled) .toolbar-folder-path {
+  color: var(--text-bright);
+  text-decoration: underline;
+  text-decoration-color: rgba(129, 140, 248, 0.45);
+  text-underline-offset: 2px;
+}
+
+.toolbar-folder-path-btn:disabled {
+  cursor: default;
+}
+
 .toolbar-divider {
   width: 1px;
   height: 24px;

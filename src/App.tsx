@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   ACCEPTED_IMAGE_TYPES,
@@ -1134,6 +1135,47 @@ function App() {
     return parts[parts.length - 1] || activeFolderPath;
   }, [activeFolderPath]);
 
+  const activeFolderAbsolutePath = useMemo(() => {
+    if (!activeFolderPath || activeFolderPath === ALL_FOLDERS_VALUE) return '';
+    const normalizedFolderPath = normalizePath(activeFolderPath);
+    const resolved = resolveRootForFolderPath(normalizedFolderPath);
+    if (!resolved) return '';
+
+    const normalizedRootName = normalizePath(resolved.root.rootName);
+    const normalizedRootPath = normalizePath(resolved.root.rootPath);
+    if (!normalizedRootPath) return '';
+    if (!normalizedRootName || normalizedFolderPath === normalizedRootName) {
+      return normalizedRootPath;
+    }
+    if (!normalizedFolderPath.startsWith(`${normalizedRootName}/`)) {
+      return normalizedRootPath;
+    }
+
+    const folderTail = normalizedFolderPath.slice(normalizedRootName.length + 1);
+    if (!folderTail) return normalizedRootPath;
+    const rootPathWithoutTrailingSlash = normalizedRootPath.replace(/\/+$/, '');
+    return `${rootPathWithoutTrailingSlash}/${folderTail}`;
+  }, [activeFolderPath, directoryRootsVersion, resolveRootForFolderPath]);
+
+  const canOpenActiveFolderPath = useMemo(
+    () =>
+      activeFolderPath !== ALL_FOLDERS_VALUE &&
+      String(activeFolderAbsolutePath || '').trim().length > 0,
+    [activeFolderAbsolutePath, activeFolderPath],
+  );
+
+  const handleOpenActiveFolder = useCallback(async () => {
+    if (!canOpenActiveFolderPath) return;
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return;
+    try {
+      await invoke('open_folder_in_file_explorer', {
+        folderPath: activeFolderAbsolutePath,
+      });
+    } catch (error) {
+      console.error('Failed to open folder in file explorer:', error);
+    }
+  }, [activeFolderAbsolutePath, canOpenActiveFolderPath]);
+
   const isActiveFolderLoading = useMemo(() => {
     if (!activeFolderPath || activeFolderPath === ALL_FOLDERS_VALUE) {
       return false;
@@ -1429,6 +1471,9 @@ function App() {
         explorerOpen={explorerOpen}
         onToggleExplorer={() => setExplorerOpen((previous) => !previous)}
         activeFolderLabel={activeFolderLabel}
+        activeFolderPathOnDisk={activeFolderAbsolutePath}
+        canOpenFolderPath={canOpenActiveFolderPath}
+        onOpenFolderPath={handleOpenActiveFolder}
         rowHeight={rowHeight}
         setRowHeight={handleRowHeightChange}
       />

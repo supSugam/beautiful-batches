@@ -14,6 +14,7 @@ const LOCAL_STORAGE_PREFIX = 'bb-folder-draft:';
 type PersistedDraftImageEntry = {
   crop: CropEntry | null;
   caption: string;
+  hasCaptionOverride: boolean;
   sourceLastModified: number;
   sourceSize: number;
   modifiedAt: number;
@@ -181,15 +182,18 @@ const normalizePersistedPayload = (
     const rawEntry = value as Partial<PersistedDraftImageEntry>;
     const crop = safeClone(rawEntry.crop);
     const caption = typeof rawEntry.caption === 'string' ? rawEntry.caption : '';
+    const hasCaptionOverride =
+      rawEntry.hasCaptionOverride === true || caption.trim().length > 0;
     const sourceLastModified = Number(rawEntry.sourceLastModified || 0) || 0;
     const sourceSize = Number(rawEntry.sourceSize || 0) || 0;
     const modifiedAt = Number(rawEntry.modifiedAt || 0) || 0;
 
-    if (!crop && caption.trim() === '') return;
+    if (!crop && !hasCaptionOverride) return;
 
     nextImages[normalizedPath] = {
       crop,
       caption,
+      hasCaptionOverride,
       sourceLastModified,
       sourceSize,
       modifiedAt,
@@ -226,6 +230,7 @@ const areEntriesEqual = (
 ): boolean => {
   if (!a) return false;
   if (a.caption !== b.caption) return false;
+  if (a.hasCaptionOverride !== b.hasCaptionOverride) return false;
   if (Number(a.sourceLastModified || 0) !== Number(b.sourceLastModified || 0)) {
     return false;
   }
@@ -276,11 +281,13 @@ export const persistFolderDrafts = async ({
         const relativePath = normalizePath(image?.relativePath);
         if (!relativePath) return;
 
-        const caption = String(captionById.get(image.id) || '');
-        const safeCaption = caption.trim();
+        const hasCaptionOverride = captionById.has(image.id);
+        const caption = hasCaptionOverride
+          ? String(captionById.get(image.id) ?? '')
+          : '';
         const isModified = sessionModifiedAt.has(image.id);
         const safeCrop = safeClone(cropData.get(image.id));
-        const hasDraft = isModified || safeCaption.length > 0;
+        const hasDraft = isModified || hasCaptionOverride;
 
         if (!hasDraft) {
           if (nextImages[relativePath]) {
@@ -290,7 +297,7 @@ export const persistFolderDrafts = async ({
           return;
         }
 
-        if (!safeCrop && safeCaption.length === 0) {
+        if (!safeCrop && !hasCaptionOverride) {
           if (nextImages[relativePath]) {
             delete nextImages[relativePath];
             didChange = true;
@@ -301,6 +308,7 @@ export const persistFolderDrafts = async ({
         const nextEntry: PersistedDraftImageEntry = {
           crop: safeCrop,
           caption,
+          hasCaptionOverride,
           sourceLastModified: Number(image?.sourceLastModified || 0) || 0,
           sourceSize: Number(image?.sourceSize || 0) || 0,
           modifiedAt: Number(sessionModifiedAt.get(image.id) || 0) || now,
@@ -572,7 +580,7 @@ export const resolveDraftsForImages = ({
         restoredCount += 1;
       }
     }
-    if (typeof entry.caption === 'string') {
+    if (entry.hasCaptionOverride && typeof entry.caption === 'string') {
       captionsById[image.id] = entry.caption;
     }
     modifiedAtById[image.id] =

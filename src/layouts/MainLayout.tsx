@@ -7,6 +7,7 @@ import type { CropEntry, FolderNode, GalleryImage } from '../types/app';
 import './MainLayout.css';
 
 type ApplyTargetType = 'all' | 'rest' | 'prev';
+type ApplyOptions = { includeCaption?: boolean };
 
 type MainLayoutProps = {
   images: GalleryImage[];
@@ -23,7 +24,11 @@ type MainLayoutProps = {
   setExplorerWidth: (width: number) => void;
   selectNext: () => void;
   selectPrev: () => void;
-  handleApplyCropToImages: (sourceId: string, targetIds: string[]) => void;
+  handleApplyCropToImages: (
+    sourceId: string,
+    targetIds: string[],
+    options?: ApplyOptions,
+  ) => void;
   explorerOpen: boolean;
   folderNodes: FolderNode[];
   activeFolderPath: string;
@@ -128,8 +133,9 @@ const MainLayout = ({
             onPrev={selectPrev}
             width={inspectorWidth}
             onResize={setInspectorWidth}
-            onApplyTo={(type: ApplyTargetType) => {
+            onApplyTo={(type: ApplyTargetType, options?: ApplyOptions) => {
               const idx = images.findIndex((img) => img.id === selectedId);
+              if (idx < 0) return;
               let targets: string[] = [];
               if (type === 'all') {
                 targets = images
@@ -140,7 +146,7 @@ const MainLayout = ({
               } else if (type === 'prev') {
                 targets = images.slice(0, idx).map((img) => img.id);
               }
-              handleApplyCropToImages(selectedId, targets);
+              handleApplyCropToImages(selectedId, targets, options);
             }}
             hasNext={
               images.findIndex((img) => img.id === selectedId) <

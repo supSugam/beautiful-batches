@@ -14,6 +14,7 @@ import type {
   PaddingValues,
   RawUploadImage,
   SortOption,
+  StoredCoordinates,
 } from '../types/app';
 
 const yieldToMainThread = () =>
@@ -266,6 +267,32 @@ const getRotatedBounds = (width: number, height: number, rotation: number) => {
   };
 };
 
+const clampStoredCoordinatesToBounds = (
+  coordinates: unknown,
+  bounds: { width: number; height: number },
+): StoredCoordinates | null => {
+  const normalized = normalizeStoredCoordinates(coordinates);
+  if (!normalized) return null;
+
+  const maxWidth = Math.max(1, Number(bounds?.width) || 1);
+  const maxHeight = Math.max(1, Number(bounds?.height) || 1);
+
+  const width = Math.max(1, Math.min(Math.round(normalized.width), maxWidth));
+  const height = Math.max(1, Math.min(Math.round(normalized.height), maxHeight));
+
+  const maxLeft = Math.max(0, maxWidth - width);
+  const maxTop = Math.max(0, maxHeight - height);
+  const left = Math.max(0, Math.min(Math.round(normalized.left), maxLeft));
+  const top = Math.max(0, Math.min(Math.round(normalized.top), maxTop));
+
+  return {
+    left,
+    top,
+    width,
+    height,
+  };
+};
+
 const normalizePaddingValue = (value: number): number => {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.round(value));
@@ -382,6 +409,32 @@ const normalizeCropEntry = (
   };
 };
 
+const normalizeCropEntryForImage = (
+  entry: CropEntry | null | undefined,
+  image: GalleryImage | undefined,
+): CropEntry => {
+  const normalizedEntry = normalizeCropEntry(entry);
+  const rotate = normalizeRotation(
+    Number(normalizedEntry?.transforms?.rotate || 0),
+  );
+  const imageWidth = Math.max(
+    1,
+    Number(image?.naturalWidth || normalizedEntry.imageWidth || 1),
+  );
+  const imageHeight = Math.max(
+    1,
+    Number(image?.naturalHeight || normalizedEntry.imageHeight || 1),
+  );
+  const bounds = getRotatedBounds(imageWidth, imageHeight, rotate);
+
+  return {
+    ...normalizedEntry,
+    coordinates: clampStoredCoordinatesToBounds(normalizedEntry.coordinates, bounds),
+    imageWidth,
+    imageHeight,
+  };
+};
+
 const SESSION_MODIFIED_THROTTLE_MS = 750;
 const getNowTs = () => Date.now();
 
@@ -389,6 +442,10 @@ type PersistedDraftPayload = {
   cropEntriesById?: Record<string, CropEntry>;
   captionsById?: Record<string, string>;
   modifiedAtById?: Record<string, number>;
+};
+
+type ApplyCropToImagesOptions = {
+  includeCaption?: boolean;
 };
 
 export interface UseStoreState {
@@ -422,8 +479,13 @@ export interface UseStoreState {
   selectNext: () => void;
   selectPrev: () => void;
   setCropChange: (id: string, coords: CropEntry) => void;
-  applyCropToImages: (sourceId: string, targetIds: string[]) => void;
+  applyCropToImages: (
+    sourceId: string,
+    targetIds: string[],
+    options?: ApplyCropToImagesOptions,
+  ) => void;
   setCaptionForImage: (id: string, caption: string) => void;
+  resetCaptionForImage: (id: string) => void;
   applyPersistedImageDrafts: (payload: PersistedDraftPayload) => void;
   setRowHeight: (rowHeight: number) => void;
   setFormat: (format: ExportFormat) => void;
@@ -1035,10 +1097,10 @@ const useStore = create<UseStoreState>((set, get) => {
     set((state) => {
       const nextCropData = new Map(state.cropData);
       const previousEntry = nextCropData.get(id);
-      const normalizedCoords = normalizeCropEntry(coords);
+      const image = state.images.find((img) => img.id === id);
+      const normalizedCoords = normalizeCropEntryForImage(coords, image);
       nextCropData.set(id, normalizedCoords);
 
-      const image = state.images.find((img) => img.id === id);
       const isMeaningfulChange = hasMeaningfulImageChange(
         normalizedCoords,
         image,
@@ -1058,8 +1120,7 @@ const useStore = create<UseStoreState>((set, get) => {
           nextSessionModifiedAt.set(id, now);
         }
       } else if (previousModifiedAt > 0) {
-        const caption = String(state.captionById.get(id) || '').trim();
-        if (caption === '') {
+        if (!state.captionById.has(id)) {
           nextSessionModifiedAt = new Map<string, number>(
             state.sessionModifiedAt,
           );
@@ -1082,46 +1143,71 @@ const useStore = create<UseStoreState>((set, get) => {
     });
   },
 
-  applyCropToImages: (sourceId, targetIds) => {
+  applyCropToImages: (sourceId, targetIds, options) => {
     const { images, cropData } = get();
-    const sourceData = cropData.get(sourceId);
-    if (!sourceData) return;
-    const sourceCoordinates = normalizeStoredCoordinates(
-      sourceData.coordinates,
-    );
-    if (!sourceCoordinates) return;
-
     const sourceImg = images.find((img) => img.id === sourceId);
     if (!sourceImg) return;
 
+    const sourceRawData = cropData.get(sourceId);
+    if (!sourceRawData) return;
+    const sourceData = normalizeCropEntryForImage(sourceRawData, sourceImg);
+    const sourceCoordinates = normalizeStoredCoordinates(sourceData.coordinates);
+    const hasSourceCoordinates = Boolean(sourceCoordinates);
+
+    const uniqueTargetIds = Array.from(
+      new Set(
+        (Array.isArray(targetIds) ? targetIds : [])
+          .map((id) => String(id || '').trim())
+          .filter((id) => Boolean(id) && id !== sourceId),
+      ),
+    );
+    if (uniqueTargetIds.length === 0) return;
+
+    const imagesById = new Map(images.map((image) => [image.id, image] as const));
     const transforms = sourceData.transforms || {
       rotate: 0,
       flip: { horizontal: false, vertical: false },
     };
-    const { rotate } = transforms;
+    const rotate = Number(transforms.rotate) || 0;
     const sourceBounds = getRotatedBounds(
       sourceImg.naturalWidth,
       sourceImg.naturalHeight,
       rotate,
     );
-    const sourceW = sourceBounds.width;
-    const sourceH = sourceBounds.height;
+    const sourceW = Math.max(1, sourceBounds.width);
+    const sourceH = Math.max(1, sourceBounds.height);
 
-    const relLeft = sourceCoordinates.left / sourceW;
-    const relTop = sourceCoordinates.top / sourceH;
-    const relWidth = sourceCoordinates.width / sourceW;
-    const relHeight = sourceCoordinates.height / sourceH;
+    const relLeft = hasSourceCoordinates
+      ? (sourceCoordinates?.left || 0) / sourceW
+      : 0;
+    const relTop = hasSourceCoordinates
+      ? (sourceCoordinates?.top || 0) / sourceH
+      : 0;
+    const relWidth = hasSourceCoordinates
+      ? (sourceCoordinates?.width || sourceW) / sourceW
+      : 1;
+    const relHeight = hasSourceCoordinates
+      ? (sourceCoordinates?.height || sourceH) / sourceH
+      : 1;
 
     set((state) => {
       const nextCropData = new Map(state.cropData);
+      const sourceHasCaptionOverride = state.captionById.has(sourceId);
+      const shouldCopyCaption = Boolean(options?.includeCaption);
+      const sourceCaptionOverride = sourceHasCaptionOverride
+        ? String(state.captionById.get(sourceId) ?? '')
+        : '';
+      const nextCaptionById = shouldCopyCaption
+        ? new Map<string, string>(state.captionById)
+        : null;
       const nextSessionModifiedAt = new Map<string, number>(
         state.sessionModifiedAt,
       );
       const now = getNowTs();
       let shouldBumpLayoutVersion = false;
 
-      targetIds.forEach((id) => {
-        const targetImg = images.find((img) => img.id === id);
+      uniqueTargetIds.forEach((id) => {
+        const targetImg = imagesById.get(id);
         if (!targetImg) return;
 
         const targetBounds = getRotatedBounds(
@@ -1129,38 +1215,64 @@ const useStore = create<UseStoreState>((set, get) => {
           targetImg.naturalHeight,
           rotate,
         );
-        const targetW = targetBounds.width;
-        const targetH = targetBounds.height;
+        const targetW = Math.max(1, targetBounds.width);
+        const targetH = Math.max(1, targetBounds.height);
 
-        const newCoordinates = {
-          left: Math.round(relLeft * targetW),
-          top: Math.round(relTop * targetH),
-          width: Math.round(relWidth * targetW),
-          height: Math.round(relHeight * targetH),
-        };
-        const nextEntry = {
-          ...sourceData,
-          coordinates: newCoordinates,
-        };
+        const nextEntry = hasSourceCoordinates
+          ? normalizeCropEntryForImage(
+              {
+                ...sourceData,
+                transforms,
+                coordinates: {
+                  left: relLeft * targetW,
+                  top: relTop * targetH,
+                  width: relWidth * targetW,
+                  height: relHeight * targetH,
+                },
+                imageWidth: targetImg.naturalWidth,
+                imageHeight: targetImg.naturalHeight,
+              },
+              targetImg,
+            )
+          : normalizeCropEntryForImage(
+              {
+                ...sourceData,
+                transforms,
+                coordinates: null,
+                imageWidth: targetImg.naturalWidth,
+                imageHeight: targetImg.naturalHeight,
+              },
+              targetImg,
+            );
         const previousEntry = nextCropData.get(id);
         nextCropData.set(id, nextEntry);
 
-        if (hasMeaningfulImageChange(nextEntry, targetImg)) {
-          nextSessionModifiedAt.set(id, now);
-        } else {
-          const caption = String(state.captionById.get(id) || '').trim();
-          if (caption === '') {
-            nextSessionModifiedAt.delete(id);
-          } else if (!nextSessionModifiedAt.has(id)) {
-            nextSessionModifiedAt.set(id, now);
+        if (nextCaptionById) {
+          if (sourceHasCaptionOverride) {
+            nextCaptionById.set(id, sourceCaptionOverride);
+          } else {
+            nextCaptionById.delete(id);
           }
         }
+
+        const hasCaptionOverride = nextCaptionById
+          ? nextCaptionById.has(id)
+          : state.captionById.has(id);
+        const shouldMarkModified =
+          hasMeaningfulImageChange(nextEntry, targetImg) || hasCaptionOverride;
+        if (shouldMarkModified) {
+          nextSessionModifiedAt.set(id, now);
+        } else {
+          nextSessionModifiedAt.delete(id);
+        }
+
         if (hasGridLayoutAffectingChange(previousEntry, nextEntry)) {
           shouldBumpLayoutVersion = true;
         }
       });
       return {
         cropData: nextCropData,
+        ...(nextCaptionById ? { captionById: nextCaptionById } : {}),
         sessionModifiedAt: nextSessionModifiedAt,
         cropLayoutVersion: shouldBumpLayoutVersion
           ? state.cropLayoutVersion + 1
@@ -1172,23 +1284,22 @@ const useStore = create<UseStoreState>((set, get) => {
   setCaptionForImage: (id, caption) => {
     set((state) => {
       const nextCaption = String(caption ?? '');
-      const previousCaption = state.captionById.get(id) || '';
-      if (previousCaption === nextCaption) {
+      const hadCaptionOverride = state.captionById.has(id);
+      const previousCaption = hadCaptionOverride
+        ? String(state.captionById.get(id) ?? '')
+        : '';
+      if (hadCaptionOverride && previousCaption === nextCaption) {
         return {};
       }
 
       const nextCaptionById = new Map<string, string>(state.captionById);
-      if (nextCaption.trim() === '') {
-        nextCaptionById.delete(id);
-      } else {
-        nextCaptionById.set(id, nextCaption);
-      }
+      nextCaptionById.set(id, nextCaption);
 
       const image = state.images.find((img) => img.id === id);
       const entry = state.cropData.get(id);
       const hasMeaningfulCrop = hasMeaningfulImageChange(entry, image);
-      const hasMeaningfulCaption = nextCaption.trim() !== '';
-      const shouldMarkModified = hasMeaningfulCrop || hasMeaningfulCaption;
+      const hasMeaningfulCaptionOverride = nextCaptionById.has(id);
+      const shouldMarkModified = hasMeaningfulCrop || hasMeaningfulCaptionOverride;
 
       let nextSessionModifiedAt = state.sessionModifiedAt;
       const previousModifiedAt = state.sessionModifiedAt.get(id) || 0;
@@ -1218,6 +1329,36 @@ const useStore = create<UseStoreState>((set, get) => {
     });
   },
 
+  resetCaptionForImage: (id) => {
+    set((state) => {
+      if (!state.captionById.has(id)) return {};
+
+      const nextCaptionById = new Map<string, string>(state.captionById);
+      nextCaptionById.delete(id);
+
+      const image = state.images.find((img) => img.id === id);
+      const entry = state.cropData.get(id);
+      const hasMeaningfulCrop = hasMeaningfulImageChange(entry, image);
+      const wasMarkedModified = state.sessionModifiedAt.has(id);
+      let nextSessionModifiedAt = state.sessionModifiedAt;
+
+      if (hasMeaningfulCrop) {
+        if (!wasMarkedModified) {
+          nextSessionModifiedAt = new Map<string, number>(state.sessionModifiedAt);
+          nextSessionModifiedAt.set(id, getNowTs());
+        }
+      } else if (wasMarkedModified) {
+        nextSessionModifiedAt = new Map<string, number>(state.sessionModifiedAt);
+        nextSessionModifiedAt.delete(id);
+      }
+
+      return {
+        captionById: nextCaptionById,
+        sessionModifiedAt: nextSessionModifiedAt,
+      };
+    });
+  },
+
   applyPersistedImageDrafts: ({
     cropEntriesById,
     captionsById,
@@ -1231,11 +1372,15 @@ const useStore = create<UseStoreState>((set, get) => {
       );
 
       let shouldBumpLayoutVersion = false;
+      const imagesById = new Map(state.images.map((image) => [image.id, image]));
       const entries = cropEntriesById ? Object.entries(cropEntriesById) : [];
 
       entries.forEach(([id, value]) => {
         const previousEntry = nextCropData.get(id);
-        const normalizedValue = normalizeCropEntry(value);
+        const normalizedValue = normalizeCropEntryForImage(
+          value,
+          imagesById.get(id),
+        );
         nextCropData.set(id, normalizedValue);
         if (hasGridLayoutAffectingChange(previousEntry, normalizedValue)) {
           shouldBumpLayoutVersion = true;
@@ -1245,11 +1390,7 @@ const useStore = create<UseStoreState>((set, get) => {
       if (captionsById) {
         Object.entries(captionsById).forEach(([id, value]) => {
           const nextCaption = String(value ?? '');
-          if (nextCaption.trim() === '') {
-            nextCaptionById.delete(id);
-          } else {
-            nextCaptionById.set(id, nextCaption);
-          }
+          nextCaptionById.set(id, nextCaption);
         });
       }
 

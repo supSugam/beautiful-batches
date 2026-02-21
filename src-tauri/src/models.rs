@@ -112,3 +112,10 @@ pub struct LoadSavedRootsResult {
     pub roots: Vec<NativeRootScan>,
     pub saved_root_paths: Vec<String>,
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarCaptionResult {
+    pub exists: bool,
+    pub content: String,
+}

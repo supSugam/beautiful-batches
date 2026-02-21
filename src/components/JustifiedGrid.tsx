@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { computeRowsLayout } from 'react-photo-album';
-import { Virtuoso } from 'react-virtuoso';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { ImageCard } from './ImageCard';
 import useStore from '../store/useStore';
 import { normalizeStoredCoordinates } from '../utils/cropCoordinates';
@@ -69,8 +69,11 @@ const JustifiedGrid = ({
 }: JustifiedGridProps) => {
   const cropLayoutVersion = useStore((state) => state.cropLayoutVersion);
   const containerRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const scrollerElementRef = useRef<HTMLElement | null>(null);
   const lastEndReachedAtRef = useRef(0);
+  const lastAutoScrollRef = useRef<{ id: string; index: number } | null>(null);
+  const lastAutoScrollAtRef = useRef(0);
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const thumbnailSize = useMemo(
     () => resolveThumbnailSize(targetRowHeight),
@@ -155,6 +158,42 @@ const JustifiedGrid = ({
     return computedLayout;
   }, [photos, padding, containerWidth, targetRowHeight]);
 
+  const trackIndexByImageId = useMemo(() => {
+    const next = new Map<string, number>();
+    if (!layout?.tracks) return next;
+    layout.tracks.forEach((track, trackIndex) => {
+      track.photos.forEach((photo) => {
+        next.set(photo.photo.id, trackIndex);
+      });
+    });
+    return next;
+  }, [layout]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      lastAutoScrollRef.current = null;
+      return;
+    }
+    const targetIndex = trackIndexByImageId.get(selectedId);
+    if (targetIndex === undefined) return;
+
+    const previous = lastAutoScrollRef.current;
+    if (previous && previous.index === targetIndex) {
+      return;
+    }
+
+    const now = Date.now();
+    const behavior: ScrollBehavior =
+      now - lastAutoScrollAtRef.current < 140 ? 'auto' : 'smooth';
+    lastAutoScrollAtRef.current = now;
+    lastAutoScrollRef.current = { id: selectedId, index: targetIndex };
+    virtuosoRef.current?.scrollToIndex({
+      index: targetIndex,
+      align: 'center',
+      behavior,
+    });
+  }, [selectedId, trackIndexByImageId]);
+
   if (!images.length) return null;
 
   const handleEndReached = () => {
@@ -173,6 +212,7 @@ const JustifiedGrid = ({
     >
       {layout && (
         <Virtuoso
+          ref={virtuosoRef}
           style={{ height: '100%', overflowX: 'hidden' }}
           data={layout.tracks}
           overscan={120}
@@ -210,7 +250,7 @@ const JustifiedGrid = ({
                     selected={selectedId === photo.photo.id}
                     onSelect={onSelect}
                     onDelete={onDelete}
-                    disableLayoutAnimation={true}
+                    disableLayoutAnimation={false}
                   />
                 </div>
               ))}

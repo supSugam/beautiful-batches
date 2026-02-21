@@ -52,6 +52,11 @@ type NativeDirectoryChild = {
   depth: number;
 };
 
+type NativeSidecarCaptionResult = {
+  exists: boolean;
+  content: string;
+};
+
 type NativePickAndScanRootResult = {
   cancelled: boolean;
   root: NativeRootScan | null;
@@ -368,6 +373,30 @@ export const loadSavedRootPaths = async (): Promise<string[]> => {
     return result.map((value) => normalizePath(value)).filter(Boolean);
   } catch {
     return [];
+  }
+};
+
+export const loadSidecarCaptionForImagePath = async (
+  absolutePath: string,
+): Promise<NativeSidecarCaptionResult> => {
+  const normalizedPath = normalizePath(absolutePath);
+  if (!isTauriRuntime() || !normalizedPath) {
+    return { exists: false, content: '' };
+  }
+
+  try {
+    const result = await invoke<NativeSidecarCaptionResult>(
+      'read_sidecar_caption_for_image',
+      {
+        imagePath: normalizedPath,
+      },
+    );
+    return {
+      exists: Boolean(result?.exists),
+      content: typeof result?.content === 'string' ? result.content : '',
+    };
+  } catch {
+    return { exists: false, content: '' };
   }
 };
 

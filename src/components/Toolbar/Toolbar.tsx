@@ -82,6 +82,9 @@ type ToolbarProps = {
   explorerOpen: boolean;
   onToggleExplorer: () => void;
   activeFolderLabel: string;
+  activeFolderPathOnDisk?: string;
+  canOpenFolderPath?: boolean;
+  onOpenFolderPath?: () => void;
   rowHeight: number;
   setRowHeight: (value: number) => void;
 };
@@ -93,6 +96,9 @@ const Toolbar = ({
   explorerOpen,
   onToggleExplorer,
   activeFolderLabel,
+  activeFolderPathOnDisk,
+  canOpenFolderPath = false,
+  onOpenFolderPath,
   rowHeight,
   setRowHeight,
 }: ToolbarProps) => {
@@ -209,9 +215,19 @@ const Toolbar = ({
         </button>
         <div className="toolbar-divider" />
         <FolderOpen size={15} className="toolbar-dim" />
-        <span className="toolbar-folder-path" title={folderPathRaw}>
-          {folderPathLabel}
-        </span>
+        <button
+          type="button"
+          className="toolbar-folder-path-btn"
+          title={
+            canOpenFolderPath && activeFolderPathOnDisk
+              ? `Open in file explorer: ${activeFolderPathOnDisk}`
+              : folderPathRaw
+          }
+          onClick={() => onOpenFolderPath?.()}
+          disabled={!canOpenFolderPath}
+        >
+          <span className="toolbar-folder-path">{folderPathLabel}</span>
+        </button>
       </div>
 
       <div className="toolbar-section toolbar-controls">
