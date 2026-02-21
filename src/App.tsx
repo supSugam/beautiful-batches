@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   ACCEPTED_IMAGE_TYPES,
   clearSavedDirectoryHandle,
@@ -1048,6 +1049,42 @@ function App() {
       cancelled = true;
     };
   }, [applyPersistedImageDrafts, images, loadedRootPaths]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+      return;
+    }
+
+    const appWindow = getCurrentWindow();
+    let isTogglingFullscreen = false;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isF11 = event.key === 'F11' || event.code === 'F11';
+      if (!isF11) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (event.repeat) {
+        event.preventDefault();
+        return;
+      }
+
+      event.preventDefault();
+      if (isTogglingFullscreen) return;
+      isTogglingFullscreen = true;
+
+      appWindow
+        .isFullscreen()
+        .then((isFullscreen) => appWindow.setFullscreen(!isFullscreen))
+        .catch((error) => {
+          console.error('Failed to toggle fullscreen via F11:', error);
+        })
+        .finally(() => {
+          isTogglingFullscreen = false;
+        });
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

@@ -1,2 +1,15 @@
--> crop area midalign hint like in the photo editors
--> padding when zoom out, ability to choose another picture or color or gradient as background
+NEW TASKS:
+
+1. F11 for full screen is not working on our app, it works on every fucking app in the whole system but why not ours, please fix it properly.
+
+2. We are implementing custom headerbar/titlebar of our app window but I want compact buttons, no spacing in between or padding from buttons to the edges of the window, no rounded corners for minmaxclose buttons too.
+
+3.The caption field of each image, it's value is set like this:
+
+Case 1: {image_name}.txt exists and nothing about it is on the draft of that image -> {image_name}.txt's content.
+
+Case 2: {image_name}.txt exists and was loaded as well but user changed the content that will be recorded on draft of that image hence later when user opens the image, the caption field will have what user wrote in that field, even if they empty the field, that empty will be persistent which means manually made empty is not the same as default empty, we need to handle this case.
+
+Ideally a reset button below the stars button if {image_name}.txt exists would be nice to set the caption field to same as {image_name}.txt's content.
+
+Please think of other edge cases and possible scenarios, the goal is to make the captioning process as smooth as possible during image dataset work.
