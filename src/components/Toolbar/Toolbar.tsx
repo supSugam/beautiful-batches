@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Grid3x3,
   Maximize as MaximizeIcon,
+  Download,
   X,
   Minus,
   Square,
@@ -93,6 +94,7 @@ type ToolbarProps = {
   onOpenFolderPath?: () => void;
   rowHeight: number;
   setRowHeight: (value: number) => void;
+  onOpenExportPlan: () => void;
 };
 
 const Toolbar = ({
@@ -107,6 +109,7 @@ const Toolbar = ({
   onOpenFolderPath,
   rowHeight,
   setRowHeight,
+  onOpenExportPlan,
 }: ToolbarProps) => {
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -309,6 +312,16 @@ const Toolbar = ({
       </div>
 
       <div className="toolbar-section toolbar-actions">
+        <button
+          type="button"
+          className="toolbar-export-btn"
+          onClick={onOpenExportPlan}
+          title="Open export plan"
+        >
+          <Download size={14} />
+          <span>Export</span>
+        </button>
+
         {/* Standard Window Controls */}
         <div className="toolbar-window-controls">
           <button

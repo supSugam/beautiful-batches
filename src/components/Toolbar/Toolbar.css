@@ -42,6 +42,29 @@
   align-self: stretch;
 }
 
+.toolbar-export-btn {
+  border: 1px solid var(--border);
+  background: rgba(20, 20, 24, 0.8);
+  color: var(--text-secondary);
+  border-radius: var(--radius-ui);
+  min-height: 31px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  transition: all var(--transition-fast);
+  -webkit-app-region: no-drag;
+}
+
+.toolbar-export-btn:hover {
+  color: var(--text-bright);
+  border-color: rgba(129, 140, 248, 0.45);
+  background: rgba(129, 140, 248, 0.12);
+  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.15) inset;
+}
+
 .toolbar-dim {
   color: var(--text-muted);
 }
@@ -117,7 +140,7 @@
   align-items: center;
   gap: 7px;
   padding: 0 9px;
-  border-radius: 9px;
+  border-radius: var(--radius-ui);
   border: 1px solid var(--border);
   background: rgba(20, 20, 24, 0.76);
   color: var(--text-secondary);
@@ -166,7 +189,7 @@
   left: 0;
   width: 240px;
   padding: 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-ui);
   border: 1px solid rgba(255, 255, 255, 0.11);
   background: rgba(14, 14, 18, 0.9);
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.4);
@@ -183,7 +206,7 @@
   gap: 6px;
   padding: 6px 8px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-ui);
   background: transparent;
   color: var(--text-secondary);
   transition: all var(--transition-fast);
@@ -210,7 +233,7 @@
 .toolbar-sort-option-icon {
   width: 18px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--radius-ui);
   display: inline-flex;
   align-items: center;
   justify-content: center;

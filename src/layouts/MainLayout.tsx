@@ -42,6 +42,10 @@ type MainLayoutProps = {
   onToggleExpand: (path: string) => void;
   loadingFolderPaths?: Set<string>;
   isActiveFolderLoading?: boolean;
+  folderSelectionMode?: boolean;
+  selectedFolderPaths?: Set<string>;
+  onSetFolderSelectionMode?: (value: boolean) => void;
+  onSetSelectedFolderPaths?: (paths: Set<string>) => void;
 };
 
 const MainLayout = ({
@@ -72,6 +76,10 @@ const MainLayout = ({
   onToggleExpand,
   loadingFolderPaths,
   isActiveFolderLoading,
+  folderSelectionMode = false,
+  selectedFolderPaths = new Set<string>(),
+  onSetFolderSelectionMode,
+  onSetSelectedFolderPaths,
 }: MainLayoutProps) => {
   const selectedImage = images.find((img) => img.id === selectedId);
 
@@ -91,6 +99,10 @@ const MainLayout = ({
         explorerWidth={explorerWidth}
         setExplorerWidth={setExplorerWidth}
         loadingFolderPaths={loadingFolderPaths}
+        folderSelectionMode={folderSelectionMode}
+        selectedFolderPaths={selectedFolderPaths}
+        onSetFolderSelectionMode={onSetFolderSelectionMode}
+        onSetSelectedFolderPaths={onSetSelectedFolderPaths}
       />
 
       <div className="image-grid-scroll">

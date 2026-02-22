@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { motion } from 'framer-motion';
+import React, { useEffect, useMemo } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Virtuoso } from 'react-virtuoso';
 import {
   ChevronDown,
@@ -8,12 +8,14 @@ import {
   FolderOpen,
   FolderPlus,
   Image as ImageIcon,
+  ListChecks,
   Loader2,
   Trash2,
 } from 'lucide-react';
 import type { FolderNode } from '../types/app';
 import { useSidebarResize } from './Inspector/hooks/useSidebarResize';
 import useStore from '../store/useStore';
+import TriStateCheckbox, { type TriState } from './common/TriStateCheckbox';
 import './FolderExplorer.css';
 
 const ALL_FOLDERS_VALUE = '__all__';
@@ -25,6 +27,52 @@ const getDirectParentFolderPath = (relativePath: string): string => {
   const lastSlash = normalized.lastIndexOf('/');
   if (lastSlash <= 0) return '';
   return normalized.slice(0, lastSlash);
+};
+
+const getAncestorPaths = (path: string): string[] => {
+  const ancestors: string[] = [];
+  let cursor = normalizePath(path);
+  let lastSlash = cursor.lastIndexOf('/');
+
+  while (lastSlash > 0) {
+    cursor = cursor.slice(0, lastSlash);
+    ancestors.push(cursor);
+    lastSlash = cursor.lastIndexOf('/');
+  }
+
+  return ancestors;
+};
+
+const areSetsEqual = (left: Set<string>, right: Set<string>): boolean => {
+  if (left === right) return true;
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+};
+
+const canonicalizeSelection = (
+  paths: Set<string>,
+  descendantPathMap: Map<string, string[]>,
+): Set<string> => {
+  const normalized = new Set(
+    Array.from(paths)
+      .map((path) => normalizePath(path))
+      .filter(Boolean),
+  );
+
+  Array.from(normalized).forEach((path) => {
+    const descendants = descendantPathMap.get(path) || [path];
+    const isFullySelected = descendants.every((candidatePath) =>
+      normalized.has(candidatePath),
+    );
+    if (!isFullySelected) {
+      normalized.delete(path);
+    }
+  });
+
+  return normalized;
 };
 
 type FolderRow = FolderNode & {
@@ -48,6 +96,10 @@ type FolderExplorerProps = {
   explorerWidth: number;
   setExplorerWidth: (width: number) => void;
   loadingFolderPaths?: Set<string>;
+  folderSelectionMode?: boolean;
+  selectedFolderPaths?: Set<string>;
+  onSetFolderSelectionMode?: (value: boolean) => void;
+  onSetSelectedFolderPaths?: (paths: Set<string>) => void;
 };
 
 const FolderExplorer = ({
@@ -64,6 +116,10 @@ const FolderExplorer = ({
   explorerWidth,
   setExplorerWidth,
   loadingFolderPaths,
+  folderSelectionMode = false,
+  selectedFolderPaths = new Set<string>(),
+  onSetFolderSelectionMode,
+  onSetSelectedFolderPaths,
 }: FolderExplorerProps) => {
   const images = useStore((state) => state.images);
   const sessionModifiedAt = useStore((state) => state.sessionModifiedAt);
@@ -130,11 +186,78 @@ const FolderExplorer = ({
       });
   }, [expandedPaths, folders, loadingFolderPaths]);
 
+  const descendantPathMap = useMemo(() => {
+    const allFolderPaths = folders
+      .map((folder) => normalizePath(folder.path))
+      .filter(Boolean);
+    const next = new Map<string, string[]>();
+
+    allFolderPaths.forEach((path) => {
+      next.set(
+        path,
+        allFolderPaths.filter(
+          (candidatePath) =>
+            candidatePath === path || candidatePath.startsWith(`${path}/`),
+        ),
+      );
+    });
+    return next;
+  }, [folders]);
+
+  const effectiveSelectedFolderPaths = useMemo(
+    () => canonicalizeSelection(selectedFolderPaths, descendantPathMap),
+    [selectedFolderPaths, descendantPathMap],
+  );
+
+  useEffect(() => {
+    if (!onSetSelectedFolderPaths) return;
+    if (areSetsEqual(selectedFolderPaths, effectiveSelectedFolderPaths)) return;
+    onSetSelectedFolderPaths(effectiveSelectedFolderPaths);
+  }, [
+    effectiveSelectedFolderPaths,
+    onSetSelectedFolderPaths,
+    selectedFolderPaths,
+  ]);
+
+  const getSelectionState = (path: string): TriState => {
+    const normalizedPath = normalizePath(path);
+    const descendants = descendantPathMap.get(normalizedPath) || [normalizedPath];
+    const selectedCount = descendants.reduce(
+      (count, candidatePath) =>
+        count + (effectiveSelectedFolderPaths.has(candidatePath) ? 1 : 0),
+      0,
+    );
+    if (selectedCount <= 0) return 'unchecked';
+    if (selectedCount >= descendants.length) return 'checked';
+    return 'mixed';
+  };
+
+  const toggleFolderSelection = (path: string) => {
+    if (!onSetSelectedFolderPaths) return;
+    const normalizedPath = normalizePath(path);
+    const descendants = descendantPathMap.get(normalizedPath) || [normalizedPath];
+    const selectionState = getSelectionState(normalizedPath);
+    const next = new Set(effectiveSelectedFolderPaths);
+
+    if (selectionState === 'checked') {
+      descendants.forEach((candidatePath) => next.delete(candidatePath));
+      getAncestorPaths(normalizedPath).forEach((ancestorPath) =>
+        next.delete(ancestorPath),
+      );
+    } else {
+      descendants.forEach((candidatePath) => next.add(candidatePath));
+    }
+
+    onSetSelectedFolderPaths(canonicalizeSelection(next, descendantPathMap));
+  };
+
   const renderFolderRow = (folder: FolderRow) => {
+    const selectionState = getSelectionState(folder.path);
     const canClearDrafts =
       Boolean(onClearFolderDrafts) && clearableFolderPaths.has(folder.path);
     const canRemoveFolder = folder.depth === 0;
-    const hasActionButtons = canClearDrafts || canRemoveFolder;
+    const hasActionButtons =
+      !folderSelectionMode && (canClearDrafts || canRemoveFolder);
     const actionClassName = hasActionButtons
       ? canClearDrafts && canRemoveFolder
         ? 'has-dual-actions'
@@ -167,17 +290,44 @@ const FolderExplorer = ({
           )}
         </button>
 
+        <AnimatePresence initial={false}>
+          {folderSelectionMode && (
+            <motion.span
+              className="folder-selection-check"
+              style={{ '--folder-depth': folder.depth } as React.CSSProperties}
+              initial={{ opacity: 0, x: -4, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: -4, scale: 0.9 }}
+              transition={{ duration: 0.14, ease: 'easeOut' }}
+            >
+              <TriStateCheckbox
+                state={selectionState}
+                onToggle={() => toggleFolderSelection(folder.path)}
+                ariaLabel={`Select folder ${folder.name}`}
+                title={`Select folder ${folder.name}`}
+              />
+            </motion.span>
+          )}
+        </AnimatePresence>
+
         <button
           type="button"
           role="treeitem"
-          className={`folder-item ${activeFolderPath === folder.path ? 'active' : ''} ${actionClassName}`}
+          className={`folder-item ${activeFolderPath === folder.path ? 'active' : ''} ${actionClassName} ${folderSelectionMode ? 'is-select-mode' : ''}`}
           style={
             {
               '--folder-depth': folder.depth,
               '--has-chevron': folder.isExpandable || folder.isLoading ? 1 : 0,
+              '--selection-offset': folderSelectionMode ? '22px' : '0px',
             } as React.CSSProperties
           }
-          onClick={() => onSelectFolder(folder.path)}
+          onClick={() => {
+            if (folderSelectionMode) {
+              toggleFolderSelection(folder.path);
+              return;
+            }
+            onSelectFolder(folder.path);
+          }}
           title={folder.path}
         >
           <span className="folder-item-label">
@@ -251,7 +401,22 @@ const FolderExplorer = ({
         style={{ width: open ? liveWidth : 0 }}
       >
         <div className="folder-explorer-header">
-          <span>Explorer</span>
+          <span className="folder-explorer-header-title">
+            <span>Explorer</span>
+            <AnimatePresence initial={false}>
+              {folderSelectionMode && (
+                <motion.span
+                  className="folder-selection-count"
+                  initial={{ opacity: 0, y: -2 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -2 }}
+                  transition={{ duration: 0.14, ease: 'easeOut' }}
+                >
+                  {effectiveSelectedFolderPaths.size} selected
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </span>
           <div className="folder-explorer-header-actions">
             <button
               type="button"
@@ -261,6 +426,18 @@ const FolderExplorer = ({
             >
               <FolderPlus size={13} />
             </button>
+            <button
+              type="button"
+              className={`folder-header-action ${folderSelectionMode ? 'active' : ''}`}
+              onClick={() => onSetFolderSelectionMode?.(!folderSelectionMode)}
+              title={
+                folderSelectionMode
+                  ? 'Exit folder selection mode'
+                  : 'Enable folder selection mode'
+              }
+            >
+              <ListChecks size={13} />
+            </button>
           </div>
         </div>
 
@@ -268,8 +445,11 @@ const FolderExplorer = ({
           <button
             type="button"
             role="treeitem"
-            className={`folder-item ${activeFolderPath === ALL_FOLDERS_VALUE ? 'active' : ''}`}
-            onClick={() => onSelectFolder(ALL_FOLDERS_VALUE)}
+            className={`folder-item ${activeFolderPath === ALL_FOLDERS_VALUE ? 'active' : ''} ${folderSelectionMode ? 'is-disabled' : ''}`}
+            onClick={() => {
+              if (folderSelectionMode) return;
+              onSelectFolder(ALL_FOLDERS_VALUE);
+            }}
           >
             <span className="folder-item-label">
               <ImageIcon size={13} />

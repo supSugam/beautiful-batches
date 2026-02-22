@@ -6,7 +6,7 @@
   background: var(--bg-base);
   
   /* CSD Window Styling */
-  border-radius: 8px;
+  border-radius: var(--radius-ui);
   /* Thin border to define the window edge against dark desktop backgrounds */
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 10px 30px rgba(0, 0, 0, 0.5);
   margin: 0; 

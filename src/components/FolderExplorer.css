@@ -34,6 +34,13 @@
   padding: 2px 8px;
 }
 
+.folder-explorer-header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .folder-explorer-header-actions {
   display: inline-flex;
   align-items: center;
@@ -44,7 +51,7 @@
   width: 20px;
   height: 20px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-ui);
   background: transparent;
   color: var(--text-secondary);
   display: inline-flex;
@@ -65,6 +72,24 @@
   color: var(--accent);
   background: rgba(129, 140, 248, 0.08);
   opacity: 1;
+}
+
+.folder-selection-count {
+  border: 1px solid rgba(129, 140, 248, 0.24);
+  background: rgba(129, 140, 248, 0.1);
+  color: var(--accent);
+  border-radius: 999px;
+  min-height: 18px;
+  padding: 0 7px;
+  font-size: 0.58rem;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-transform: none;
+  display: inline-flex;
+  align-items: center;
 }
 
 .folder-explorer-list {
@@ -100,14 +125,26 @@
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  border-radius: 7px;
+  border-radius: var(--radius-ui);
   padding: 6px 8px;
-  padding-left: calc(28px + (var(--folder-depth, 0) * 14px));
+  padding-left: calc(28px + (var(--folder-depth, 0) * 14px) + var(--selection-offset, 0px));
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
   transition: all var(--transition-fast);
+}
+
+.folder-item.is-select-mode {
+  border: 1px solid transparent;
+}
+
+.folder-item.is-disabled {
+  opacity: 0.6;
+}
+
+.folder-item.is-select-mode:hover {
+  border-color: rgba(129, 140, 248, 0.2);
 }
 
 .folder-expansion-toggle {
@@ -120,7 +157,7 @@
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-ui);
   color: var(--text-muted);
   cursor: pointer;
   z-index: 2;
@@ -135,6 +172,15 @@
 .folder-expansion-toggle:hover {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-bright);
+}
+
+.folder-selection-check {
+  position: absolute;
+  left: calc(27px + (var(--folder-depth, 0) * 14px));
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .folder-item.has-single-action {
@@ -256,7 +302,7 @@
   width: 18px;
   height: 18px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-ui);
   background: transparent;
   color: var(--text-muted);
   display: inline-flex;

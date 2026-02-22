@@ -19,6 +19,7 @@ import {
 import { DropZone } from './components/DropZone';
 import Toolbar from './components/Toolbar/Toolbar';
 import MainLayout from './layouts/MainLayout';
+import ExportPlanModal from './components/modals/ExportPlanModal';
 import useStore from './store/useStore';
 import {
   clearFolderDraft,
@@ -175,7 +176,11 @@ function App() {
   const rowHeight = useStore((state) => state.rowHeight);
   const showAllFooters = useStore((state) => state.showAllFooters);
   const selectedId = useStore((state) => state.selectedId);
+  const cropData = useStore((state) => state.cropData);
+  const captionById = useStore((state) => state.captionById);
   const inspectorWidth = useStore((state) => state.inspectorWidth);
+  const format = useStore((state) => state.format);
+  const quality = useStore((state) => state.quality);
   const setSelectedId = useStore((state) => state.setSelectedId);
   const setCropChange = useStore((state) => state.setCropChange);
   const applyCropToImages = useStore((state) => state.applyCropToImages);
@@ -242,6 +247,11 @@ function App() {
   const [loadingFolderPaths, setLoadingFolderPaths] = useState<Set<string>>(
     () => new Set(),
   );
+  const [exportPlanOpen, setExportPlanOpen] = useState(false);
+  const [exportFolderSelectionMode, setExportFolderSelectionMode] = useState(false);
+  const [selectedExportFolderPaths, setSelectedExportFolderPaths] = useState<
+    Set<string>
+  >(() => new Set());
   const [treeFolderNodes, setTreeFolderNodes] = useState<FolderNode[]>([]);
   const [loadingTreePaths, setLoadingTreePaths] = useState<Set<string>>(
     () => new Set(),
@@ -626,6 +636,29 @@ function App() {
   }, [effectiveRootNames, folderNodes, treeFolderNodes]);
 
   useEffect(() => {
+    const validFolderPaths = new Set(
+      effectiveFolderNodes
+        .map((folder) => normalizePath(folder.path))
+        .filter(Boolean),
+    );
+
+    setSelectedExportFolderPaths((previous) => {
+      let changed = false;
+      const next = new Set<string>();
+      previous.forEach((path) => {
+        const normalizedPath = normalizePath(path);
+        if (validFolderPaths.has(normalizedPath)) {
+          next.add(normalizedPath);
+          return;
+        }
+        changed = true;
+      });
+      if (!changed && next.size === previous.size) return previous;
+      return next;
+    });
+  }, [effectiveFolderNodes]);
+
+  useEffect(() => {
     if (images.length !== 0) return;
     if (folderNodes.length !== 0) return;
     const rootNames = directoryRootsRef.current
@@ -715,6 +748,27 @@ function App() {
 
     return next.map((entry) => entry.image);
   }, [filteredImages, shuffleSeed, sortOption]); // Deliberately omitting sessionModifiedAt to avoid lag
+
+  const selectedFolderScopeImages = useMemo(() => {
+    if (selectedExportFolderPaths.size === 0) return [];
+    const selectedPaths = Array.from(selectedExportFolderPaths)
+      .map((path) => normalizePath(path))
+      .filter(Boolean);
+    if (selectedPaths.length === 0) return [];
+
+    const seen = new Set<string>();
+    const next: GalleryImage[] = [];
+    images.forEach((image) => {
+      const relativePath = normalizePath(image.relativePath);
+      const belongsToSelectedFolder = selectedPaths.some((folderPath) =>
+        isDirectImageChildOfFolder(relativePath, folderPath),
+      );
+      if (!belongsToSelectedFolder || seen.has(image.id)) return;
+      seen.add(image.id);
+      next.push(image);
+    });
+    return next;
+  }, [images, selectedExportFolderPaths]);
 
   const visibleImageIds = useMemo(
     () => new Set(visibleImages.map((image) => image.id)),
@@ -1208,6 +1262,12 @@ function App() {
     }
   }, [activeFolderAbsolutePath, canOpenActiveFolderPath]);
 
+  const handleStartFolderSelectModeFromExport = useCallback(() => {
+    setExportPlanOpen(false);
+    setExplorerOpen(true);
+    setExportFolderSelectionMode(true);
+  }, []);
+
   const isActiveFolderLoading = useMemo(() => {
     if (!activeFolderPath || activeFolderPath === ALL_FOLDERS_VALUE) {
       return false;
@@ -1508,6 +1568,7 @@ function App() {
         onOpenFolderPath={handleOpenActiveFolder}
         rowHeight={rowHeight}
         setRowHeight={handleRowHeightChange}
+        onOpenExportPlan={() => setExportPlanOpen(true)}
       />
 
       <MainLayout
@@ -1539,6 +1600,18 @@ function App() {
         onLoadMoreImages={handleLoadMoreActiveFolder}
         loadingFolderPaths={explorerLoadingFolderPaths}
         isActiveFolderLoading={isActiveFolderLoading}
+        folderSelectionMode={exportFolderSelectionMode}
+        selectedFolderPaths={selectedExportFolderPaths}
+        onSetFolderSelectionMode={setExportFolderSelectionMode}
+        onSetSelectedFolderPaths={(paths) =>
+          setSelectedExportFolderPaths(
+            new Set(
+              Array.from(paths)
+                .map((path) => normalizePath(path))
+                .filter(Boolean),
+            ),
+          )
+        }
       />
 
       <input
@@ -1551,6 +1624,25 @@ function App() {
         style={{ display: 'none' }}
         onChange={handleAddMore}
       />
+
+      {exportPlanOpen && (
+        <ExportPlanModal
+          images={images}
+          currentFolderImages={visibleImages}
+          selectedFolderImages={selectedFolderScopeImages}
+          selectedFolderPaths={selectedExportFolderPaths}
+          folderNodes={effectiveFolderNodes}
+          selectedId={selectedId}
+          activeFolderLabel={activeFolderLabel}
+          activeFolderPathOnDisk={activeFolderAbsolutePath}
+          format={format}
+          quality={quality}
+          cropData={cropData}
+          captionById={captionById}
+          onEnableFolderSelectionMode={handleStartFolderSelectModeFromExport}
+          onClose={() => setExportPlanOpen(false)}
+        />
+      )}
     </div>
   );
 }

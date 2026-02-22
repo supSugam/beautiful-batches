@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Upload, Trash2 } from 'lucide-react';
 import DesignSlider from '../../common/DesignSlider';
+import SegmentedControl from '../../common/SegmentedControl';
 import { ACCEPTED_IMAGE_TYPES } from '../../../utils/directoryPicker';
 import type { PaddingFillType } from '../../../types/app';
 
@@ -571,10 +572,6 @@ const PaddingSection = ({
     colorMode === 'solid'
       ? solidColor
       : `${gradientAngle}deg • ${gradientStart} -> ${gradientEnd}`;
-  const activeFillTypeIndex = Math.max(
-    0,
-    FILL_TYPE_OPTIONS.findIndex((option) => option.type === paddingFillType),
-  );
 
   return (
     <section className="control-section padding-section">
@@ -610,33 +607,18 @@ const PaddingSection = ({
         </div>
       </div>
 
-      <div className="padding-fill-capsule" aria-label="Padding fill type">
-        <motion.span
-          className="padding-fill-capsule-track"
-          initial={false}
-          animate={{ x: `${activeFillTypeIndex * 100}%` }}
-          transition={{
-            type: 'spring',
-            stiffness: 520,
-            damping: 36,
-            mass: 0.35,
-          }}
-        />
-        {FILL_TYPE_OPTIONS.map((option) => {
-          const isActive = paddingFillType === option.type;
-          return (
-            <button
-              key={option.type}
-              type="button"
-              className={`padding-fill-capsule-btn ${isActive ? 'active' : ''}`}
-              onClick={() => handlePaddingFillTypeChange(option.type)}
-              title={option.title}
-            >
-              <span className="padding-fill-capsule-label">{option.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      <SegmentedControl<PaddingFillType>
+        value={paddingFillType}
+        onChange={handlePaddingFillTypeChange}
+        ariaLabel="Padding fill type"
+        className="padding-fill-segmented"
+        equalWidth
+        options={FILL_TYPE_OPTIONS.map((option) => ({
+          value: option.type,
+          label: option.label,
+          title: option.title,
+        }))}
+      />
 
       <AnimatePresence mode="wait" initial={false}>
         {paddingFillType === 'color' && (
