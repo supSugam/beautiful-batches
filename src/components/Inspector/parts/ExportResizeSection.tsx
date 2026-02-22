@@ -9,8 +9,6 @@ type ExportResizeSectionProps = {
   aspect: number | null;
   currentPixelWidth: number;
   currentPixelHeight: number;
-  clearImageMetadata: boolean;
-  onClearImageMetadataChange: (value: boolean) => void;
   showSectionLabel?: boolean;
 };
 
@@ -23,8 +21,6 @@ const ExportResizeSection = ({
   aspect,
   currentPixelWidth,
   currentPixelHeight,
-  clearImageMetadata,
-  onClearImageMetadataChange,
   showSectionLabel = true,
 }: ExportResizeSectionProps) => {
   return (
@@ -92,40 +88,6 @@ const ExportResizeSection = ({
           </div>
         </div>
       )}
-
-      <div
-        className="metadata-toggle-row"
-        title="Removes EXIF and hidden metadata from exported files."
-      >
-        <span className="metadata-toggle-label">Clear Image Metadata</span>
-        <label className="metadata-checkbox-row">
-          <input
-            type="checkbox"
-            className="metadata-checkbox-input"
-            checked={clearImageMetadata}
-            onChange={(event) =>
-              onClearImageMetadataChange(event.target.checked)
-            }
-            aria-label="Clear image metadata on export"
-          />
-          <span className="metadata-checkbox-indicator" aria-hidden="true">
-            <svg
-              className="metadata-checkbox-mark"
-              viewBox="0 0 24 24"
-              fill="none"
-              style={{ transform: 'scale(1.2)' }}
-            >
-              <path
-                className="metadata-checkbox-mark-path"
-                d="M5 12l4.5 4.5L19 7"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-        </label>
-      </div>
     </section>
   );
 };

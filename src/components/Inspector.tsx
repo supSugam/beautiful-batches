@@ -258,8 +258,6 @@ const InspectorSession = ({
               aspect={logic.aspect}
               currentPixelWidth={logic.currentPixelWidth}
               currentPixelHeight={logic.currentPixelHeight}
-              clearImageMetadata={logic.clearImageMetadata}
-              onClearImageMetadataChange={logic.handleClearImageMetadataChange}
               showSectionLabel={false}
             />
             <BulkApplySection

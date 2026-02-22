@@ -4,10 +4,13 @@ import {
   AlertTriangle,
   Archive,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   FolderOpen,
   FolderTree,
   HardDriveDownload,
   Image as ImageIcon,
+  FileImage,
   FileText,
   ShieldAlert,
   Sparkles,
@@ -26,6 +29,7 @@ import './ExportPlanModal.css';
 type ExportScope = 'current_image' | 'current_folder' | 'selected_folders';
 type DestinationMode = 'folder' | 'zip';
 type NamingMode = 'keep_original' | 'pattern';
+type StructureMode = 'preserve' | 'flatten';
 type ConflictMode = 'auto_rename' | 'skip' | 'overwrite';
 
 type OutputRow = {
@@ -36,7 +40,6 @@ type OutputRow = {
   outputWidth: number;
   outputHeight: number;
   isEdited: boolean;
-  clearsMetadata: boolean;
   hasCaption: boolean;
   skipped: boolean;
   collision: boolean;
@@ -116,7 +119,6 @@ const getNameWithoutExtension = (name: string): string => {
 const getDateToken = (): string => new Date().toISOString().slice(0, 10);
 
 const toExtension = (format: ExportFormat): string => {
-  if (format === 'jpeg') return 'jpg';
   return format;
 };
 
@@ -207,7 +209,6 @@ const hasMeaningfulImageChange = (
   const flipV = Boolean(entry.transforms?.flip?.vertical);
   const outputWidth = Number(entry.outputWidth || 0);
   const aspect = entry.aspect;
-  const clearMetadata = Boolean(entry.clearImageMetadata);
   const zoom = Number(entry.editorView?.zoom || 1);
   const anchorX = Number(entry.editorView?.anchor?.x || 0.5);
   const anchorY = Number(entry.editorView?.anchor?.y || 0.5);
@@ -219,7 +220,6 @@ const hasMeaningfulImageChange = (
   if (Math.abs(rotate) > 0.001 || flipH || flipV) return true;
   if (aspect !== null && aspect !== undefined) return true;
   if (Number.isFinite(outputWidth) && outputWidth > 0) return true;
-  if (clearMetadata) return true;
   if (hasAnyPadding(entry) || hasAnyCornerRadius(entry)) return true;
   if (Math.abs(zoom - 1) > 0.0001) return true;
   if (Math.abs(anchorX - 0.5) > 0.0001 || Math.abs(anchorY - 0.5) > 0.0001) return true;
@@ -255,6 +255,140 @@ const formatNamePattern = (
   return sanitizeFileSegment(formatted || fileBase || `image_${index + 1}`);
 };
 
+const renderTruncatedMiddle = (text: string) => {
+  if (!text) return null;
+  const mid = Math.ceil(text.length / 2);
+  return (
+    <>
+      <span className="truncate-start">{text.slice(0, mid)}</span>
+      <span className="truncate-end">{text.slice(mid)}</span>
+    </>
+  );
+};
+
+interface TreeNode {
+  name: string;
+  isDir: boolean;
+  children: Map<string, TreeNode>;
+}
+
+const buildTree = (paths: string[]): TreeNode => {
+  const root: TreeNode = { name: '', isDir: true, children: new Map() };
+  paths.forEach((path) => {
+    const parts = path.split('/').filter(Boolean);
+    let current = root;
+    parts.forEach((part, index) => {
+      if (!current.children.has(part)) {
+        current.children.set(part, {
+          name: part,
+          isDir: index < parts.length - 1,
+          children: new Map(),
+        });
+      }
+      current = current.children.get(part)!;
+    });
+  });
+  return root;
+};
+
+const TreeFolder = ({
+  node,
+  isLastItem = false,
+}: {
+  node: TreeNode;
+  isLastItem?: boolean;
+}) => {
+  const sortedChildren = Array.from(node.children.values()).sort((a, b) => {
+    if (a.isDir && !b.isDir) return -1;
+    if (!a.isDir && b.isDir) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return (
+    <div className={`export-plan-tree-node ${isLastItem ? 'is-last' : ''}`}>
+      <div className="export-plan-tree-row">
+        <span className="export-plan-tree-icon-wrapper">
+          <FolderOpen size={14} className="export-plan-tree-folder-icon" />
+        </span>
+        <span className="export-plan-tree-name">
+          {renderTruncatedMiddle(node.name)}
+        </span>
+      </div>
+      <div className="export-plan-tree-children">
+        {sortedChildren.map((child, index) => {
+          const isLast = index === sortedChildren.length - 1;
+          return child.isDir ? (
+            <TreeFolder key={child.name} node={child} isLastItem={isLast} />
+          ) : (
+            <div
+              key={child.name}
+              className={`export-plan-tree-row export-plan-tree-file ${isLast ? 'is-last' : ''}`}
+            >
+              <span className="export-plan-tree-icon-wrapper file-wrapper">
+                <FileImage size={13} className="export-plan-tree-file-icon" />
+              </span>
+              <span className="export-plan-tree-name">
+                {renderTruncatedMiddle(child.name)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const OutputTreeDisplay = ({
+  paths,
+  baseName,
+}: {
+  paths: string[];
+  baseName: string;
+}) => {
+  const tree = useMemo(() => buildTree(paths), [paths]);
+  const sortedRootChildren = Array.from(tree.children.values()).sort((a, b) => {
+    if (a.isDir && !b.isDir) return -1;
+    if (!a.isDir && b.isDir) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return (
+    <div className="export-plan-tree-wrapper">
+      <div className="export-plan-tree-base-row">
+        <HardDriveDownload size={15} style={{ color: 'var(--accent)' }} />
+        <span className="export-plan-tree-name root-name">
+          {renderTruncatedMiddle(baseName)}
+        </span>
+      </div>
+      <div className="export-plan-tree-children root-children">
+        {sortedRootChildren.map((child, index) => {
+          const isLast = index === sortedRootChildren.length - 1;
+          return child.isDir ? (
+            <TreeFolder
+              key={child.name}
+              node={child}
+              defaultOpen={true}
+              isLastItem={isLast}
+            />
+          ) : (
+            <div
+              key={child.name}
+              className={`export-plan-tree-row export-plan-tree-file ${isLast ? 'is-last' : ''}`}
+            >
+              <span className="export-plan-tree-icon-wrapper file-wrapper">
+                <FileImage size={13} className="export-plan-tree-file-icon" />
+              </span>
+              <span className="export-plan-tree-name">
+                {renderTruncatedMiddle(child.name)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const ExportPlanModal = ({
   images,
   currentFolderImages,
@@ -285,13 +419,17 @@ const ExportPlanModal = ({
   const [destinationMode, setDestinationMode] = useState<DestinationMode>('folder');
   const [destinationName, setDestinationName] = useState(() => {
     const safeFolderLabel = sanitizeFileSegment(activeFolderLabel || 'Images');
-    return `${safeFolderLabel}_Export_{date}`;
+    return `${safeFolderLabel}-Export-{date}`;
   });
   const [namingMode, setNamingMode] = useState<NamingMode>('keep_original');
   const [namePattern, setNamePattern] = useState('{name}_{index}');
-  const [preserveTree, setPreserveTree] = useState(true);
+  const [structureMode, setStructureMode] = useState<StructureMode>('preserve');
   const [conflictMode, setConflictMode] = useState<ConflictMode>('auto_rename');
   const [exportEditedOnly, setExportEditedOnly] = useState(false);
+  const [clearMetadata, setClearMetadata] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'original' | ExportFormat>(
+    'original',
+  );
   const [overwriteAcknowledge, setOverwriteAcknowledge] = useState(false);
   const [overwriteTypedConfirm, setOverwriteTypedConfirm] = useState('');
   const [hasCustomBaseFolder, setHasCustomBaseFolder] = useState(false);
@@ -407,7 +545,6 @@ const ExportPlanModal = ({
       const cropEntry = cropData.get(image.id);
       const caption = String(captionById.get(image.id) || '');
       const isEdited = hasMeaningfulImageChange(image, cropEntry, caption);
-      const clearsMetadata = Boolean(cropEntry?.clearImageMetadata);
       const outputWidth = Number(cropEntry?.outputWidth || 0);
       const hasResize = Number.isFinite(outputWidth) && outputWidth > 0;
       const dims = computeOutputDimensions(image, cropEntry);
@@ -416,7 +553,6 @@ const ExportPlanModal = ({
         cropEntry,
         caption,
         isEdited,
-        clearsMetadata,
         hasResize,
         dims,
       };
@@ -431,7 +567,7 @@ const ExportPlanModal = ({
     [analyzedScope, exportEditedOnly],
   );
 
-  const filenameExtension = useMemo(() => toExtension(format), [format]);
+
 
   const resolvedFolderName = useMemo(() => {
     const resolvedTemplate = String(destinationName || '')
@@ -461,11 +597,21 @@ const ExportPlanModal = ({
             )
           : sanitizeFileSegment(getNameWithoutExtension(entry.image.name));
 
-      const fileName = `${fileBase || `image_${index + 1}`}.${filenameExtension}`;
-      const relativeParent = preserveTree
-        ? sanitizeRelativePath(getRelativeParentPath(entry.image.relativePath))
-        : '';
-      const outputPath = relativeParent ? joinPath(relativeParent, fileName) : fileName;
+      const fileExt =
+        exportFormat === 'original'
+          ? entry.image.relativePath.split('.').pop()?.toLowerCase() || 'jpg'
+          : toExtension(exportFormat);
+
+      const fileName = `${fileBase || `image_${index + 1}`}.${fileExt}`;
+      const relativeParent =
+        structureMode === 'preserve'
+          ? sanitizeRelativePath(
+              getRelativeParentPath(entry.image.relativePath),
+            )
+          : '';
+      const outputPath = relativeParent
+        ? joinPath(relativeParent, fileName)
+        : fileName;
 
       return {
         imageId: entry.image.id,
@@ -475,7 +621,6 @@ const ExportPlanModal = ({
         outputWidth: entry.dims.width,
         outputHeight: entry.dims.height,
         isEdited: entry.isEdited,
-        clearsMetadata: entry.clearsMetadata,
         hasCaption: entry.caption.trim().length > 0,
         skipped: false,
         collision: false,
@@ -484,7 +629,10 @@ const ExportPlanModal = ({
 
     const byPathCount = new Map<string, number>();
     nextRows.forEach((row) => {
-      byPathCount.set(row.outputPath, (byPathCount.get(row.outputPath) || 0) + 1);
+      byPathCount.set(
+        row.outputPath,
+        (byPathCount.get(row.outputPath) || 0) + 1,
+      );
     });
 
     const seenByPath = new Map<string, number>();
@@ -523,10 +671,10 @@ const ExportPlanModal = ({
     activeFolderLabel,
     conflictMode,
     filteredExportSource,
-    filenameExtension,
+    exportFormat,
     namePattern,
     namingMode,
-    preserveTree,
+    structureMode,
   ]);
 
   const previewRows = useMemo(
@@ -536,10 +684,6 @@ const ExportPlanModal = ({
 
   const resizeCount = useMemo(
     () => analyzedScope.filter((entry) => entry.hasResize).length,
-    [analyzedScope],
-  );
-  const metadataClearCount = useMemo(
-    () => analyzedScope.filter((entry) => entry.clearsMetadata).length,
     [analyzedScope],
   );
   const captionCount = useMemo(
@@ -647,7 +791,8 @@ const ExportPlanModal = ({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <section
+      <motion.section
+        layout
         className="export-plan-modal"
         role="dialog"
         aria-modal="true"
@@ -669,382 +814,486 @@ const ExportPlanModal = ({
         </header>
 
         <div className="export-plan-body">
-          <section className="export-plan-card">
-            <h3>Scope</h3>
-            <SegmentedControl<ExportScope>
-              value={scope}
-              onChange={setScope}
-              ariaLabel="Export scope"
-              className="export-plan-segmented-control"
-              equalWidth
-              options={[
-                {
-                  value: 'current_image',
-                  label: 'Current Image',
-                  disabled: !hasSelectedImage,
-                  title: !hasSelectedImage ? 'Select an image first' : undefined,
-                },
-                { value: 'current_folder', label: 'Current Folder' },
-                {
-                  value: 'selected_folders',
-                  label: 'Selected Folders',
-                  disabled: selectedFolderPathList.length === 0,
-                  title:
-                    selectedFolderPathList.length === 0
-                      ? 'No selected folders yet'
+          <div className="export-plan-col">
+            <section className="export-plan-card">
+              <h3>Scope</h3>
+              <SegmentedControl<ExportScope>
+                value={scope}
+                onChange={setScope}
+                ariaLabel="Export scope"
+                className="export-plan-segmented-control"
+                equalWidth
+                options={[
+                  {
+                    value: 'current_image',
+                    label: 'Current Image',
+                    disabled: !hasSelectedImage,
+                    title: !hasSelectedImage
+                      ? 'Select an image first'
                       : undefined,
-                },
-              ]}
-            />
-
-            <div className="export-plan-pills">
-              <span className="export-plan-pill">
-                <strong>{scopeImages.length}</strong> source
-              </span>
-              <span className="export-plan-pill">
-                <strong>{finalWriteCount}</strong> planned
-              </span>
-            </div>
-
-            <label className="export-plan-inline-checkbox export-plan-inline-checkbox--control">
-              <TriStateCheckbox
-                state={exportEditedOnly ? 'checked' : 'unchecked'}
-                onToggle={setExportEditedOnly}
-                ariaLabel="Export only edited images"
+                  },
+                  { value: 'current_folder', label: 'Current Folder' },
+                  {
+                    value: 'selected_folders',
+                    label: 'Selected Folders',
+                    disabled: selectedFolderPathList.length === 0,
+                    title:
+                      selectedFolderPathList.length === 0
+                        ? 'No selected folders yet'
+                        : undefined,
+                  },
+                ]}
               />
-              Export only edited images
-            </label>
 
-            <AnimatePresence initial={false}>
-              {scope === 'selected_folders' && (
-                <motion.div
-                  className="export-plan-selected-folders-box"
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  transition={{ duration: 0.16, ease: 'easeOut' }}
-                >
-                  <div className="export-plan-selected-folders-head">
-                    <span>
-                      <FolderTree size={13} />
-                      Folder Picks
-                    </span>
-                    <span className="export-plan-selected-count">
-                      {selectedFolderPathList.length}
-                    </span>
-                  </div>
-                  {selectedFolderLabels.length > 0 ? (
-                    <div className="export-plan-folder-chip-wrap">
-                      {selectedFolderLabels.slice(0, 5).map((folder) => (
-                        <span key={folder.path} className="export-plan-folder-chip">
-                          {folder.label}
-                        </span>
-                      ))}
-                      {selectedFolderLabels.length > 5 && (
-                        <span className="export-plan-folder-chip">
-                          +{selectedFolderLabels.length - 5} more
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="export-plan-muted">
-                      No folders selected yet. Use Explorer select mode.
-                    </p>
-                  )}
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => onEnableFolderSelectionMode?.()}
-                    disabled={!onEnableFolderSelectionMode}
-                  >
-                    Select Folders In Explorer
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-          </section>
-
-          <section className="export-plan-card">
-            <h3>Destination</h3>
-            <label className="export-plan-field">
-              <span>Base Folder</span>
-              <input
-                className="input"
-                value={baseFolder}
-                onChange={(event) => {
-                  setHasCustomBaseFolder(true);
-                  setBaseFolder(event.target.value);
-                }}
-                placeholder="/path/to/destination"
-              />
-            </label>
-
-            <div className="export-plan-quick-bases">
-              <button
-                type="button"
-                className="export-plan-quick-base"
-                onClick={() => {
-                  setHasCustomBaseFolder(true);
-                  setBaseFolder('~/Downloads');
-                }}
-              >
-                <HardDriveDownload size={12} />
-                Downloads
-              </button>
-              <button
-                type="button"
-                className="export-plan-quick-base"
-                onClick={() => {
-                  setHasCustomBaseFolder(true);
-                  setBaseFolder('~/Pictures');
-                }}
-              >
-                <ImageIcon size={12} />
-                Pictures
-              </button>
-              {activeFolderPathOnDisk && (
-                <button
-                  type="button"
-                  className="export-plan-quick-base"
-                  onClick={() => {
-                    setHasCustomBaseFolder(true);
-                    setBaseFolder(activeFolderPathOnDisk);
+              <div className="export-plan-token-list" style={{ marginTop: 2 }}>
+                <span>Source Images:</span>
+                <span
+                  className="export-plan-token"
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid var(--border)',
                   }}
                 >
-                  <FolderOpen size={12} />
-                  Current Folder
-                </button>
-              )}
-              {selectedImageFolderPath && (
+                  {scopeImages.length}
+                </span>
+                <span style={{ marginLeft: 8 }}>Will Create:</span>
+                <span
+                  className="export-plan-token"
+                  style={{
+                    background: 'rgba(129, 140, 248, 0.15)',
+                    borderColor: 'rgba(129, 140, 248, 0.3)',
+                    color: '#d9ddff',
+                    fontWeight: 600,
+                  }}
+                >
+                  {finalWriteCount}
+                </span>
+              </div>
+
+              <label
+                className="export-plan-inline-checkbox export-plan-inline-checkbox--control"
+                style={{ marginTop: 4 }}
+              >
+                <TriStateCheckbox
+                  state={exportEditedOnly ? 'checked' : 'unchecked'}
+                  onToggle={setExportEditedOnly}
+                  ariaLabel="Export only edited images"
+                />
+                Export only edited images
+              </label>
+
+              <AnimatePresence initial={false}>
+                {scope === 'selected_folders' && (
+                  <motion.div
+                    className="export-plan-selected-folders-box"
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.16, ease: 'easeOut' }}
+                  >
+                    <div className="export-plan-selected-folders-head">
+                      <span>
+                        <FolderTree size={13} />
+                        Folder Picks
+                      </span>
+                      <span className="export-plan-selected-count">
+                        {selectedFolderPathList.length}
+                      </span>
+                    </div>
+                    {selectedFolderLabels.length > 0 ? (
+                      <div className="export-plan-folder-chip-wrap">
+                        {selectedFolderLabels.slice(0, 5).map((folder) => (
+                          <span
+                            key={folder.path}
+                            className="export-plan-folder-chip"
+                          >
+                            {folder.label}
+                          </span>
+                        ))}
+                        {selectedFolderLabels.length > 5 && (
+                          <span className="export-plan-folder-chip">
+                            +{selectedFolderLabels.length - 5} more
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="export-plan-muted">
+                        No folders selected yet. Use Explorer select mode.
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => onEnableFolderSelectionMode?.()}
+                      disabled={!onEnableFolderSelectionMode}
+                    >
+                      Select Folders In Explorer
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </section>
+
+            <section className="export-plan-card">
+              <h3>Destination</h3>
+              <label className="export-plan-field">
+                <span>Base Folder</span>
+                <input
+                  className="input"
+                  value={baseFolder}
+                  onChange={(event) => {
+                    setHasCustomBaseFolder(true);
+                    setBaseFolder(event.target.value);
+                  }}
+                  placeholder="/path/to/destination"
+                />
+              </label>
+
+              <div className="export-plan-quick-bases">
                 <button
                   type="button"
                   className="export-plan-quick-base"
                   onClick={() => {
                     setHasCustomBaseFolder(true);
-                    setBaseFolder(selectedImageFolderPath);
+                    setBaseFolder('~/Downloads');
+                  }}
+                >
+                  <HardDriveDownload size={12} />
+                  Downloads
+                </button>
+                <button
+                  type="button"
+                  className="export-plan-quick-base"
+                  onClick={() => {
+                    setHasCustomBaseFolder(true);
+                    setBaseFolder('~/Pictures');
                   }}
                 >
                   <ImageIcon size={12} />
-                  Image Folder
+                  Pictures
                 </button>
-              )}
-            </div>
+                {activeFolderPathOnDisk && (
+                  <button
+                    type="button"
+                    className="export-plan-quick-base"
+                    onClick={() => {
+                      setHasCustomBaseFolder(true);
+                      setBaseFolder(activeFolderPathOnDisk);
+                    }}
+                  >
+                    <FolderOpen size={12} />
+                    Current Folder
+                  </button>
+                )}
+                {selectedImageFolderPath && (
+                  <button
+                    type="button"
+                    className="export-plan-quick-base"
+                    onClick={() => {
+                      setHasCustomBaseFolder(true);
+                      setBaseFolder(selectedImageFolderPath);
+                    }}
+                  >
+                    <ImageIcon size={12} />
+                    Image Folder
+                  </button>
+                )}
+              </div>
 
-            <label className="export-plan-field">
-              <span>Output Name ({`{date} {folder}`})</span>
-              <input
-                className="input"
-                value={destinationName}
-                onChange={(event) => setDestinationName(event.target.value)}
-                placeholder="{folder}_Export_{date}"
-              />
-            </label>
-
-            <SegmentedControl<DestinationMode>
-              value={destinationMode}
-              onChange={setDestinationMode}
-              ariaLabel="Destination mode"
-              className="export-plan-segmented-control"
-              equalWidth
-              options={[
-                {
-                  value: 'folder',
-                  label: (
-                    <>
-                      <FolderOpen size={14} />
-                      Folder
-                    </>
-                  ),
-                },
-                {
-                  value: 'zip',
-                  label: (
-                    <>
-                      <Archive size={14} />
-                      ZIP
-                    </>
-                  ),
-                },
-              ]}
-            />
-
-            <div className="export-plan-path-preview">
-              <span>Resolved destination</span>
-              <code>{resolvedDestinationPath || 'Select destination folder'}</code>
-            </div>
-          </section>
-
-          <section className="export-plan-card">
-            <h3>Naming + Conflicts</h3>
-            <SegmentedControl<NamingMode>
-              value={namingMode}
-              onChange={setNamingMode}
-              ariaLabel="Naming mode"
-              className="export-plan-segmented-control"
-              equalWidth
-              options={[
-                { value: 'keep_original', label: 'Keep Original Names' },
-                { value: 'pattern', label: 'Pattern' },
-              ]}
-            />
-
-            <AnimatePresence mode="wait" initial={false}>
-              {namingMode === 'pattern' && (
-                <motion.div
-                  key="naming-pattern-field"
-                  initial={{ opacity: 0, height: 0, y: -6 }}
-                  animate={{ opacity: 1, height: 'auto', y: 0 }}
-                  exit={{ opacity: 0, height: 0, y: -6 }}
-                  transition={REVEAL_SECTION_TRANSITION}
-                  style={{ overflow: 'hidden' }}
-                >
-                  <label className="export-plan-field">
-                    <span>Pattern Tokens: {`{name} {index} {date} {folder}`}</span>
-                    <input
-                      className="input"
-                      value={namePattern}
-                      onChange={(event) => setNamePattern(event.target.value)}
-                    />
-                  </label>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <label className="export-plan-inline-checkbox export-plan-inline-checkbox--control">
-              <TriStateCheckbox
-                state={preserveTree ? 'checked' : 'unchecked'}
-                onToggle={setPreserveTree}
-                ariaLabel="Preserve folder structure inside export"
-              />
-              Preserve folder structure inside export
-            </label>
-
-            <SegmentedControl<ConflictMode>
-              value={conflictMode}
-              onChange={setConflictMode}
-              ariaLabel="Conflict mode"
-              className="export-plan-segmented-control"
-              equalWidth
-              options={[
-                { value: 'auto_rename', label: 'Auto-Rename' },
-                { value: 'skip', label: 'Skip' },
-                { value: 'overwrite', label: 'Overwrite', tone: 'danger' },
-              ]}
-            />
-
-            <AnimatePresence mode="wait" initial={false}>
-              {conflictMode === 'overwrite' && collisionCount > 0 && (
-                <motion.div
-                  key="overwrite-safety-check"
-                  className="export-plan-danger-box"
-                  initial={{ opacity: 0, height: 0, y: -6 }}
-                  animate={{ opacity: 1, height: 'auto', y: 0 }}
-                  exit={{ opacity: 0, height: 0, y: -6 }}
-                  transition={REVEAL_SECTION_TRANSITION}
-                  style={{ overflow: 'hidden' }}
-                >
-                  <div className="export-plan-danger-title">
-                    <ShieldAlert size={15} />
-                    <span>Overwrite Safety Check</span>
+              <label className="export-plan-field">
+                <span>
+                  Output Name
+                  <div className="export-plan-token-list">
+                    <span className="export-plan-token">{`{date}`}</span>
+                    <span className="export-plan-token">{`{folder}`}</span>
                   </div>
-                  <label className="export-plan-inline-checkbox">
-                    <TriStateCheckbox
-                      state={overwriteAcknowledge ? 'checked' : 'unchecked'}
-                      onToggle={setOverwriteAcknowledge}
-                      ariaLabel="I understand files with matching paths can be replaced"
-                    />
-                    I understand files with matching paths can be replaced.
-                  </label>
-                  <label className="export-plan-field">
-                    <span>Type OVERWRITE to continue</span>
-                    <input
-                      className="input"
-                      value={overwriteTypedConfirm}
-                      onChange={(event) => setOverwriteTypedConfirm(event.target.value)}
-                      placeholder="OVERWRITE"
-                    />
-                  </label>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </section>
-
-          <section className="export-plan-card export-plan-card-table">
-            <div className="export-plan-table-headline">
-              <h3>Preflight Preview</h3>
-              <span>
-                Showing {Math.min(previewRows.length, OUTPUT_PREVIEW_LIMIT)} of {outputRows.length}
-              </span>
-            </div>
-            <div className="export-plan-pills export-plan-pills--inline export-plan-preflight-meta">
-              <span className="export-plan-pill">
-                <FileText size={12} /> {format.toUpperCase()}
-              </span>
-              <span className="export-plan-pill">Quality {quality}%</span>
-              <span className="export-plan-pill">{resizeCount} resized</span>
-              <span className="export-plan-pill">
-                {metadataClearCount} metadata-clear
-              </span>
-              <span className="export-plan-pill">{captionCount} captions</span>
-              {mixedResize && (
-                <span className="export-plan-pill warning">
-                  <Sparkles size={12} />
-                  mixed resize
                 </span>
-              )}
-            </div>
-            <div className="export-plan-table-wrap">
-              <table className="export-plan-table">
-                <thead>
-                  <tr>
-                    <th>Source</th>
-                    <th>Output</th>
-                    <th>Dims</th>
-                    <th>Flags</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {previewRows.map((row) => (
-                    <tr key={`${row.imageId}:${row.outputPath}`}>
-                      <td>
-                        <div className="export-plan-cell-main">{row.sourceName}</div>
-                        <div className="export-plan-cell-sub">{row.sourcePath}</div>
-                      </td>
-                      <td>
-                        <div className="export-plan-cell-main">{row.outputPath}</div>
-                        {row.skipped && (
-                          <div className="export-plan-cell-sub warning">Skipped (duplicate)</div>
-                        )}
-                      </td>
-                      <td>
-                        {row.outputWidth} x {row.outputHeight}
-                      </td>
-                      <td>
-                        <div className="export-plan-flag-list">
-                          {row.isEdited && <span className="tag">edited</span>}
-                          {row.clearsMetadata && <span className="tag">metadata-clear</span>}
-                          {row.hasCaption && <span className="tag">caption</span>}
-                          {row.collision && <span className="tag warning">collision</span>}
+                <input
+                  className="input"
+                  value={destinationName}
+                  onChange={(event) => setDestinationName(event.target.value)}
+                  placeholder="{folder}_Export_{date}"
+                />
+              </label>
+
+              <SegmentedControl<DestinationMode>
+                value={destinationMode}
+                onChange={setDestinationMode}
+                ariaLabel="Destination mode"
+                className="export-plan-segmented-control"
+                equalWidth
+                options={[
+                  {
+                    value: 'folder',
+                    label: (
+                      <>
+                        <FolderOpen size={14} />
+                        Folder
+                      </>
+                    ),
+                  },
+                  {
+                    value: 'zip',
+                    label: (
+                      <>
+                        <Archive size={14} />
+                        ZIP
+                      </>
+                    ),
+                  },
+                ]}
+              />
+            </section>
+          </div>
+
+          <div className="export-plan-col">
+            <section
+              className="export-plan-card"
+              style={{ flex: 1, minHeight: 0 }}
+            >
+              <h3>Naming and Conflicts</h3>
+              <SegmentedControl<NamingMode>
+                value={namingMode}
+                onChange={setNamingMode}
+                ariaLabel="Naming mode"
+                className="export-plan-segmented-control"
+                equalWidth
+                options={[
+                  { value: 'keep_original', label: 'Keep Original Names' },
+                  { value: 'pattern', label: 'Pattern' },
+                ]}
+              />
+
+              <AnimatePresence mode="wait" initial={false}>
+                {namingMode === 'pattern' && (
+                  <motion.div
+                    key="naming-pattern-field"
+                    initial={{ opacity: 0, height: 0, y: -6 }}
+                    animate={{ opacity: 1, height: 'auto', y: 0 }}
+                    exit={{ opacity: 0, height: 0, y: -6 }}
+                    transition={REVEAL_SECTION_TRANSITION}
+                    style={{ overflow: 'hidden' }}
+                  >
+                    <label className="export-plan-field">
+                      <span>
+                        Pattern Tokens
+                        <div className="export-plan-token-list">
+                          <span className="export-plan-token">{`{name}`}</span>
+                          <span className="export-plan-token">{`{index}`}</span>
+                          <span className="export-plan-token">{`{date}`}</span>
+                          <span className="export-plan-token">{`{folder}`}</span>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {previewRows.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="export-plan-empty-row">
-                        No files to preview with current settings.
-                      </td>
-                    </tr>
+                      </span>
+                      <input
+                        className="input"
+                        value={namePattern}
+                        onChange={(event) => setNamePattern(event.target.value)}
+                      />
+                    </label>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <label className="export-plan-field" style={{ marginTop: 12 }}>
+                <span>Folder Structure</span>
+                <SegmentedControl<StructureMode>
+                  value={structureMode}
+                  onChange={setStructureMode}
+                  ariaLabel="Folder structure mode"
+                  className="export-plan-segmented-control"
+                  equalWidth
+                  options={[
+                    { value: 'preserve', label: 'Preserve Original' },
+                    { value: 'flatten', label: 'Flatten to Root' },
+                  ]}
+                />
+              </label>
+
+              <label className="export-plan-field" style={{ marginTop: 12 }}>
+                <span>If file exists:</span>
+                <SegmentedControl<ConflictMode>
+                  value={conflictMode}
+                  onChange={setConflictMode}
+                  ariaLabel="Conflict mode"
+                  className="export-plan-segmented-control"
+                  equalWidth
+                  options={[
+                    { value: 'auto_rename', label: 'Auto-Rename' },
+                    { value: 'skip', label: 'Skip' },
+                    { value: 'overwrite', label: 'Overwrite', tone: 'danger' },
+                  ]}
+                />
+              </label>
+
+              <AnimatePresence mode="wait" initial={false}>
+                {conflictMode === 'overwrite' && collisionCount > 0 && (
+                  <motion.div
+                    key="overwrite-safety-check"
+                    className="export-plan-danger-box"
+                    initial={{ opacity: 0, height: 0, y: -6 }}
+                    animate={{ opacity: 1, height: 'auto', y: 0 }}
+                    exit={{ opacity: 0, height: 0, y: -6 }}
+                    transition={REVEAL_SECTION_TRANSITION}
+                    style={{ overflow: 'hidden' }}
+                  >
+                    <div className="export-plan-danger-title">
+                      <ShieldAlert size={15} />
+                      <span>Overwrite Safety Check</span>
+                    </div>
+                    <label className="export-plan-inline-checkbox">
+                      <TriStateCheckbox
+                        state={overwriteAcknowledge ? 'checked' : 'unchecked'}
+                        onToggle={setOverwriteAcknowledge}
+                        ariaLabel="I understand files with matching paths can be replaced"
+                      />
+                      I understand files with matching paths can be replaced.
+                    </label>
+                    <label className="export-plan-field">
+                      <span>Type OVERWRITE to continue</span>
+                      <input
+                        className="input"
+                        value={overwriteTypedConfirm}
+                        onChange={(event) =>
+                          setOverwriteTypedConfirm(event.target.value)
+                        }
+                        placeholder="OVERWRITE"
+                      />
+                    </label>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="export-plan-tree-section">
+                <h4 className="export-plan-tree-title">
+                  Output Architecture Preview
+                </h4>
+                <OutputTreeDisplay
+                  paths={outputRows.map((r) => r.outputPath)}
+                  baseName={resolvedFolderName || 'Export'}
+                />
+              </div>
+            </section>
+          </div>
+
+          <div className="export-plan-col">
+            <section className="export-plan-card export-plan-card-summary">
+              <h3>Output Summary</h3>
+
+              <div className="export-plan-path-preview">
+                <span>Resolved Destination Base</span>
+                <code>
+                  {resolvedDestinationPath || 'Select destination folder'}
+                </code>
+              </div>
+
+              <label
+                className="export-plan-inline-checkbox export-plan-inline-checkbox--control"
+                style={{ marginTop: 12 }}
+              >
+                <TriStateCheckbox
+                  state={clearMetadata ? 'checked' : 'unchecked'}
+                  onToggle={setClearMetadata}
+                  ariaLabel="Clear EXIF and other metadata from images"
+                />
+                Clear EXIF and hidden metadata
+              </label>
+
+              <label className="export-plan-field" style={{ marginTop: 12 }}>
+                <span>Format Conversion</span>
+                <SegmentedControl<'original' | ExportFormat>
+                  value={exportFormat}
+                  onChange={setExportFormat}
+                  ariaLabel="Export format"
+                  className="export-plan-segmented-control"
+                  equalWidth
+                  options={[
+                    { value: 'original', label: 'Original' },
+                    { value: 'png', label: 'PNG' },
+                    { value: 'jpeg', label: 'JPEG' },
+                    { value: 'webp', label: 'WEBP' },
+                  ]}
+                />
+              </label>
+
+              {(resizeCount > 0 || captionCount > 0) && (
+                <div className="export-plan-preflight-meta">
+                  {resizeCount > 0 && (
+                    <span className="export-plan-preflight-meta-item">
+                      <strong>{resizeCount}</strong> resized
+                    </span>
                   )}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                  {captionCount > 0 && (
+                    <span className="export-plan-preflight-meta-item">
+                      <strong>{captionCount}</strong> captions included
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {mixedResize && (
+                <div
+                  style={{
+                    padding: '0 4px',
+                    marginBottom: 8,
+                    fontSize: '0.68rem',
+                    color: '#ffebb1',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <Sparkles size={13} style={{ color: '#fbbf24' }} />
+                  Mixed resizes detected
+                </div>
+              )}
+
+              <div
+                style={{
+                  fontSize: '0.72rem',
+                  color: 'var(--text-secondary)',
+                  paddingLeft: 4,
+                  marginTop: 4,
+                }}
+              >
+                Example Outputs
+              </div>
+              <div className="export-plan-simple-preview-list">
+                {previewRows.slice(0, 4).map((row) => (
+                  <div
+                    key={`${row.imageId}:${row.outputPath}`}
+                    className={`simple-preview-item ${row.collision ? 'has-collision' : ''}`}
+                  >
+                    <span className="src" title={row.sourcePath}>
+                      {renderTruncatedMiddle(row.sourceName)}
+                    </span>
+                    <span className="arr">→</span>
+                    <span className="dst" title={row.outputPath}>
+                      {renderTruncatedMiddle(row.outputPath)}
+                    </span>
+                  </div>
+                ))}
+                {outputRows.length > 4 && (
+                  <div className="simple-preview-more">
+                    + {outputRows.length - 4} more files
+                  </div>
+                )}
+                {outputRows.length === 0 && (
+                  <div
+                    className="simple-preview-more"
+                    style={{ fontStyle: 'normal' }}
+                  >
+                    No files to preview.
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
         </div>
 
         <footer className="export-plan-footer">
-          <div className={`export-plan-status export-plan-status--${statusTone}`}>
+          <div
+            className={`export-plan-status export-plan-status--${statusTone}`}
+          >
             {statusTone === 'ready' ? (
               <CheckCircle2 size={15} />
             ) : (
@@ -1065,7 +1314,11 @@ const ExportPlanModal = ({
             </div>
           </div>
           <div className="export-plan-actions">
-            <button type="button" className="btn btn-secondary" onClick={onClose}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={onClose}
+            >
               Close
             </button>
             <button
@@ -1078,7 +1331,7 @@ const ExportPlanModal = ({
             </button>
           </div>
         </footer>
-      </section>
+      </motion.section>
     </div>
   );
 };

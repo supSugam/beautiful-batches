@@ -64,7 +64,6 @@ export interface CropEntry {
   isInteracting?: boolean;
   aspect?: number | null;
   outputWidth?: number | null;
-  clearImageMetadata?: boolean;
   editorView?: EditorViewState;
   padding?: PaddingValues | string;
   cornerRadius?: CornerRadiusValues | string;
@@ -74,6 +73,7 @@ export interface CropEntry {
   paddingImageUrl?: string | null;
   imageWidth?: number;
   imageHeight?: number;
+  clearImageMetadata?: boolean;
 }
 
 export interface RawUploadImage {
