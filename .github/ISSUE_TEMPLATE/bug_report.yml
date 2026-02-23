@@ -1,0 +1,71 @@
+name: Bug report
+description: Report incorrect behavior, regressions, or crashes
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Please provide enough detail so the issue is reproducible.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: A short description of the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps help a lot.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What should happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: What happened?
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and desktop environment
+      placeholder: e.g. Ubuntu 24.04 (GNOME), Windows 11, macOS 15
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version or commit hash
+      placeholder: e.g. v0.1.0 or a1b2c3d
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options:
+        - Desktop (Tauri)
+        - Frontend-only dev mode
+    validations:
+      required: true
+  - type: textarea
+    id: media
+    attributes:
+      label: Logs, screenshots, or sample structure
+      description: Paste logs or drag images/files here.

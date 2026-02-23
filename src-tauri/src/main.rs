@@ -34,17 +34,17 @@ fn main() {
         .register_asynchronous_uri_scheme_protocol("localfile", move |ctx, request, responder| {
             // In Tauri v2, ctx is &UriSchemeContext. Get AppHandle from it.
             let app_handle = ctx.app_handle().clone();
-            
+
             // The URL looks like: localfile://localhost/<encoded-path>?thumbnail=true
             let url_string = request.uri().to_string();
-            
+
             // 1. Strip the protocol and host
             let rest = url_string
                 .strip_prefix("localfile://localhost/")
                 .or_else(|| url_string.strip_prefix("localfile://localhost"))
                 .unwrap_or("")
                 .to_string();
-            
+
             // 2. Separate path and query
             let (path_part, query_part) = match rest.split_once('?') {
                 Some((p, q)) => (p, Some(q)),
@@ -60,10 +60,7 @@ fn main() {
                 .and_then(|q| query_value(q, "thumbnail"))
                 .is_some_and(|value| value == "true" || value == "1");
             let thumb_size = query_part
-                .and_then(|q| {
-                    query_value(q, "thumbSize")
-                        .or_else(|| query_value(q, "size"))
-                })
+                .and_then(|q| query_value(q, "thumbSize").or_else(|| query_value(q, "size")))
                 .and_then(|value| value.parse::<u32>().ok());
 
             std::thread::spawn(move || {
@@ -108,6 +105,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::process_bulk_export,
+            commands::execute_export_plan,
             commands::pick_and_scan_root,
             commands::load_saved_roots_and_scan,
             commands::load_saved_roots_metadata,

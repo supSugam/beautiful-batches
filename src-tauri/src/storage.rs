@@ -60,9 +60,7 @@ pub fn add_root_path(app: &AppHandle, new_root: &str) -> Result<AddRootResult, S
         let existing_path = Path::new(item);
         new_path.starts_with(existing_path)
     }) {
-        return Ok(AddRootResult {
-            saved_paths: saved,
-        });
+        return Ok(AddRootResult { saved_paths: saved });
     }
 
     // 2. Remove any existing paths that are children of the new path
@@ -75,9 +73,7 @@ pub fn add_root_path(app: &AppHandle, new_root: &str) -> Result<AddRootResult, S
     saved.push(normalized);
     save_root_paths(app, &saved)?;
 
-    Ok(AddRootResult {
-        saved_paths: saved,
-    })
+    Ok(AddRootResult { saved_paths: saved })
 }
 
 /// Remove a root path and persist. Returns `true` if the path was found.

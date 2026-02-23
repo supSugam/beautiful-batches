@@ -5,8 +5,8 @@ use rfd::FileDialog;
 use tauri::AppHandle;
 
 use crate::models::{
-    ExportConfig, ExportInputFile, LoadSavedRootsResult, NativeRootScan,
-    PickAndScanRootResult, ProcessBulkExportResult,
+    ExecuteExportPlanRequest, ExecuteExportPlanResult, ExportConfig, ExportInputFile,
+    LoadSavedRootsResult, NativeRootScan, PickAndScanRootResult, ProcessBulkExportResult,
     SidecarCaptionResult,
 };
 use crate::scanner::{list_directory_children, scan_folder_by_path, scan_single_root};
@@ -41,7 +41,10 @@ pub async fn open_folder_in_file_explorer(folder_path: String) -> Result<(), Str
     let input_path = PathBuf::from(&normalized);
     let target_path = std::fs::canonicalize(&input_path).unwrap_or(input_path);
     if !target_path.exists() || !target_path.is_dir() {
-        return Err(format!("Folder path is not accessible: {}", target_path.display()));
+        return Err(format!(
+            "Folder path is not accessible: {}",
+            target_path.display()
+        ));
     }
 
     let target = target_path.to_string_lossy().to_string();
@@ -108,7 +111,10 @@ pub async fn reveal_file_in_file_explorer(file_path: String) -> Result<(), Strin
     let input_path = PathBuf::from(&normalized);
     let target_path = std::fs::canonicalize(&input_path).unwrap_or(input_path);
     if !target_path.exists() || !target_path.is_file() {
-        return Err(format!("File path is not accessible: {}", target_path.display()));
+        return Err(format!(
+            "File path is not accessible: {}",
+            target_path.display()
+        ));
     }
 
     let target = target_path.to_string_lossy().to_string();
@@ -344,9 +350,7 @@ pub async fn list_directory_children_by_path(
 
 /// Load all previously saved roots from disk and scan each one.
 #[tauri::command]
-pub async fn load_saved_roots_and_scan(
-    app: AppHandle,
-) -> Result<LoadSavedRootsResult, String> {
+pub async fn load_saved_roots_and_scan(app: AppHandle) -> Result<LoadSavedRootsResult, String> {
     let saved_root_paths = storage::load_saved_root_paths(&app)?;
     if saved_root_paths.is_empty() {
         return Ok(LoadSavedRootsResult {
@@ -390,10 +394,7 @@ pub async fn load_saved_roots_and_scan(
 
 /// Remove a saved root path.
 #[tauri::command]
-pub async fn remove_saved_root(
-    app: AppHandle,
-    root_path: String,
-) -> Result<bool, String> {
+pub async fn remove_saved_root(app: AppHandle, root_path: String) -> Result<bool, String> {
     storage::remove_root_path(&app, &root_path)
 }
 
@@ -412,9 +413,16 @@ pub async fn process_bulk_export(
     config: ExportConfig,
 ) -> Result<ProcessBulkExportResult, String> {
     // Run the CPU-heavy image processing off the main thread.
-    tokio::task::spawn_blocking(move || {
-        crate::image_processing::process_bulk_export(files, config)
-    })
-    .await
-    .map_err(|error| format!("Export task failed: {error}"))?
+    tokio::task::spawn_blocking(move || crate::image_processing::process_bulk_export(files, config))
+        .await
+        .map_err(|error| format!("Export task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn execute_export_plan(
+    request: ExecuteExportPlanRequest,
+) -> Result<ExecuteExportPlanResult, String> {
+    tokio::task::spawn_blocking(move || crate::image_processing::execute_export_plan(request))
+        .await
+        .map_err(|error| format!("Export plan task failed: {error}"))?
 }

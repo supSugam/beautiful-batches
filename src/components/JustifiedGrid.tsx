@@ -42,12 +42,14 @@ const getRotatedBounds = (
 
 type JustifiedGridProps = {
   images: GalleryImage[];
+  excludedById: Map<string, boolean>;
   targetRowHeight: number;
   padding?: number;
   showAllFooters?: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onDelete: (id: string) => void;
+  onRestore: (id: string) => void;
   onEndReached?: () => void;
 };
 
@@ -61,11 +63,13 @@ type GridPhoto = {
 
 const JustifiedGrid = ({
   images,
+  excludedById,
   targetRowHeight,
   padding = 8,
   selectedId,
   onSelect,
   onDelete,
+  onRestore,
   onEndReached,
 }: JustifiedGridProps) => {
   const cropLayoutVersion = useStore((state) => state.cropLayoutVersion);
@@ -73,8 +77,9 @@ const JustifiedGrid = ({
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const scrollerElementRef = useRef<HTMLElement | null>(null);
   const lastEndReachedAtRef = useRef(0);
-  const lastAutoScrollRef = useRef<{ id: string; index: number } | null>(null);
+  const lastSelectionScrollIdRef = useRef<string | null>(null);
   const lastAutoScrollAtRef = useRef(0);
+  const lastUserScrollAtRef = useRef(0);
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const thumbnailSize = useMemo(
     () => resolveThumbnailSize(targetRowHeight),
@@ -83,6 +88,10 @@ const JustifiedGrid = ({
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const setMeasuredWidth = (nextWidth: number) => {
+      const safe = Math.max(0, Math.floor(nextWidth));
+      setContainerWidth((previous) => (previous === safe ? previous : safe));
+    };
     const readViewportWidth = (fallbackWidth: number) => {
       const scrollerWidth = scrollerElementRef.current?.clientWidth || 0;
       if (scrollerWidth > 0) return Math.floor(scrollerWidth);
@@ -91,12 +100,28 @@ const JustifiedGrid = ({
 
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setContainerWidth(readViewportWidth(entry.contentRect.width));
+        setMeasuredWidth(readViewportWidth(entry.contentRect.width));
       }
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    const scroller = scrollerElementRef.current;
+    if (!scroller) return;
+    const markUserScroll = () => {
+      lastUserScrollAtRef.current = Date.now();
+    };
+    scroller.addEventListener('wheel', markUserScroll, { passive: true });
+    scroller.addEventListener('touchmove', markUserScroll, { passive: true });
+    scroller.addEventListener('scroll', markUserScroll, { passive: true });
+    return () => {
+      scroller.removeEventListener('wheel', markUserScroll);
+      scroller.removeEventListener('touchmove', markUserScroll);
+      scroller.removeEventListener('scroll', markUserScroll);
+    };
+  }, [containerWidth]);
 
   const photos = useMemo(() => {
     if (!images || images.length === 0) return [];
@@ -177,22 +202,20 @@ const JustifiedGrid = ({
 
   useEffect(() => {
     if (!selectedId) {
-      lastAutoScrollRef.current = null;
+      lastSelectionScrollIdRef.current = null;
       return;
     }
+    if (lastSelectionScrollIdRef.current === selectedId) return;
+    if (Date.now() - lastUserScrollAtRef.current < 450) return;
+
     const targetIndex = trackIndexByImageId.get(selectedId);
     if (targetIndex === undefined) return;
-
-    const previous = lastAutoScrollRef.current;
-    if (previous && previous.index === targetIndex) {
-      return;
-    }
 
     const now = Date.now();
     const behavior: ScrollBehavior =
       now - lastAutoScrollAtRef.current < 140 ? 'auto' : 'smooth';
     lastAutoScrollAtRef.current = now;
-    lastAutoScrollRef.current = { id: selectedId, index: targetIndex };
+    lastSelectionScrollIdRef.current = selectedId;
     virtuosoRef.current?.scrollToIndex({
       index: targetIndex,
       align: 'center',
@@ -227,7 +250,10 @@ const JustifiedGrid = ({
             const element = ref instanceof HTMLElement ? ref : null;
             scrollerElementRef.current = element;
             if (element) {
-              setContainerWidth(Math.floor(element.clientWidth));
+              const width = Math.max(0, Math.floor(element.clientWidth));
+              setContainerWidth((previous) =>
+                previous === width ? previous : width,
+              );
             }
           }}
           itemContent={(index, track) => (
@@ -251,12 +277,13 @@ const JustifiedGrid = ({
                 >
                   <ImageCard
                     image={photo.photo.originalImage}
+                    excluded={excludedById.has(photo.photo.id)}
                     rowHeight={photo.height}
                     thumbnailSize={thumbnailSize}
                     selected={selectedId === photo.photo.id}
                     onSelect={onSelect}
                     onDelete={onDelete}
-                    disableLayoutAnimation={false}
+                    onRestore={onRestore}
                   />
                 </div>
               ))}

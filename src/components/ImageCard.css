@@ -1,6 +1,7 @@
 .image-card {
   position: relative;
   isolation: isolate;
+  contain: layout paint;
   background: var(--bg-surface);
   border-radius: var(--radius-ui);
   overflow: hidden;
@@ -11,6 +12,11 @@
 
 .image-card.selected {
   box-shadow: 0 0 0 2px var(--accent-dim), var(--shadow-glow);
+}
+
+.image-card.is-excluded {
+  opacity: 0.42;
+  cursor: default;
 }
 
 .card-preview {
@@ -97,7 +103,6 @@
   height: 28px;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: white;
   display: flex;
@@ -113,6 +118,21 @@
 
 .card-delete:hover {
   background: var(--danger);
+}
+
+.image-card.is-excluded .card-overlay {
+  background: rgba(18, 18, 18, 0.26);
+}
+
+.image-card.is-excluded .card-delete {
+  opacity: 1;
+  background: rgba(129, 140, 248, 0.26);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.image-card.is-excluded .card-delete:hover,
+.card-delete.is-restore:hover {
+  background: rgba(129, 140, 248, 0.44);
 }
 
 .selection-badge {

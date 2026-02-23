@@ -57,7 +57,10 @@ const nameCollator = new Intl.Collator(undefined, {
 });
 
 const normalizePath = (value: unknown): string =>
-  String(value || '').replace(/\\/g, '/');
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/+$/, '');
 const getFolderNameFromPath = (value: unknown): string => {
   const normalized = normalizePath(value);
   const parts = normalized.split('/').filter(Boolean);
@@ -75,18 +78,14 @@ const snapRowHeight = (value: number): number => {
     Math.round((clamped - MIN_ROW_HEIGHT) / ROW_HEIGHT_STEP) * ROW_HEIGHT_STEP;
   return Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, snapped));
 };
-const isDirectImageChildOfFolder = (
+const isImageInFolderSubtree = (
   relativePath: string,
   folderPath: string,
 ): boolean => {
   const normalizedRelativePath = normalizePath(relativePath);
   const normalizedFolderPath = normalizePath(folderPath);
   if (!normalizedRelativePath || !normalizedFolderPath) return false;
-  if (!normalizedRelativePath.startsWith(`${normalizedFolderPath}/`)) {
-    return false;
-  }
-  const remainder = normalizedRelativePath.slice(normalizedFolderPath.length + 1);
-  return remainder.length > 0 && !remainder.includes('/');
+  return normalizedRelativePath.startsWith(`${normalizedFolderPath}/`);
 };
 
 const readStoredBoolean = (key: string, fallback: boolean): boolean => {
@@ -648,30 +647,25 @@ function App() {
     addImages([], Array.from(new Set(rootNames)));
   }, [addImages, folderNodes.length, images.length]);
 
-  const filteredImages = useMemo(() => {
-    let baseImages = images;
-    if (excludedById.size > 0) {
-      baseImages = images.filter((img) => !excludedById.has(img.id));
-    }
-
+  const scopedImages = useMemo(() => {
     if (activeFolderPath === ALL_FOLDERS_VALUE) {
-      return baseImages.filter((image) => {
+      return images.filter((image) => {
         const relativePath = normalizePath(image.relativePath);
         const parts = relativePath.split('/').filter(Boolean);
         return parts.length <= 2;
       });
     }
     const prefix = `${activeFolderPath}/`;
-    return baseImages.filter((image) => {
+    return images.filter((image) => {
       const relativePath = normalizePath(image.relativePath);
       if (!relativePath.startsWith(prefix)) return false;
       const remainder = relativePath.substring(prefix.length);
       return !remainder.includes('/');
     });
-  }, [activeFolderPath, images, excludedById]);
+  }, [activeFolderPath, images]);
 
   const visibleImages = useMemo(() => {
-    const next = filteredImages.map((image, originalIndex) => ({
+    const next = scopedImages.map((image, originalIndex) => ({
       image,
       originalIndex,
     }));
@@ -732,7 +726,12 @@ function App() {
     });
 
     return next.map((entry) => entry.image);
-  }, [filteredImages, shuffleSeed, sortOption]); // Deliberately omitting sessionModifiedAt to avoid lag
+  }, [scopedImages, shuffleSeed, sortOption]); // Deliberately omitting sessionModifiedAt to avoid lag
+
+  const navigableVisibleImages = useMemo(
+    () => visibleImages.filter((image) => !excludedById.has(image.id)),
+    [excludedById, visibleImages],
+  );
 
   const selectedFolderScopeImages = useMemo(() => {
     if (selectedExportFolderPaths.size === 0) return [];
@@ -758,33 +757,39 @@ function App() {
   }, [images, selectedExportFolderPaths]);
 
   const visibleImageIds = useMemo(
-    () => new Set(visibleImages.map((image) => image.id)),
-    [visibleImages],
+    () => new Set(navigableVisibleImages.map((image) => image.id)),
+    [navigableVisibleImages],
   );
 
   const handleSelectNext = useCallback(() => {
     if (!selectedId) return;
-    const index = visibleImages.findIndex((image) => image.id === selectedId);
-    if (index < 0 || index >= visibleImages.length - 1) return;
-    setSelectedId(visibleImages[index + 1].id);
-  }, [selectedId, setSelectedId, visibleImages]);
+    const index = navigableVisibleImages.findIndex(
+      (image) => image.id === selectedId,
+    );
+    if (index < 0 || index >= navigableVisibleImages.length - 1) return;
+    setSelectedId(navigableVisibleImages[index + 1].id);
+  }, [navigableVisibleImages, selectedId, setSelectedId]);
 
   const handleSelectPrev = useCallback(() => {
     if (!selectedId) return;
-    const index = visibleImages.findIndex((image) => image.id === selectedId);
+    const index = navigableVisibleImages.findIndex(
+      (image) => image.id === selectedId,
+    );
     if (index <= 0) return;
-    setSelectedId(visibleImages[index - 1].id);
-  }, [selectedId, setSelectedId, visibleImages]);
+    setSelectedId(navigableVisibleImages[index - 1].id);
+  }, [navigableVisibleImages, selectedId, setSelectedId]);
 
   const handleExcludeSelected = useCallback(
     (targetId: string) => {
       if (targetId === selectedId) {
-        const index = visibleImages.findIndex((image) => image.id === targetId);
+        const index = navigableVisibleImages.findIndex(
+          (image) => image.id === targetId,
+        );
         if (index >= 0) {
-          if (index < visibleImages.length - 1) {
-            setSelectedId(visibleImages[index + 1].id);
+          if (index < navigableVisibleImages.length - 1) {
+            setSelectedId(navigableVisibleImages[index + 1].id);
           } else if (index > 0) {
-            setSelectedId(visibleImages[index - 1].id);
+            setSelectedId(navigableVisibleImages[index - 1].id);
           } else {
             setSelectedId(null);
           }
@@ -792,7 +797,16 @@ function App() {
       }
       useStore.getState().deleteImage(targetId);
     },
-    [selectedId, setSelectedId, visibleImages],
+    [navigableVisibleImages, selectedId, setSelectedId],
+  );
+
+  const handleRestoreExcluded = useCallback((targetId: string) => {
+    useStore.getState().restoreImage(targetId);
+  }, []);
+
+  const exportableCurrentFolderImages = useMemo(
+    () => visibleImages.filter((image) => !excludedById.has(image.id)),
+    [excludedById, visibleImages],
   );
 
   const loadImagesForFolderPath = useCallback(
@@ -1049,6 +1063,7 @@ function App() {
       const candidateIds = new Set<string>([
         ...Object.keys(resolvedDrafts.cropEntriesById || {}),
         ...Object.keys(resolvedDrafts.captionsById || {}),
+        ...Object.keys(resolvedDrafts.excludedById || {}),
         ...Object.keys(resolvedDrafts.modifiedAtById || {}),
       ]);
       if (candidateIds.size === 0) return;
@@ -1062,6 +1077,7 @@ function App() {
 
       const cropEntriesById: Record<string, CropEntry> = {};
       const captionsById: Record<string, string> = {};
+      const excludedById: Record<string, boolean> = {};
       const modifiedAtById: Record<string, number> = {};
 
       applyIds.forEach((id) => {
@@ -1072,6 +1088,9 @@ function App() {
         if (Object.prototype.hasOwnProperty.call(resolvedDrafts.captionsById, id)) {
           captionsById[id] = resolvedDrafts.captionsById[id];
         }
+        if (Object.prototype.hasOwnProperty.call(resolvedDrafts.excludedById, id)) {
+          excludedById[id] = Boolean(resolvedDrafts.excludedById[id]);
+        }
         const ts = Number(resolvedDrafts.modifiedAtById[id] || 0);
         if (ts > 0) {
           modifiedAtById[id] = ts;
@@ -1080,7 +1099,8 @@ function App() {
 
       if (
         Object.keys(cropEntriesById).length === 0 &&
-        Object.keys(captionsById).length === 0
+        Object.keys(captionsById).length === 0 &&
+        Object.keys(excludedById).length === 0
       ) {
         return;
       }
@@ -1088,6 +1108,7 @@ function App() {
       applyPersistedImageDrafts({
         cropEntriesById,
         captionsById,
+        excludedById,
         modifiedAtById,
       });
       applyIds.forEach((id) => {
@@ -1205,11 +1226,16 @@ function App() {
   }, []);
 
   const folderName = useMemo(() => {
+    if (activeFolderPath && activeFolderPath !== ALL_FOLDERS_VALUE) {
+      const normalized = normalizePath(activeFolderPath);
+      const root = normalized.split('/').filter(Boolean)[0];
+      if (root) return root;
+    }
     if (images.length === 0) return '';
-    const first = images[0]?.relativePath || '';
-    const parts = first.split('/');
-    return parts.length > 1 ? parts[0] : 'Selected Files';
-  }, [images]);
+    const first = normalizePath(images[0]?.relativePath || '');
+    const root = first.split('/').filter(Boolean)[0];
+    return root || 'Selected Files';
+  }, [activeFolderPath, images]);
 
   const activeFolderLabel = useMemo(() => {
     if (activeFolderPath === ALL_FOLDERS_VALUE) return 'All Images';
@@ -1518,7 +1544,7 @@ function App() {
         Array.from(restoredDraftImageIdsRef.current).filter((id) => {
           const relativePath = imageById.get(id);
           if (!relativePath) return false;
-          return !isDirectImageChildOfFolder(
+          return !isImageInFolderSubtree(
             relativePath,
             normalizedFolderPath,
           );
@@ -1569,12 +1595,14 @@ function App() {
 
       <MainLayout
         images={visibleImages}
+        excludedById={excludedById}
         rowHeight={rowHeight}
         showAllFooters={showAllFooters}
         selectedId={selectedId}
         setSelectedId={setSelectedId}
         handleCropChange={setCropChange}
         handleDelete={handleExcludeSelected}
+        handleRestore={handleRestoreExcluded}
         inspectorWidth={inspectorWidth}
         setInspectorWidth={setInspectorWidth}
         explorerWidth={explorerWidth}
@@ -1630,7 +1658,7 @@ function App() {
       {exportPlanOpen && (
         <ExportPlanModal
           images={images}
-          currentFolderImages={visibleImages}
+          currentFolderImages={exportableCurrentFolderImages}
           resolveRootForFolderPath={resolveRootForFolderPath}
           selectedFolderPaths={selectedExportFolderPaths}
           excludedById={excludedById}

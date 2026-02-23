@@ -1,6 +1,5 @@
 import React, { memo, useCallback, useMemo } from 'react';
-import { motion } from 'framer-motion';
-import { X, Check } from 'lucide-react';
+import { Check, RotateCcw, X } from 'lucide-react';
 import useStore from '../store/useStore';
 import { normalizeStoredCoordinates } from '../utils/cropCoordinates';
 import {
@@ -38,20 +37,22 @@ const formatPreviewPx = (value: number): string => {
 export const ImageCard = memo(
   ({
     image,
+    excluded = false,
     onDelete,
+    onRestore,
     rowHeight,
     thumbnailSize = 320,
     selected,
     onSelect,
-    disableLayoutAnimation = false,
   }: {
     image: GalleryImage;
+    excluded?: boolean;
     onDelete: (id: string) => void;
+    onRestore?: (id: string) => void;
     rowHeight: number;
     thumbnailSize?: number;
     selected: boolean;
     onSelect: (id: string | null) => void;
-    disableLayoutAnimation?: boolean;
   }) => {
     const cropState = useStore(
       useCallback((state) => state.cropData.get(image.id), [image.id]),
@@ -63,18 +64,24 @@ export const ImageCard = memo(
     };
 
     const isInteracting = cropState?.isInteracting ?? false;
-    const dynamicTransition = isInteracting
-      ? 'none'
-      : 'width var(--transition-spring), height var(--transition-spring), left var(--transition-spring), top var(--transition-spring), transform var(--transition-spring)';
+    const dynamicTransition =
+      selected && !isInteracting
+        ? 'width var(--transition-spring), height var(--transition-spring), left var(--transition-spring), top var(--transition-spring), transform var(--transition-spring)'
+        : 'none';
 
     const handleDelete = (e: React.MouseEvent<HTMLButtonElement>) => {
       e.stopPropagation();
+      if (excluded) {
+        onRestore?.(image.id);
+        return;
+      }
       onDelete(image.id);
     };
 
     const handleSelect = useCallback(() => {
+      if (excluded) return;
       onSelect(selected ? null : image.id);
-    }, [image.id, onSelect, selected]);
+    }, [excluded, image.id, onSelect, selected]);
 
     // Live Crop Visuals
     const coords = normalizeStoredCoordinates(cropState?.coordinates);
@@ -211,17 +218,10 @@ export const ImageCard = memo(
 
 
     return (
-      <motion.div
-        layout={disableLayoutAnimation ? false : 'position'}
-        initial={false}
-        transition={{
-          layout: {
-            duration: 0.16,
-            ease: [0.22, 1, 0.36, 1],
-          },
-        }}
-        className={`image-card ${selected ? 'selected' : ''}`}
+      <div
+        className={`image-card ${selected ? 'selected' : ''} ${excluded ? 'is-excluded' : ''}`}
         onClick={handleSelect}
+        aria-disabled={excluded}
       >
         <div
           className="card-preview"
@@ -257,7 +257,7 @@ export const ImageCard = memo(
                   top: `${wrapperTop}%`,
                   transformOrigin: '0 0',
                   transition: dynamicTransition,
-                  willChange: 'width, height, left, top',
+                  willChange: selected ? 'width, height, left, top' : undefined,
                   pointerEvents: 'none' // allow clicks to pass through
                 }}
               >
@@ -280,7 +280,7 @@ export const ImageCard = memo(
                     transformOrigin: 'center center',
                     objectFit: 'fill',
                     transition: dynamicTransition,
-                    willChange: 'width, height, left, top, transform',
+                    willChange: selected ? 'width, height, left, top, transform' : undefined,
                     pointerEvents: 'none'
                   }}
                 />
@@ -290,11 +290,11 @@ export const ImageCard = memo(
 
           <div className="card-overlay">
             <button
-              className="card-delete"
+              className={`card-delete ${excluded ? 'is-restore' : ''}`}
               onClick={handleDelete}
-              title="Remove image"
+              title={excluded ? 'Restore image' : 'Remove image'}
             >
-              <X size={14} />
+              {excluded ? <RotateCcw size={14} /> : <X size={14} />}
             </button>
 
             {selected && (
@@ -305,7 +305,7 @@ export const ImageCard = memo(
           </div>
         </div>
 
-      </motion.div>
+      </div>
     );
   },
 );

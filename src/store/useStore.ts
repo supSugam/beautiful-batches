@@ -158,18 +158,14 @@ const getGridRatioSignature = (
 const normalizePath = (value: unknown): string =>
   String(value || '').replace(/\\/g, '/');
 
-const isDirectImageChildOfFolder = (
+const isImageInFolderSubtree = (
   relativePath: string,
   folderPath: string,
 ): boolean => {
   const normalizedRelativePath = normalizePath(relativePath);
   const normalizedFolderPath = normalizePath(folderPath);
   if (!normalizedRelativePath || !normalizedFolderPath) return false;
-  if (!normalizedRelativePath.startsWith(`${normalizedFolderPath}/`)) {
-    return false;
-  }
-  const remainder = normalizedRelativePath.slice(normalizedFolderPath.length + 1);
-  return remainder.length > 0 && !remainder.includes('/');
+  return normalizedRelativePath.startsWith(`${normalizedFolderPath}/`);
 };
 
 const buildFolderNodes = (
@@ -423,6 +419,7 @@ const getNowTs = () => Date.now();
 type PersistedDraftPayload = {
   cropEntriesById?: Record<string, CropEntry>;
   captionsById?: Record<string, string>;
+  excludedById?: Record<string, boolean>;
   modifiedAtById?: Record<string, number>;
 };
 
@@ -457,6 +454,7 @@ export interface UseStoreState {
   ) => Promise<void>;
   ensureImageMetadata: (id: string | null | undefined) => void;
   deleteImage: (id: string) => void;
+  restoreImage: (id: string) => void;
   clearImages: () => void;
   deleteFolder: (folderPath: string) => void;
   clearDraftsForFolder: (folderPath: string) => void;
@@ -931,6 +929,45 @@ const useStore = create<UseStoreState>((set, get) => {
       });
     },
 
+    restoreImage: (id) => {
+      const safeId = String(id || '').trim();
+      if (!safeId) return;
+
+      set((state) => {
+        if (!state.excludedById.has(safeId)) return {};
+
+        const nextExcludedById = new Map<string, boolean>(state.excludedById);
+        nextExcludedById.delete(safeId);
+
+        const image = state.images.find((img) => img.id === safeId);
+        const nextSessionModifiedAt = new Map<string, number>(
+          state.sessionModifiedAt,
+        );
+        const hasCaptionOverride = state.captionById.has(safeId);
+        const hasCropChange = hasMeaningfulImageChange(
+          state.cropData.get(safeId),
+          image,
+        );
+
+        if (hasCropChange || hasCaptionOverride) {
+          if (!nextSessionModifiedAt.has(safeId)) {
+            nextSessionModifiedAt.set(safeId, getNowTs());
+          }
+        } else {
+          nextSessionModifiedAt.delete(safeId);
+        }
+
+        return {
+          excludedById: nextExcludedById,
+          folderNodes: buildFolderNodes(
+            state.images.filter((img) => !nextExcludedById.has(img.id)),
+            state.rootNames,
+          ),
+          sessionModifiedAt: nextSessionModifiedAt,
+        };
+      });
+    },
+
     clearImages: () => {
       const { images } = get();
       removeIdsFromMetadataQueue(images.map((img) => img.id));
@@ -1016,17 +1053,21 @@ const useStore = create<UseStoreState>((set, get) => {
         let shouldBumpLayoutVersion = false;
         const nextCropData = new Map<string, CropEntry>(state.cropData);
         const nextCaptionById = new Map<string, string>(state.captionById);
+        const nextExcludedById = new Map<string, boolean>(state.excludedById);
         const nextSessionModifiedAt = new Map<string, number>(
           state.sessionModifiedAt,
         );
 
         state.images.forEach((image) => {
           const relativePath = normalizePath(image?.relativePath);
-          if (!isDirectImageChildOfFolder(relativePath, normalizedFolderPath)) {
+          if (!isImageInFolderSubtree(relativePath, normalizedFolderPath)) {
             return;
           }
 
           if (nextCaptionById.delete(image.id)) {
+            didChange = true;
+          }
+          if (nextExcludedById.delete(image.id)) {
             didChange = true;
           }
           if (nextSessionModifiedAt.delete(image.id)) {
@@ -1046,6 +1087,11 @@ const useStore = create<UseStoreState>((set, get) => {
         return {
           cropData: nextCropData,
           captionById: nextCaptionById,
+          excludedById: nextExcludedById,
+          folderNodes: buildFolderNodes(
+            state.images.filter((img) => !nextExcludedById.has(img.id)),
+            state.rootNames,
+          ),
           sessionModifiedAt: nextSessionModifiedAt,
           cropLayoutVersion: shouldBumpLayoutVersion
             ? state.cropLayoutVersion + 1
@@ -1380,11 +1426,13 @@ const useStore = create<UseStoreState>((set, get) => {
     applyPersistedImageDrafts: ({
       cropEntriesById,
       captionsById,
+      excludedById,
       modifiedAtById,
     }) => {
       set((state) => {
         const nextCropData = new Map<string, CropEntry>(state.cropData);
         const nextCaptionById = new Map<string, string>(state.captionById);
+        const nextExcludedById = new Map<string, boolean>(state.excludedById);
         const nextSessionModifiedAt = new Map<string, number>(
           state.sessionModifiedAt,
         );
@@ -1420,6 +1468,16 @@ const useStore = create<UseStoreState>((set, get) => {
           });
         }
 
+        if (excludedById) {
+          Object.entries(excludedById).forEach(([id, value]) => {
+            if (value) {
+              nextExcludedById.set(id, true);
+            } else {
+              nextExcludedById.delete(id);
+            }
+          });
+        }
+
         if (modifiedAtById) {
           Object.entries(modifiedAtById).forEach(([id, value]) => {
             const ts = Number(value || 0) || getNowTs();
@@ -1430,6 +1488,11 @@ const useStore = create<UseStoreState>((set, get) => {
         return {
           cropData: nextCropData,
           captionById: nextCaptionById,
+          excludedById: nextExcludedById,
+          folderNodes: buildFolderNodes(
+            state.images.filter((img) => !nextExcludedById.has(img.id)),
+            state.rootNames,
+          ),
           sessionModifiedAt: nextSessionModifiedAt,
           cropLayoutVersion: shouldBumpLayoutVersion
             ? state.cropLayoutVersion + 1

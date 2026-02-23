@@ -46,18 +46,14 @@ const getRootFolderPath = (relativePath: string): string => {
   return first || '';
 };
 
-const isDirectImageChildOfFolder = (
+const isImageInFolderSubtree = (
   relativePath: string,
   folderPath: string,
 ): boolean => {
   const normalizedRelativePath = normalizePath(relativePath);
   const normalizedFolderPath = normalizePath(folderPath);
   if (!normalizedRelativePath || !normalizedFolderPath) return false;
-  if (!normalizedRelativePath.startsWith(`${normalizedFolderPath}/`)) {
-    return false;
-  }
-  const remainder = normalizedRelativePath.slice(normalizedFolderPath.length + 1);
-  return remainder.length > 0 && !remainder.includes('/');
+  return normalizedRelativePath.startsWith(`${normalizedFolderPath}/`);
 };
 
 const safeClone = <T>(value: T): T | null => {
@@ -420,7 +416,7 @@ export const clearFolderDraft = async (folderPath: string): Promise<boolean> => 
 
     const nextImages: Record<string, PersistedDraftImageEntry> = {};
     Object.entries(existingPayload.images).forEach(([relativePath, entry]) => {
-      if (isDirectImageChildOfFolder(relativePath, normalizedFolderPath)) {
+      if (isImageInFolderSubtree(relativePath, normalizedFolderPath)) {
         changed = true;
         return;
       }

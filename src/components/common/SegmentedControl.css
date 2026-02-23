@@ -1,4 +1,5 @@
 .segmented-control {
+  position: relative;
   display: flex;
   align-items: stretch;
   gap: 4px;
@@ -14,28 +15,25 @@
 
 .segmented-control-option {
   position: relative;
+  z-index: 1;
   min-height: 30px;
   min-width: 0;
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: var(--text-secondary);
   padding: 0 10px;
   font-size: 0.72rem;
   font-weight: 650;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: color var(--transition-fast);
+  overflow: hidden;
+  isolation: isolate;
 }
 
 .segmented-control-option:disabled {
   opacity: 0.42;
   cursor: not-allowed;
-}
-
-.segmented-control-option:hover:not(:disabled) {
-  color: var(--text-bright);
 }
 
 .segmented-control-option-label {
@@ -50,18 +48,34 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-secondary);
+  transition: color var(--transition-fast);
+}
+
+.segmented-control-option.is-hovered:not(:disabled):not(.is-active) .segmented-control-option-label {
+  color: var(--text-bright);
 }
 
 .segmented-control-active-bg {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
   border-radius: 999px;
   border: 1px solid var(--accent-muted);
   background: var(--accent-dim);
   pointer-events: none;
+  z-index: 0;
 }
 
 .segmented-control-option.is-active {
+  color: inherit;
+}
+
+.segmented-control-option.is-active .segmented-control-option-label {
+  color: var(--accent);
+}
+
+.segmented-control-option.is-active:hover .segmented-control-option-label {
   color: var(--accent);
 }
 
@@ -71,5 +85,13 @@
 }
 
 .segmented-control-option.is-active.is-danger {
+  color: inherit;
+}
+
+.segmented-control-option.is-active.is-danger .segmented-control-option-label {
+  color: #ffd7d7;
+}
+
+.segmented-control-option.is-active.is-danger:hover .segmented-control-option-label {
   color: #ffd7d7;
 }

@@ -20,7 +20,10 @@ import './FolderExplorer.css';
 
 const ALL_FOLDERS_VALUE = '__all__';
 const normalizePath = (value: unknown): string =>
-  String(value || '').replace(/\\/g, '/');
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/+$/, '');
 
 const getDirectParentFolderPath = (relativePath: string): string => {
   const normalized = normalizePath(relativePath);
@@ -52,27 +55,37 @@ const areSetsEqual = (left: Set<string>, right: Set<string>): boolean => {
   return true;
 };
 
-const canonicalizeSelection = (
-  paths: Set<string>,
-  descendantPathMap: Map<string, string[]>,
-): Set<string> => {
-  const normalized = new Set(
+const hasPathPrefix = (value: string, prefix: string): boolean =>
+  value === prefix || value.startsWith(`${prefix}/`);
+
+const hasSelectedAncestor = (path: string, selectedPaths: Set<string>): boolean => {
+  const ancestors = getAncestorPaths(path);
+  return ancestors.some((ancestorPath) => selectedPaths.has(ancestorPath));
+};
+
+const isPathCoveredBySelection = (
+  path: string,
+  selectedPaths: Set<string>,
+): boolean => selectedPaths.has(path) || hasSelectedAncestor(path, selectedPaths);
+
+const canonicalizeSelection = (paths: Set<string>): Set<string> => {
+  const normalizedList = Array.from(
     Array.from(paths)
       .map((path) => normalizePath(path))
       .filter(Boolean),
   );
 
-  Array.from(normalized).forEach((path) => {
-    const descendants = descendantPathMap.get(path) || [path];
-    const isFullySelected = descendants.every((candidatePath) =>
-      normalized.has(candidatePath),
-    );
-    if (!isFullySelected) {
-      normalized.delete(path);
+  normalizedList.sort((a, b) => a.length - b.length);
+
+  const compact = new Set<string>();
+  normalizedList.forEach((path) => {
+    if (hasSelectedAncestor(path, compact)) {
+      return;
     }
+    compact.add(path);
   });
 
-  return normalized;
+  return compact;
 };
 
 type FolderRow = FolderNode & {
@@ -124,7 +137,7 @@ const FolderExplorer = ({
   const images = useStore((state) => state.images);
   const sessionModifiedAt = useStore((state) => state.sessionModifiedAt);
 
-  const clearableFolderPaths = useMemo(() => {
+  const editedFolderPaths = useMemo(() => {
     const next = new Set<string>();
     if (!Array.isArray(images) || images.length === 0) return next;
     if (!(sessionModifiedAt instanceof Map) || sessionModifiedAt.size === 0) {
@@ -136,6 +149,9 @@ const FolderExplorer = ({
       const parentPath = getDirectParentFolderPath(image.relativePath);
       if (!parentPath) return;
       next.add(parentPath);
+      getAncestorPaths(parentPath).forEach((ancestorPath) => {
+        next.add(ancestorPath);
+      });
     });
     return next;
   }, [images, sessionModifiedAt]);
@@ -143,14 +159,16 @@ const FolderExplorer = ({
   const visibleFolders = useMemo(() => {
     const expandablePaths = new Set<string>();
     const rows = folders.map((folder) => {
-      const parentPath = folder.path.includes('/')
-        ? folder.path.substring(0, folder.path.lastIndexOf('/'))
+      const normalizedPath = normalizePath(folder.path);
+      const parentPath = normalizedPath.includes('/')
+        ? normalizedPath.substring(0, normalizedPath.lastIndexOf('/'))
         : '';
       if (parentPath) {
         expandablePaths.add(parentPath);
       }
       return {
         ...folder,
+        path: normalizedPath,
         parentPath,
       };
     });
@@ -187,9 +205,11 @@ const FolderExplorer = ({
   }, [expandedPaths, folders, loadingFolderPaths]);
 
   const descendantPathMap = useMemo(() => {
-    const allFolderPaths = folders
-      .map((folder) => normalizePath(folder.path))
-      .filter(Boolean);
+    const allFolderPaths = Array.from(
+      new Set(
+        folders.map((folder) => normalizePath(folder.path)).filter(Boolean),
+      ),
+    );
     const next = new Map<string, string[]>();
 
     allFolderPaths.forEach((path) => {
@@ -205,8 +225,8 @@ const FolderExplorer = ({
   }, [folders]);
 
   const effectiveSelectedFolderPaths = useMemo(
-    () => canonicalizeSelection(selectedFolderPaths, descendantPathMap),
-    [selectedFolderPaths, descendantPathMap],
+    () => canonicalizeSelection(selectedFolderPaths),
+    [selectedFolderPaths],
   );
 
   useEffect(() => {
@@ -224,7 +244,10 @@ const FolderExplorer = ({
     const descendants = descendantPathMap.get(normalizedPath) || [normalizedPath];
     const selectedCount = descendants.reduce(
       (count, candidatePath) =>
-        count + (effectiveSelectedFolderPaths.has(candidatePath) ? 1 : 0),
+        count +
+        (isPathCoveredBySelection(candidatePath, effectiveSelectedFolderPaths)
+          ? 1
+          : 0),
       0,
     );
     if (selectedCount <= 0) return 'unchecked';
@@ -235,26 +258,34 @@ const FolderExplorer = ({
   const toggleFolderSelection = (path: string) => {
     if (!onSetSelectedFolderPaths) return;
     const normalizedPath = normalizePath(path);
-    const descendants = descendantPathMap.get(normalizedPath) || [normalizedPath];
     const selectionState = getSelectionState(normalizedPath);
     const next = new Set(effectiveSelectedFolderPaths);
 
     if (selectionState === 'checked') {
-      descendants.forEach((candidatePath) => next.delete(candidatePath));
-      getAncestorPaths(normalizedPath).forEach((ancestorPath) =>
-        next.delete(ancestorPath),
-      );
+      Array.from(next).forEach((selectedPath) => {
+        if (hasPathPrefix(selectedPath, normalizedPath)) {
+          next.delete(selectedPath);
+        }
+      });
+      getAncestorPaths(normalizedPath).forEach((ancestorPath) => {
+        next.delete(ancestorPath);
+      });
     } else {
-      descendants.forEach((candidatePath) => next.add(candidatePath));
+      Array.from(next).forEach((selectedPath) => {
+        if (hasPathPrefix(selectedPath, normalizedPath)) {
+          next.delete(selectedPath);
+        }
+      });
+      next.add(normalizedPath);
     }
 
-    onSetSelectedFolderPaths(canonicalizeSelection(next, descendantPathMap));
+    onSetSelectedFolderPaths(canonicalizeSelection(next));
   };
 
   const renderFolderRow = (folder: FolderRow) => {
     const selectionState = getSelectionState(folder.path);
     const canClearDrafts =
-      Boolean(onClearFolderDrafts) && clearableFolderPaths.has(folder.path);
+      Boolean(onClearFolderDrafts) && editedFolderPaths.has(folder.path);
     const canRemoveFolder = folder.depth === 0;
     const hasActionButtons =
       !folderSelectionMode && (canClearDrafts || canRemoveFolder);

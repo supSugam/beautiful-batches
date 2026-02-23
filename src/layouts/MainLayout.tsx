@@ -11,12 +11,14 @@ type ApplyOptions = { includeCaption?: boolean };
 
 type MainLayoutProps = {
   images: GalleryImage[];
+  excludedById: Map<string, boolean>;
   rowHeight: number;
   showAllFooters: boolean;
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
   handleCropChange: (id: string, coords: CropEntry) => void;
   handleDelete: (id: string) => void;
+  handleRestore: (id: string) => void;
   onLoadMoreImages?: () => void;
   inspectorWidth: number;
   setInspectorWidth: (width: number) => void;
@@ -50,11 +52,13 @@ type MainLayoutProps = {
 
 const MainLayout = ({
   images,
+  excludedById,
   rowHeight,
   selectedId,
   setSelectedId,
   handleCropChange,
   handleDelete,
+  handleRestore,
   onLoadMoreImages,
   inspectorWidth,
   setInspectorWidth,
@@ -81,7 +85,9 @@ const MainLayout = ({
   onSetFolderSelectionMode,
   onSetSelectedFolderPaths,
 }: MainLayoutProps) => {
-  const selectedImage = images.find((img) => img.id === selectedId);
+  const navigableImages = images.filter((img) => !excludedById.has(img.id));
+  const selectedImage =
+    navigableImages.find((img) => img.id === selectedId) || null;
 
   return (
     <div className="main-layout">
@@ -109,11 +115,13 @@ const MainLayout = ({
         {images.length > 0 ? (
           <JustifiedGrid
             images={images}
+            excludedById={excludedById}
             targetRowHeight={rowHeight}
             padding={8}
             selectedId={selectedId}
             onSelect={setSelectedId}
             onDelete={handleDelete}
+            onRestore={handleRestore}
             onEndReached={onLoadMoreImages}
           />
         ) : isActiveFolderLoading ? (
@@ -146,25 +154,31 @@ const MainLayout = ({
             width={inspectorWidth}
             onResize={setInspectorWidth}
             onApplyTo={(type: ApplyTargetType, options?: ApplyOptions) => {
-              const idx = images.findIndex((img) => img.id === selectedId);
+              const idx = navigableImages.findIndex(
+                (img) => img.id === selectedId,
+              );
               if (idx < 0) return;
               let targets: string[] = [];
               if (type === 'all') {
-                targets = images
+                targets = navigableImages
                   .filter((img) => img.id !== selectedId)
                   .map((img) => img.id);
               } else if (type === 'rest') {
-                targets = images.slice(idx + 1).map((img) => img.id);
+                targets = navigableImages
+                  .slice(idx + 1)
+                  .map((img) => img.id);
               } else if (type === 'prev') {
-                targets = images.slice(0, idx).map((img) => img.id);
+                targets = navigableImages.slice(0, idx).map((img) => img.id);
               }
               handleApplyCropToImages(selectedId, targets, options);
             }}
             hasNext={
-              images.findIndex((img) => img.id === selectedId) <
-              images.length - 1
+              navigableImages.findIndex((img) => img.id === selectedId) <
+              navigableImages.length - 1
             }
-            hasPrev={images.findIndex((img) => img.id === selectedId) > 0}
+            hasPrev={
+              navigableImages.findIndex((img) => img.id === selectedId) > 0
+            }
           />
         )}
       </AnimatePresence>

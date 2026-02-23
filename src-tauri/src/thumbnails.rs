@@ -50,13 +50,13 @@ pub fn get_or_create_thumbnail(
     let mtime = fs::metadata(image_path)
         .and_then(|m| m.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH);
-    
+
     let mut hasher = DefaultHasher::new();
     image_path.hash(&mut hasher);
     mtime.hash(&mut hasher);
     thumb_size.hash(&mut hasher);
     let hash = hasher.finish();
-    
+
     let thumb_path = cache_dir.join(format!("{:x}.webp", hash));
 
     // If cached version exists, return it.
@@ -74,9 +74,9 @@ pub fn get_or_create_thumbnail(
             return Ok(fallback);
         }
     };
-    
+
     let thumb = img.thumbnail(thumb_size, thumb_size);
-    
+
     // Save to cache as WebP for efficiency.
     let mut buffer = std::io::Cursor::new(Vec::new());
     let bytes = match thumb.write_to(&mut buffer, ImageFormat::WebP) {
@@ -87,7 +87,7 @@ pub fn get_or_create_thumbnail(
             return Ok(fallback);
         }
     };
-    
+
     // Write to disk for next time (ignore errors on write-to-cache, just serve it).
     let _ = fs::write(&thumb_path, &bytes);
 

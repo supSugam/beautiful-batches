@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use image::image_dimensions;
 use crate::helpers::{is_supported_image_path, normalize_path_for_ui};
 use crate::models::{NativeDirectoryChild, NativeRootScan, NativeScannedImage};
+use image::image_dimensions;
 
 /// Collect supported image file paths under `directory`.
 fn collect_image_paths(directory: &Path, collector: &mut Vec<PathBuf>) {
@@ -45,6 +45,32 @@ fn collect_image_paths_direct(directory: &Path, collector: &mut Vec<PathBuf>) {
             collector.push(path);
         }
     }
+}
+
+/// Return true as soon as any supported image file is found under `directory`
+/// (including all descendants).
+fn contains_supported_image_recursive(directory: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return false;
+    };
+
+    for entry_result in entries {
+        let Ok(entry) = entry_result else {
+            continue;
+        };
+        let path = entry.path();
+        if path.is_file() {
+            if is_supported_image_path(&path) {
+                return true;
+            }
+            continue;
+        }
+        if path.is_dir() && contains_supported_image_recursive(&path) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Read file metadata needed by the UI scanner.
@@ -106,8 +132,7 @@ pub fn scan_single_root(root_path: &Path) -> Result<NativeRootScan, String> {
         let relative_tail = file_path
             .strip_prefix(&canonical_root)
             .unwrap_or(file_path.as_path());
-        let relative_path =
-            normalize_path_for_ui(&Path::new(&directory_name).join(relative_tail));
+        let relative_path = normalize_path_for_ui(&Path::new(&directory_name).join(relative_tail));
 
         let absolute_path = normalize_path_for_ui(file_path);
 
@@ -150,9 +175,9 @@ fn sanitize_relative_tail(relative_tail: &str) -> Result<PathBuf, String> {
     Ok(sanitized)
 }
 
-/// List immediate child directories for `root_path/relative_tail` (non-recursive).
-///
-/// This is intentionally lightweight and only returns directory names/paths.
+/// List immediate child directories for `root_path/relative_tail` where each
+/// child is included only if it (or any descendant folder) contains at least
+/// one supported image.
 pub fn list_directory_children(
     root_path: &Path,
     root_name: &str,
@@ -188,6 +213,9 @@ pub fn list_directory_children(
         };
         let path = entry.path();
         if !path.is_dir() {
+            continue;
+        }
+        if !contains_supported_image_recursive(&path) {
             continue;
         }
 
@@ -303,8 +331,7 @@ pub fn scan_folder_by_path(
         let relative_tail = file_path
             .strip_prefix(&canonical_root)
             .unwrap_or(file_path.as_path());
-        let relative_path =
-            normalize_path_for_ui(&Path::new(&directory_name).join(relative_tail));
+        let relative_path = normalize_path_for_ui(&Path::new(&directory_name).join(relative_tail));
         let absolute_path = normalize_path_for_ui(file_path);
 
         let Some((size, last_modified, width, height)) = read_image_metadata(file_path) else {

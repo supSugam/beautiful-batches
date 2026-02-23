@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 // ── Export pipeline input ────────────────────────────────────────────
 
@@ -27,6 +28,13 @@ pub struct CropConfig {
     pub coordinates: Option<StoredCoordinates>,
     pub transforms: Option<TransformConfig>,
     pub output_width: Option<f64>,
+    pub padding: Option<Value>,
+    pub corner_radius: Option<Value>,
+    pub padding_fill_type: Option<String>,
+    pub padding_fill_value: Option<String>,
+    pub padding_image_url: Option<String>,
+    pub image_width: Option<u32>,
+    pub image_height: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -58,6 +66,46 @@ pub struct ProcessBulkExportResult {
     pub file_name: String,
     pub processed_count: usize,
     pub skipped_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecuteExportPlanRequest {
+    pub destination_mode: String,
+    pub base_folder: String,
+    pub destination_name: String,
+    pub conflict_mode: String,
+    pub quality: Option<u8>,
+    pub clear_metadata: Option<bool>,
+    pub include_captions: Option<bool>,
+    #[serde(default)]
+    pub items: Vec<ExecuteExportPlanItem>,
+    #[serde(default)]
+    pub padding_image_assets: HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecuteExportPlanItem {
+    pub image_id: String,
+    pub source_path: String,
+    pub source_name: Option<String>,
+    pub source_data_base64: Option<String>,
+    pub output_path: String,
+    pub caption: Option<String>,
+    pub crop: Option<CropConfig>,
+    pub skip: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecuteExportPlanResult {
+    pub destination_path: String,
+    pub written_count: usize,
+    pub skipped_count: usize,
+    pub caption_written_count: usize,
+    pub failed_count: usize,
+    pub warnings: Vec<String>,
 }
 
 // ── Linked roots persistence ─────────────────────────────────────────
