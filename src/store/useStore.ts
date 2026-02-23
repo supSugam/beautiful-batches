@@ -428,12 +428,16 @@ type PersistedDraftPayload = {
 
 type ApplyCropToImagesOptions = {
   includeCaption?: boolean;
+  includeTransforms?: boolean;
+  includeCropState?: boolean;
+  includeUiTweaks?: boolean;
 };
 
 export interface UseStoreState {
   images: GalleryImage[];
   cropData: Map<string, CropEntry>;
   captionById: Map<string, string>;
+  excludedById: Map<string, boolean>;
   sessionModifiedAt: Map<string, number>;
   cropLayoutVersion: number;
   folderNodes: FolderNode[];
@@ -669,6 +673,7 @@ const useStore = create<UseStoreState>((set, get) => {
     images: [],
     cropData: new Map<string, CropEntry>(),
     captionById: new Map<string, string>(),
+    excludedById: new Map<string, boolean>(),
     sessionModifiedAt: new Map<string, number>(),
     cropLayoutVersion: 0,
     folderNodes: [],
@@ -906,23 +911,20 @@ const useStore = create<UseStoreState>((set, get) => {
     deleteImage: (id) => {
       removeIdsFromMetadataQueue([id]);
       set((state) => {
-        const removedImage = state.images.find((img) => img.id === id);
-        const nextImages = state.images.filter((img) => img.id !== id);
-        const newCropData = new Map<string, CropEntry>(state.cropData);
-        newCropData.delete(id);
-        const nextCaptionById = new Map<string, string>(state.captionById);
-        nextCaptionById.delete(id);
+        const nextExcludedById = new Map<string, boolean>(state.excludedById);
+        nextExcludedById.set(id, true);
+
         const nextSessionModifiedAt = new Map<string, number>(
           state.sessionModifiedAt,
         );
-        nextSessionModifiedAt.delete(id);
-        revokeImageObjectUrl(removedImage);
+        nextSessionModifiedAt.set(id, getNowTs());
 
         return {
-          images: nextImages,
-          folderNodes: buildFolderNodes(nextImages, state.rootNames),
-          cropData: newCropData,
-          captionById: nextCaptionById,
+          excludedById: nextExcludedById,
+          folderNodes: buildFolderNodes(
+            state.images.filter((img) => !nextExcludedById.has(img.id)),
+            state.rootNames,
+          ),
           sessionModifiedAt: nextSessionModifiedAt,
           selectedId: state.selectedId === id ? null : state.selectedId,
         };
@@ -942,6 +944,7 @@ const useStore = create<UseStoreState>((set, get) => {
         rootNames: [],
         cropData: new Map<string, CropEntry>(),
         captionById: new Map<string, string>(),
+        excludedById: new Map<string, boolean>(),
         sessionModifiedAt: new Map<string, number>(),
         selectedId: null,
       });
@@ -1202,33 +1205,56 @@ const useStore = create<UseStoreState>((set, get) => {
           const targetW = Math.max(1, targetBounds.width);
           const targetH = Math.max(1, targetBounds.height);
 
-          const nextEntry = hasSourceCoordinates
-            ? normalizeCropEntryForImage(
-                {
-                  ...sourceData,
-                  transforms,
-                  coordinates: {
-                    left: relLeft * targetW,
-                    top: relTop * targetH,
-                    width: relWidth * targetW,
-                    height: relHeight * targetH,
-                  },
-                  imageWidth: targetImg.naturalWidth,
-                  imageHeight: targetImg.naturalHeight,
-                },
-                targetImg,
-              )
-            : normalizeCropEntryForImage(
-                {
-                  ...sourceData,
-                  transforms,
-                  coordinates: null,
-                  imageWidth: targetImg.naturalWidth,
-                  imageHeight: targetImg.naturalHeight,
-                },
-                targetImg,
-              );
           const previousEntry = nextCropData.get(id);
+
+          const applyTransforms = options?.includeTransforms ?? true;
+          const applyCropState = options?.includeCropState ?? true;
+          const applyUiTweaks = options?.includeUiTweaks ?? true;
+
+          // Start with a blank slate, merging from previous target entry or source entry conditionally
+          let baseTransforms = applyTransforms
+            ? transforms
+            : previousEntry?.transforms || {
+                rotate: 0,
+                flip: { horizontal: false, vertical: false },
+              };
+
+          let mergedEntry: CropEntry = {
+            ...sourceData,
+            transforms: baseTransforms,
+            imageWidth: targetImg.naturalWidth,
+            imageHeight: targetImg.naturalHeight,
+          };
+
+          // Override Crop/Aspect State
+          if (!applyCropState) {
+            mergedEntry.coordinates = previousEntry?.coordinates;
+            mergedEntry.aspect = previousEntry?.aspect;
+            mergedEntry.editorView = previousEntry?.editorView;
+          } else {
+            mergedEntry.coordinates = hasSourceCoordinates
+              ? {
+                  left: relLeft * targetW,
+                  top: relTop * targetH,
+                  width: relWidth * targetW,
+                  height: relHeight * targetH,
+                }
+              : null;
+          }
+
+          // Override UI Tweaks
+          if (!applyUiTweaks) {
+            mergedEntry.padding = previousEntry?.padding;
+            mergedEntry.cornerRadius = previousEntry?.cornerRadius;
+            mergedEntry.paddingMode = previousEntry?.paddingMode;
+            mergedEntry.paddingFillType = previousEntry?.paddingFillType;
+            mergedEntry.paddingFillValue = previousEntry?.paddingFillValue;
+            mergedEntry.paddingImageUrl = previousEntry?.paddingImageUrl;
+            mergedEntry.outputWidth = previousEntry?.outputWidth;
+          }
+
+          const nextEntry = normalizeCropEntryForImage(mergedEntry, targetImg);
+
           nextCropData.set(id, nextEntry);
 
           if (nextCaptionById) {
@@ -1251,7 +1277,9 @@ const useStore = create<UseStoreState>((set, get) => {
             nextSessionModifiedAt.delete(id);
           }
 
-          if (hasGridLayoutAffectingChange(previousEntry, nextEntry, targetImg)) {
+          if (
+            hasGridLayoutAffectingChange(previousEntry, nextEntry, targetImg)
+          ) {
             shouldBumpLayoutVersion = true;
           }
         });

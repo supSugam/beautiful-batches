@@ -460,6 +460,7 @@ export const scanImagesFromFolderPath = async (params: {
   rootPath: string;
   rootName: string;
   folderPath: string;
+  recursive?: boolean;
   offset?: number;
   limit?: number;
 }): Promise<PickImagesFromDirectoryResult> => {
@@ -485,6 +486,7 @@ export const scanImagesFromFolderPath = async (params: {
       rootPath: normalizedRootPath,
       rootName: normalizedRootName,
       relativePath,
+      recursive: Boolean(params.recursive),
       offset: Math.max(0, Math.floor(Number(params.offset ?? 0) || 0)),
       limit: Math.max(0, Math.floor(Number(params.limit ?? 0) || 0)),
     });

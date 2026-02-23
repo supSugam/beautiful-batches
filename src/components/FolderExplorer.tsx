@@ -335,13 +335,6 @@ const FolderExplorer = ({
               <FolderOpen size={13} />
               <span className="folder-item-name">{folder.name}</span>
             </span>
-            <span
-              className={`folder-item-count-pill ${
-                folder.isLoading ? 'is-loading' : ''
-              } ${folder.isLoading || folder.count > 0 ? '' : 'is-hidden'}`}
-            >
-              {folder.isLoading ? '...' : folder.count}
-            </span>
           </span>
         </button>
         {hasActionButtons && (
@@ -454,7 +447,6 @@ const FolderExplorer = ({
             <span className="folder-item-label">
               <ImageIcon size={13} />
               <span className="folder-item-name">All Images</span>
-              <span className="folder-item-count-pill">{totalImageCount}</span>
             </span>
           </button>
 

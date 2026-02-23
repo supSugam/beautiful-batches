@@ -296,6 +296,7 @@ pub async fn scan_folder_by_path_command(
     root_path: String,
     root_name: String,
     relative_path: String,
+    recursive: Option<bool>,
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<crate::models::NativeRootScan, String> {
@@ -309,7 +310,7 @@ pub async fn scan_folder_by_path_command(
             Path::new(&normalized_root),
             root_name.trim(),
             relative_path.trim(),
-            false,
+            recursive.unwrap_or(false),
             offset.unwrap_or(0),
             limit.unwrap_or(0),
         )

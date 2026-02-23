@@ -173,6 +173,7 @@ const getShuffleScore = (value: string, seed: number): number => {
 
 function App() {
   const images = useStore((state) => state.images);
+  const excludedById = useStore((state) => state.excludedById);
   const rowHeight = useStore((state) => state.rowHeight);
   const showAllFooters = useStore((state) => state.showAllFooters);
   const selectedId = useStore((state) => state.selectedId);
@@ -635,28 +636,7 @@ function App() {
     }));
   }, [effectiveRootNames, folderNodes, treeFolderNodes]);
 
-  useEffect(() => {
-    const validFolderPaths = new Set(
-      effectiveFolderNodes
-        .map((folder) => normalizePath(folder.path))
-        .filter(Boolean),
-    );
 
-    setSelectedExportFolderPaths((previous) => {
-      let changed = false;
-      const next = new Set<string>();
-      previous.forEach((path) => {
-        const normalizedPath = normalizePath(path);
-        if (validFolderPaths.has(normalizedPath)) {
-          next.add(normalizedPath);
-          return;
-        }
-        changed = true;
-      });
-      if (!changed && next.size === previous.size) return previous;
-      return next;
-    });
-  }, [effectiveFolderNodes]);
 
   useEffect(() => {
     if (images.length !== 0) return;
@@ -669,21 +649,26 @@ function App() {
   }, [addImages, folderNodes.length, images.length]);
 
   const filteredImages = useMemo(() => {
+    let baseImages = images;
+    if (excludedById.size > 0) {
+      baseImages = images.filter((img) => !excludedById.has(img.id));
+    }
+
     if (activeFolderPath === ALL_FOLDERS_VALUE) {
-      return images.filter((image) => {
+      return baseImages.filter((image) => {
         const relativePath = normalizePath(image.relativePath);
         const parts = relativePath.split('/').filter(Boolean);
         return parts.length <= 2;
       });
     }
     const prefix = `${activeFolderPath}/`;
-    return images.filter((image) => {
+    return baseImages.filter((image) => {
       const relativePath = normalizePath(image.relativePath);
       if (!relativePath.startsWith(prefix)) return false;
       const remainder = relativePath.substring(prefix.length);
       return !remainder.includes('/');
     });
-  }, [activeFolderPath, images]);
+  }, [activeFolderPath, images, excludedById]);
 
   const visibleImages = useMemo(() => {
     const next = filteredImages.map((image, originalIndex) => ({
@@ -760,9 +745,11 @@ function App() {
     const next: GalleryImage[] = [];
     images.forEach((image) => {
       const relativePath = normalizePath(image.relativePath);
-      const belongsToSelectedFolder = selectedPaths.some((folderPath) =>
-        isDirectImageChildOfFolder(relativePath, folderPath),
-      );
+      const belongsToSelectedFolder = selectedPaths.some((folderPath) => {
+        if (!folderPath || folderPath === ALL_FOLDERS_VALUE) return false;
+        if (relativePath === folderPath) return true;
+        return relativePath.startsWith(`${folderPath}/`);
+      });
       if (!belongsToSelectedFolder || seen.has(image.id)) return;
       seen.add(image.id);
       next.push(image);
@@ -789,17 +776,34 @@ function App() {
     setSelectedId(visibleImages[index - 1].id);
   }, [selectedId, setSelectedId, visibleImages]);
 
+  const handleExcludeSelected = useCallback(
+    (targetId: string) => {
+      if (targetId === selectedId) {
+        const index = visibleImages.findIndex((image) => image.id === targetId);
+        if (index >= 0) {
+          if (index < visibleImages.length - 1) {
+            setSelectedId(visibleImages[index + 1].id);
+          } else if (index > 0) {
+            setSelectedId(visibleImages[index - 1].id);
+          } else {
+            setSelectedId(null);
+          }
+        }
+      }
+      useStore.getState().deleteImage(targetId);
+    },
+    [selectedId, setSelectedId, visibleImages],
+  );
+
   const loadImagesForFolderPath = useCallback(
     async (
       folderPath: string,
-      options: { append?: boolean } = {},
+      options: { append?: boolean; recursive?: boolean } = {},
     ) => {
       const append = Boolean(options.append);
+      const recursive = Boolean(options.recursive);
       const normalizedFolderPath = normalizePath(folderPath);
-      if (
-        !normalizedFolderPath ||
-        normalizedFolderPath === ALL_FOLDERS_VALUE
-      ) {
+      if (!normalizedFolderPath || normalizedFolderPath === ALL_FOLDERS_VALUE) {
         return;
       }
 
@@ -834,12 +838,15 @@ function App() {
           rootPath: root.rootPath,
           rootName: root.rootName,
           folderPath: normalizedFolderPath,
+          recursive,
           offset,
           limit,
         });
         await addImages(scanResult.images, [root.rootName]);
         loadedFolderScanKeysRef.current.add(scanKey);
-        const nextOffset = offset + (Array.isArray(scanResult.images) ? scanResult.images.length : 0);
+        const nextOffset =
+          offset +
+          (Array.isArray(scanResult.images) ? scanResult.images.length : 0);
         folderScanNextOffsetRef.current.set(scanKey, nextOffset);
         const hasMore = Array.isArray(scanResult.images)
           ? scanResult.images.length >= limit
@@ -910,20 +917,7 @@ function App() {
     });
   }, [expandedPaths, loadTreeChildrenForPath]);
 
-  useEffect(() => {
-    if (activeFolderPath === ALL_FOLDERS_VALUE) return;
-    const pathExists = effectiveFolderNodes.some(
-      (folder) => folder.path === activeFolderPath,
-    );
-    if (!pathExists) {
-      const activeRootPath =
-        normalizePath(activeFolderPath).split('/').filter(Boolean)[0] || '';
-      if (activeRootPath && effectiveRootNames.includes(activeRootPath)) {
-        return;
-      }
-      setActiveFolderPath(ALL_FOLDERS_VALUE);
-    }
-  }, [activeFolderPath, effectiveFolderNodes, effectiveRootNames]);
+
 
   useEffect(() => {
     persistStorageValue(ACTIVE_FOLDER_STORAGE_KEY, activeFolderPath);
@@ -957,6 +951,7 @@ function App() {
           images: state.images,
           cropData: state.cropData,
           captionById: state.captionById,
+          excludedById: state.excludedById,
           sessionModifiedAt: state.sessionModifiedAt,
         });
       }, 450);
@@ -982,6 +977,7 @@ function App() {
         images: state.images,
         cropData: state.cropData,
         captionById: state.captionById,
+        excludedById: state.excludedById,
         sessionModifiedAt: state.sessionModifiedAt,
       });
     };
@@ -1578,7 +1574,7 @@ function App() {
         selectedId={selectedId}
         setSelectedId={setSelectedId}
         handleCropChange={setCropChange}
-        handleDelete={(id) => useStore.getState().deleteImage(id)}
+        handleDelete={handleExcludeSelected}
         inspectorWidth={inspectorWidth}
         setInspectorWidth={setInspectorWidth}
         explorerWidth={explorerWidth}
@@ -1603,15 +1599,21 @@ function App() {
         folderSelectionMode={exportFolderSelectionMode}
         selectedFolderPaths={selectedExportFolderPaths}
         onSetFolderSelectionMode={setExportFolderSelectionMode}
-        onSetSelectedFolderPaths={(paths) =>
-          setSelectedExportFolderPaths(
-            new Set(
-              Array.from(paths)
-                .map((path) => normalizePath(path))
-                .filter(Boolean),
-            ),
-          )
-        }
+        onSetSelectedFolderPaths={(paths) => {
+          const nextSet = new Set(
+            Array.from(paths)
+              .map((path) => normalizePath(path))
+              .filter(Boolean),
+          );
+
+          nextSet.forEach((path) => {
+            if (!selectedExportFolderPaths.has(path)) {
+              void loadTreeChildrenForPath(path);
+            }
+          });
+
+          setSelectedExportFolderPaths(nextSet);
+        }}
       />
 
       <input
@@ -1629,8 +1631,9 @@ function App() {
         <ExportPlanModal
           images={images}
           currentFolderImages={visibleImages}
-          selectedFolderImages={selectedFolderScopeImages}
+          resolveRootForFolderPath={resolveRootForFolderPath}
           selectedFolderPaths={selectedExportFolderPaths}
+          excludedById={excludedById}
           folderNodes={effectiveFolderNodes}
           selectedId={selectedId}
           activeFolderLabel={activeFolderLabel}

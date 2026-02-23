@@ -165,6 +165,7 @@ export interface DirectoryRoot {
 export interface ResolvedDraftsById {
   cropEntriesById: Record<string, CropEntry>;
   captionsById: Record<string, string>;
+  excludedById: Record<string, boolean>;
   modifiedAtById: Record<string, number>;
   restoredCount: number;
 }

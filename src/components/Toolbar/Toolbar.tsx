@@ -204,9 +204,13 @@ const Toolbar = ({
       data-tauri-drag-region
       className="toolbar"
       onPointerDown={(e) => {
-        // Only drag if left clicking directly on the header background/safe areas,
-        // not on inputs, buttons, or scrollbars.
-        if (e.button === 0 && (e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).tagName !== 'INPUT') {
+        const target = e.target as HTMLElement;
+        if (
+          e.button === 0 &&
+          !target.closest('button') &&
+          !target.closest('input') &&
+          !target.closest('.toolbar-sort-wrap')
+        ) {
           getCurrentWindow().startDragging();
         }
       }}

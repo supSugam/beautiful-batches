@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   Sparkles,
   X,
+  Loader2,
 } from 'lucide-react';
 import type {
   CropEntry,
@@ -22,6 +23,7 @@ import type {
   FolderNode,
   GalleryImage,
 } from '../../types/app';
+import { scanImagesFromFolderPath } from '../../utils/directoryPicker';
 import SegmentedControl from '../common/SegmentedControl';
 import TriStateCheckbox from '../common/TriStateCheckbox';
 import './ExportPlanModal.css';
@@ -48,8 +50,11 @@ type OutputRow = {
 type ExportPlanModalProps = {
   images: GalleryImage[];
   currentFolderImages: GalleryImage[];
-  selectedFolderImages: GalleryImage[];
   selectedFolderPaths: Set<string>;
+  excludedById: Map<string, boolean>;
+  resolveRootForFolderPath: (
+    folderPath: string,
+  ) => { root: { rootName: string; rootPath: string } } | null;
   folderNodes: FolderNode[];
   selectedId: string | null;
   activeFolderLabel: string;
@@ -270,22 +275,95 @@ interface TreeNode {
   name: string;
   isDir: boolean;
   children: Map<string, TreeNode>;
+  imageCount: number;
+  captionCount: number;
+  firstImageName: string | null;
+  firstCaptionName: string | null;
 }
 
+const TreeSvgConnector = ({ isLast }: { isLast: boolean }) => (
+  <svg
+    className="export-plan-tree-svg-connector"
+    xmlns="http://www.w3.org/2000/svg"
+    height="100%"
+  >
+    {/* 
+      1. Branch path:
+         Drops from the exact bottom edge of the parent icon (Y=-8).
+         Curves to reach exactly the vertical middle of the 30px row (Y=15).
+         Stops at the exact left edge of the visible child icon (X=29).
+    */}
+    <path
+      d="M 12 -8 L 12 7 A 8 8 0 0 0 20 15 L 29 15"
+      stroke="currentColor"
+      strokeWidth="1"
+      fill="none"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+
+    {/* 
+      2. Vertical Spine:
+         Draws a continuous solid line starting from Y=-8 (to seamlessly overlap)
+         down to 100% height of this container, feeding directly into the NEXT sibling's Y=0.
+    */}
+    {!isLast && (
+      <line
+        x1="12"
+        y1="-8"
+        x2="12"
+        y2="100%"
+        stroke="currentColor"
+        strokeWidth="1"
+      />
+    )}
+  </svg>
+);
+
 const buildTree = (paths: string[]): TreeNode => {
-  const root: TreeNode = { name: '', isDir: true, children: new Map() };
+  const root: TreeNode = {
+    name: '',
+    isDir: true,
+    children: new Map(),
+    imageCount: 0,
+    captionCount: 0,
+    firstImageName: null,
+    firstCaptionName: null,
+  };
+  
   paths.forEach((path) => {
     const parts = path.split('/').filter(Boolean);
     let current = root;
+
     parts.forEach((part, index) => {
+      const isLastPart = index === parts.length - 1;
+
       if (!current.children.has(part)) {
         current.children.set(part, {
           name: part,
-          isDir: index < parts.length - 1,
+          isDir: !isLastPart,
           children: new Map(),
+          imageCount: 0,
+          captionCount: 0,
+          firstImageName: null,
+          firstCaptionName: null,
         });
       }
-      current = current.children.get(part)!;
+
+      const nextNode = current.children.get(part)!;
+
+      // If it's the file name part, track its stats on the parent folder
+      if (isLastPart) {
+        if (part.toLowerCase().endsWith('.txt')) {
+          current.captionCount++;
+          if (!current.firstCaptionName) current.firstCaptionName = part;
+        } else {
+          current.imageCount++;
+          if (!current.firstImageName) current.firstImageName = part;
+        }
+      }
+
+      current = nextNode;
     });
   });
   return root;
@@ -306,6 +384,7 @@ const TreeFolder = ({
 
   return (
     <div className={`export-plan-tree-node ${isLastItem ? 'is-last' : ''}`}>
+      <TreeSvgConnector isLast={isLastItem} />
       <div className="export-plan-tree-row">
         <span className="export-plan-tree-icon-wrapper">
           <FolderOpen size={14} className="export-plan-tree-folder-icon" />
@@ -315,24 +394,53 @@ const TreeFolder = ({
         </span>
       </div>
       <div className="export-plan-tree-children">
-        {sortedChildren.map((child, index) => {
-          const isLast = index === sortedChildren.length - 1;
-          return child.isDir ? (
-            <TreeFolder key={child.name} node={child} isLastItem={isLast} />
-          ) : (
-            <div
-              key={child.name}
-              className={`export-plan-tree-row export-plan-tree-file ${isLast ? 'is-last' : ''}`}
-            >
-              <span className="export-plan-tree-icon-wrapper file-wrapper">
-                <FileImage size={13} className="export-plan-tree-file-icon" />
+        {sortedChildren
+          .filter((c) => c.isDir)
+          .map((child, index) => {
+            const isLast =
+              index === sortedChildren.filter((c) => c.isDir).length - 1 &&
+              node.imageCount === 0 &&
+              node.captionCount === 0;
+            return (
+              <TreeFolder key={child.name} node={child} isLastItem={isLast} />
+            );
+          })}
+
+        {node.firstImageName && (
+          <div
+            className={`export-plan-tree-row export-plan-tree-file ${node.captionCount === 0 ? 'is-last' : ''}`}
+          >
+            <TreeSvgConnector isLast={node.captionCount === 0} />
+            <span className="export-plan-tree-icon-wrapper file-wrapper">
+              <FileImage size={13} className="export-plan-tree-file-icon" />
+            </span>
+            <span className="export-plan-tree-name">
+              {renderTruncatedMiddle(node.firstImageName)}
+            </span>
+            {node.imageCount > 1 && (
+              <span className="export-plan-tree-summary-tag">
+                + {node.imageCount - 1} images
               </span>
-              <span className="export-plan-tree-name">
-                {renderTruncatedMiddle(child.name)}
+            )}
+          </div>
+        )}
+
+        {node.firstCaptionName && (
+          <div className="export-plan-tree-row export-plan-tree-file is-last">
+            <TreeSvgConnector isLast={true} />
+            <span className="export-plan-tree-icon-wrapper file-wrapper">
+              <FileText size={13} className="export-plan-tree-file-icon" />
+            </span>
+            <span className="export-plan-tree-name">
+              {renderTruncatedMiddle(node.firstCaptionName)}
+            </span>
+            {node.captionCount > 1 && (
+              <span className="export-plan-tree-summary-tag">
+                + {node.captionCount - 1} captions
               </span>
-            </div>
-          );
-        })}
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -355,35 +463,61 @@ const OutputTreeDisplay = ({
   return (
     <div className="export-plan-tree-wrapper">
       <div className="export-plan-tree-base-row">
-        <HardDriveDownload size={15} style={{ color: 'var(--accent)' }} />
+        <span className="export-plan-tree-icon-wrapper">
+          <HardDriveDownload size={15} style={{ color: 'var(--accent)' }} />
+        </span>
         <span className="export-plan-tree-name root-name">
           {renderTruncatedMiddle(baseName)}
         </span>
       </div>
       <div className="export-plan-tree-children root-children">
-        {sortedRootChildren.map((child, index) => {
-          const isLast = index === sortedRootChildren.length - 1;
-          return child.isDir ? (
-            <TreeFolder
-              key={child.name}
-              node={child}
-              defaultOpen={true}
-              isLastItem={isLast}
-            />
-          ) : (
-            <div
-              key={child.name}
-              className={`export-plan-tree-row export-plan-tree-file ${isLast ? 'is-last' : ''}`}
-            >
-              <span className="export-plan-tree-icon-wrapper file-wrapper">
-                <FileImage size={13} className="export-plan-tree-file-icon" />
+        {sortedRootChildren
+          .filter((c) => c.isDir)
+          .map((child, index) => {
+            const isLast =
+              index === sortedRootChildren.filter((c) => c.isDir).length - 1 &&
+              tree.imageCount === 0 &&
+              tree.captionCount === 0;
+            return (
+              <TreeFolder key={child.name} node={child} isLastItem={isLast} />
+            );
+          })}
+
+        {tree.firstImageName && (
+          <div
+            className={`export-plan-tree-row export-plan-tree-file ${tree.captionCount === 0 ? 'is-last' : ''}`}
+          >
+            <TreeSvgConnector isLast={tree.captionCount === 0} />
+            <span className="export-plan-tree-icon-wrapper file-wrapper">
+              <FileImage size={13} className="export-plan-tree-file-icon" />
+            </span>
+            <span className="export-plan-tree-name">
+              {renderTruncatedMiddle(tree.firstImageName)}
+            </span>
+            {tree.imageCount > 1 && (
+              <span className="export-plan-tree-summary-tag">
+                + {tree.imageCount - 1} images
               </span>
-              <span className="export-plan-tree-name">
-                {renderTruncatedMiddle(child.name)}
+            )}
+          </div>
+        )}
+
+        {tree.firstCaptionName && (
+          <div className="export-plan-tree-row export-plan-tree-file is-last">
+            <TreeSvgConnector isLast={true} />
+            <span className="export-plan-tree-icon-wrapper file-wrapper">
+              <FileText size={13} className="export-plan-tree-file-icon" />
+            </span>
+            <span className="export-plan-tree-name">
+              {renderTruncatedMiddle(tree.firstCaptionName)}
+            </span>
+            {tree.captionCount > 1 && (
+              <span className="export-plan-tree-summary-tag">
+                + {tree.captionCount - 1} captions
               </span>
-            </div>
-          );
-        })}
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -392,8 +526,9 @@ const OutputTreeDisplay = ({
 const ExportPlanModal = ({
   images,
   currentFolderImages,
-  selectedFolderImages,
   selectedFolderPaths,
+  excludedById,
+  resolveRootForFolderPath,
   folderNodes,
   selectedId,
   activeFolderLabel,
@@ -416,7 +551,14 @@ const ExportPlanModal = ({
     if (selectedFolderPaths.size > 0) return 'selected_folders';
     return 'current_folder';
   });
-  const [destinationMode, setDestinationMode] = useState<DestinationMode>('folder');
+
+  const [isScanning, setIsScanning] = useState(false);
+  const [scannedSelectedImages, setScannedSelectedImages] = useState<
+    GalleryImage[]
+  >([]);
+
+  const [destinationMode, setDestinationMode] =
+    useState<DestinationMode>('folder');
   const [destinationName, setDestinationName] = useState(() => {
     const safeFolderLabel = sanitizeFileSegment(activeFolderLabel || 'Images');
     return `${safeFolderLabel}-Export-{date}`;
@@ -426,6 +568,7 @@ const ExportPlanModal = ({
   const [structureMode, setStructureMode] = useState<StructureMode>('preserve');
   const [conflictMode, setConflictMode] = useState<ConflictMode>('auto_rename');
   const [exportEditedOnly, setExportEditedOnly] = useState(false);
+  const [includeCaptions, setIncludeCaptions] = useState(true);
   const [clearMetadata, setClearMetadata] = useState(false);
   const [exportFormat, setExportFormat] = useState<'original' | ExportFormat>(
     'original',
@@ -453,7 +596,10 @@ const ExportPlanModal = ({
   const selectedFolderLabels = useMemo(() => {
     return selectedFolderPathList.map((path) => ({
       path,
-      label: folderNameByPath.get(path) || path.split('/').filter(Boolean).pop() || path,
+      label:
+        folderNameByPath.get(path) ||
+        path.split('/').filter(Boolean).pop() ||
+        path,
     }));
   }, [folderNameByPath, selectedFolderPathList]);
 
@@ -474,9 +620,76 @@ const ExportPlanModal = ({
     return firstSegment || firstPath;
   }, [selectedFolderPathList]);
 
+  useEffect(() => {
+    if (scope !== 'selected_folders') return;
+    if (selectedFolderPathList.length === 0) {
+      setScannedSelectedImages([]);
+      return;
+    }
+
+    let isCancelled = false;
+    const fetchSelectedImages = async () => {
+      setIsScanning(true);
+      try {
+        const rootPath = folderNodes.find((n) => n.depth === 0)?.path || ''; // Fallback
+        const allScanned: GalleryImage[] = [];
+        const seenIds = new Set<string>();
+
+        const scanPromises = selectedFolderPathList.map(async (folderPath) => {
+          const resolved = resolveRootForFolderPath(folderPath);
+          if (!resolved) return [];
+
+          const result = await scanImagesFromFolderPath({
+            rootPath: resolved.root.rootPath,
+            rootName: resolved.root.rootName,
+            folderPath,
+            recursive: true,
+          });
+
+          return result.images;
+        });
+
+        const results = await Promise.all(scanPromises);
+        if (isCancelled) return;
+
+        results.forEach((folderImages: any[]) => {
+          folderImages.forEach((image: any) => {
+            if (!seenIds.has(image.id)) {
+              seenIds.add(image.id);
+
+              if (!excludedById.has(image.id)) {
+                // We convert NativeScannedImage into a lightweight GalleryImage mock if necessary,
+                // but scanImagesFromFolderPath returns GalleryImage[]
+                allScanned.push(image as unknown as GalleryImage);
+              }
+            }
+          });
+        });
+
+        if (!isCancelled) {
+          setScannedSelectedImages(allScanned);
+        }
+      } catch (error) {
+        console.error('Failed to scan selected folders for export:', error);
+      } finally {
+        if (!isCancelled) {
+          setIsScanning(false);
+        }
+      }
+    };
+
+    void fetchSelectedImages();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [scope, selectedFolderPathList, folderNodes]);
+
   const suggestedBaseFolder = useMemo(() => {
-    if (scope === 'selected_folders') return selectedFoldersRoot || activeFolderPathOnDisk || '';
-    if (scope === 'current_image') return selectedImageFolderPath || activeFolderPathOnDisk || '';
+    if (scope === 'selected_folders')
+      return selectedFoldersRoot || activeFolderPathOnDisk || '';
+    if (scope === 'current_image')
+      return selectedImageFolderPath || activeFolderPathOnDisk || '';
     return activeFolderPathOnDisk || selectedImageFolderPath || '';
   }, [
     scope,
@@ -533,12 +746,12 @@ const ExportPlanModal = ({
   }, [onClose]);
 
   const scopeImages = useMemo(() => {
-    if (scope === 'selected_folders') return selectedFolderImages;
+    if (scope === 'selected_folders') return scannedSelectedImages;
     if (scope === 'current_folder') return currentFolderImages;
     if (!selectedId) return [];
     const selectedImage = images.find((image) => image.id === selectedId);
     return selectedImage ? [selectedImage] : [];
-  }, [currentFolderImages, images, scope, selectedFolderImages, selectedId]);
+  }, [currentFolderImages, images, scope, scannedSelectedImages, selectedId]);
 
   const analyzedScope = useMemo(() => {
     return scopeImages.map((image) => {
@@ -567,12 +780,13 @@ const ExportPlanModal = ({
     [analyzedScope, exportEditedOnly],
   );
 
-
-
   const resolvedFolderName = useMemo(() => {
     const resolvedTemplate = String(destinationName || '')
       .replace(/\{date\}/g, getDateToken())
-      .replace(/\{folder\}/g, sanitizeFileSegment(activeFolderLabel || 'Images'))
+      .replace(
+        /\{folder\}/g,
+        sanitizeFileSegment(activeFolderLabel || 'Images'),
+      )
       .trim();
     return sanitizeFileSegment(resolvedTemplate || 'Export');
   }, [activeFolderLabel, destinationName]);
@@ -621,7 +835,7 @@ const ExportPlanModal = ({
         outputWidth: entry.dims.width,
         outputHeight: entry.dims.height,
         isEdited: entry.isEdited,
-        hasCaption: entry.caption.trim().length > 0,
+        hasCaption: includeCaptions && entry.caption.trim().length > 0,
         skipped: false,
         collision: false,
       };
@@ -687,7 +901,8 @@ const ExportPlanModal = ({
     [analyzedScope],
   );
   const captionCount = useMemo(
-    () => analyzedScope.filter((entry) => entry.caption.trim().length > 0).length,
+    () =>
+      analyzedScope.filter((entry) => entry.caption.trim().length > 0).length,
     [analyzedScope],
   );
   const mixedResize = useMemo(() => {
@@ -707,7 +922,15 @@ const ExportPlanModal = ({
     () => outputRows.filter((row) => row.skipped).length,
     [outputRows],
   );
-  const finalWriteCount = outputRows.length - skippedCount;
+
+  const totalPlannedCaptions = useMemo(
+    () => outputRows.filter((row) => row.hasCaption).length,
+    [outputRows],
+  );
+
+  const totalBaseCount = outputRows.length + totalPlannedCaptions;
+  const totalSkippedCount = skippedCount; // Captions are only skipped if the image is skipped?
+  const finalWriteCount = totalBaseCount - totalSkippedCount;
 
   const validationErrors = useMemo(() => {
     const errors: string[] = [];
@@ -775,7 +998,13 @@ const ExportPlanModal = ({
       warnings.push('Only edited images are included in this export scope.');
     }
     return warnings;
-  }, [collisionCount, conflictMode, exportEditedOnly, mixedResize, skippedCount]);
+  }, [
+    collisionCount,
+    conflictMode,
+    exportEditedOnly,
+    mixedResize,
+    skippedCount,
+  ]);
 
   const statusTone = validationErrors.length
     ? 'blocked'
@@ -1164,11 +1393,17 @@ const ExportPlanModal = ({
               </AnimatePresence>
 
               <div className="export-plan-tree-section">
-                <h4 className="export-plan-tree-title">
-                  Output Architecture Preview
-                </h4>
                 <OutputTreeDisplay
-                  paths={outputRows.map((r) => r.outputPath)}
+                  paths={outputRows.flatMap((r) => {
+                    const paths = [r.outputPath];
+                    if (r.hasCaption) {
+                      // Generate the .txt sidecar path by replacing the extension
+                      const txtPath =
+                        r.outputPath.replace(/\.[^/.]+$/, '') + '.txt';
+                      paths.push(txtPath);
+                    }
+                    return paths;
+                  })}
                   baseName={resolvedFolderName || 'Export'}
                 />
               </div>
@@ -1198,6 +1433,18 @@ const ExportPlanModal = ({
                 Clear EXIF and hidden metadata
               </label>
 
+              <label
+                className="export-plan-inline-checkbox export-plan-inline-checkbox--control"
+                style={{ marginTop: 8 }}
+              >
+                <TriStateCheckbox
+                  state={includeCaptions ? 'checked' : 'unchecked'}
+                  onToggle={setIncludeCaptions}
+                  ariaLabel="Include sidecar .txt files for image captions"
+                />
+                Include sidecar captions (.txt)
+              </label>
+
               <label className="export-plan-field" style={{ marginTop: 12 }}>
                 <span>Format Conversion</span>
                 <SegmentedControl<'original' | ExportFormat>
@@ -1222,9 +1469,9 @@ const ExportPlanModal = ({
                       <strong>{resizeCount}</strong> resized
                     </span>
                   )}
-                  {captionCount > 0 && (
+                  {totalPlannedCaptions > 0 && (
                     <span className="export-plan-preflight-meta-item">
-                      <strong>{captionCount}</strong> captions included
+                      <strong>{totalPlannedCaptions}</strong> captions included
                     </span>
                   )}
                 </div>
@@ -1308,8 +1555,8 @@ const ExportPlanModal = ({
                 <p>Preflight checks look good.</p>
               )}
               <small>
-                Planned writes: {finalWriteCount} / {outputRows.length}
-                {skippedCount > 0 ? `, skipped: ${skippedCount}` : ''}
+                Planned writes: {finalWriteCount} / {totalBaseCount}
+                {totalSkippedCount > 0 ? `, skipped: ${totalSkippedCount}` : ''}
               </small>
             </div>
           </div>

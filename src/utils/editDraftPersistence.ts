@@ -15,6 +15,7 @@ type PersistedDraftImageEntry = {
   crop: CropEntry | null;
   caption: string;
   hasCaptionOverride: boolean;
+  excluded?: boolean;
   sourceLastModified: number;
   sourceSize: number;
   modifiedAt: number;
@@ -33,6 +34,7 @@ type BuildDraftPayloadArgs = {
   images: GalleryImage[];
   cropData: Map<string, CropEntry>;
   captionById: Map<string, string>;
+  excludedById: Map<string, boolean>;
   sessionModifiedAt: Map<string, number>;
 };
 
@@ -184,16 +186,18 @@ const normalizePersistedPayload = (
     const caption = typeof rawEntry.caption === 'string' ? rawEntry.caption : '';
     const hasCaptionOverride =
       rawEntry.hasCaptionOverride === true || caption.trim().length > 0;
+    const excluded = rawEntry.excluded === true;
     const sourceLastModified = Number(rawEntry.sourceLastModified || 0) || 0;
     const sourceSize = Number(rawEntry.sourceSize || 0) || 0;
     const modifiedAt = Number(rawEntry.modifiedAt || 0) || 0;
 
-    if (!crop && !hasCaptionOverride) return;
+    if (!crop && !hasCaptionOverride && !excluded) return;
 
     nextImages[normalizedPath] = {
       crop,
       caption,
       hasCaptionOverride,
+      excluded,
       sourceLastModified,
       sourceSize,
       modifiedAt,
@@ -231,6 +235,7 @@ const areEntriesEqual = (
   if (!a) return false;
   if (a.caption !== b.caption) return false;
   if (a.hasCaptionOverride !== b.hasCaptionOverride) return false;
+  if (Boolean(a.excluded) !== Boolean(b.excluded)) return false;
   if (Number(a.sourceLastModified || 0) !== Number(b.sourceLastModified || 0)) {
     return false;
   }
@@ -251,11 +256,13 @@ export const persistFolderDrafts = async ({
   images,
   cropData,
   captionById,
+  excludedById,
   sessionModifiedAt,
 }: BuildDraftPayloadArgs): Promise<void> => {
   if (!Array.isArray(images) || images.length === 0) return;
   if (!(cropData instanceof Map)) return;
   if (!(captionById instanceof Map)) return;
+  if (!(excludedById instanceof Map)) return;
   if (!(sessionModifiedAt instanceof Map)) return;
 
   const loadedImagesByFolder = groupImagesByFolder(images);
@@ -269,7 +276,10 @@ export const persistFolderDrafts = async ({
 
     for (const [folderPath, folderImages] of loadedImagesByFolder.entries()) {
       const existingRaw = await loadFolderDraft(db, folderPath);
-      const existingPayload = normalizePersistedPayload(folderPath, existingRaw);
+      const existingPayload = normalizePersistedPayload(
+        folderPath,
+        existingRaw,
+      );
       const nextImages = {
         ...(existingPayload?.images || {}),
       } as Record<string, PersistedDraftImageEntry>;
@@ -285,9 +295,10 @@ export const persistFolderDrafts = async ({
         const caption = hasCaptionOverride
           ? String(captionById.get(image.id) ?? '')
           : '';
+        const isExcluded = excludedById.has(image.id);
         const isModified = sessionModifiedAt.has(image.id);
         const safeCrop = safeClone(cropData.get(image.id));
-        const hasDraft = isModified || hasCaptionOverride;
+        const hasDraft = isModified || hasCaptionOverride || isExcluded;
 
         if (!hasDraft) {
           if (nextImages[relativePath]) {
@@ -297,7 +308,7 @@ export const persistFolderDrafts = async ({
           return;
         }
 
-        if (!safeCrop && !hasCaptionOverride) {
+        if (!safeCrop && !hasCaptionOverride && !isExcluded) {
           if (nextImages[relativePath]) {
             delete nextImages[relativePath];
             didChange = true;
@@ -309,6 +320,7 @@ export const persistFolderDrafts = async ({
           crop: safeCrop,
           caption,
           hasCaptionOverride,
+          excluded: isExcluded,
           sourceLastModified: Number(image?.sourceLastModified || 0) || 0,
           sourceSize: Number(image?.sourceSize || 0) || 0,
           modifiedAt: Number(sessionModifiedAt.get(image.id) || 0) || now,
@@ -559,6 +571,7 @@ export const resolveDraftsForImages = ({
 }): ResolvedDraftsById => {
   const cropEntriesById: Record<string, CropEntry> = {};
   const captionsById: Record<string, string> = {};
+  const excludedById: Record<string, boolean> = {};
   const modifiedAtById: Record<string, number> = {};
   let restoredCount = 0;
 
@@ -583,6 +596,9 @@ export const resolveDraftsForImages = ({
     if (entry.hasCaptionOverride && typeof entry.caption === 'string') {
       captionsById[image.id] = entry.caption;
     }
+    if (entry.excluded) {
+      excludedById[image.id] = true;
+    }
     modifiedAtById[image.id] =
       Number(entry.modifiedAt || 0) ||
       Number(payload.updatedAt || 0) ||
@@ -592,6 +608,7 @@ export const resolveDraftsForImages = ({
   return {
     cropEntriesById,
     captionsById,
+    excludedById,
     modifiedAtById,
     restoredCount,
   };
