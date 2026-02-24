@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/supSugam/beautiful-batches/compare/v0.2.0...v0.3.0) (2026-02-24)
+
+
+### Features
+
+* add quick edit image loading functionality and enhance installer scripts ([ff52ff9](https://github.com/supSugam/beautiful-batches/commit/ff52ff993aaccb70aabd902689b9227c624b4fa4))
+* enhance release workflow with additional platform bundles and dependencies ([363ad67](https://github.com/supSugam/beautiful-batches/commit/363ad67d33f616a7107888d885e7f91d763e5da7))
+
 ## [0.2.0](https://github.com/supSugam/beautiful-batches/compare/v0.1.0...v0.2.0) (2026-02-24)
 
 
