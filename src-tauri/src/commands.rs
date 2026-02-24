@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 use rfd::FileDialog;
 use tauri::AppHandle;
@@ -16,6 +17,28 @@ use crate::scanner::{
 use crate::storage;
 
 const PICK_SCAN_PREVIEW_LIMIT: usize = 240;
+static PENDING_QUICK_EDIT_PATHS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+
+fn pending_quick_edit_paths() -> &'static Mutex<Vec<PathBuf>> {
+    PENDING_QUICK_EDIT_PATHS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub fn enqueue_quick_edit_launch_paths(paths: Vec<PathBuf>) {
+    if paths.is_empty() {
+        return;
+    }
+    if let Ok(mut pending) = pending_quick_edit_paths().lock() {
+        pending.extend(paths);
+    }
+}
+
+fn take_next_quick_edit_launch_path() -> Option<PathBuf> {
+    pending_quick_edit_paths()
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.pop())
+}
 
 fn spawn_detached(command: &str, args: &[&str]) -> Result<(), String> {
     let mut cmd = Command::new(command);
@@ -47,6 +70,17 @@ pub async fn load_quick_edit_launch_image() -> Result<Option<NativeRootScan>, St
                 continue;
             }
             if let Ok(scan) = scan_single_image_path(&candidate_path, Some("Quick Edit")) {
+                return Ok(Some(scan));
+            }
+        }
+        while let Some(pending_path) = take_next_quick_edit_launch_path() {
+            if !pending_path.exists() || !pending_path.is_file() {
+                continue;
+            }
+            if !is_supported_image_path(&pending_path) {
+                continue;
+            }
+            if let Ok(scan) = scan_single_image_path(&pending_path, Some("Quick Edit")) {
                 return Ok(Some(scan));
             }
         }

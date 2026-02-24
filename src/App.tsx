@@ -6,6 +6,7 @@ import React, {
   useState,
 } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   ACCEPTED_IMAGE_TYPES,
@@ -199,6 +200,7 @@ function App() {
   const folderNodes = useStore((state) => state.folderNodes);
   const rootNames = useStore((state) => state.rootNames);
   const addImages = useStore((state) => state.addImages);
+  const clearImages = useStore((state) => state.clearImages);
   const expandedPaths = useStore((state) => state.expandedPaths);
   const toggleExpandedPath = useStore((state) => state.toggleExpandedPath);
   const setExpandedPaths = useStore((state) => state.setExpandedPaths);
@@ -333,6 +335,41 @@ function App() {
     pendingRowHeightRef.current = rowHeight;
   }, [rowHeight]);
 
+  const activateQuickEditMode = useCallback(
+    async (launchImages: Awaited<ReturnType<typeof loadQuickEditLaunchImages>>) => {
+      if (!Array.isArray(launchImages) || launchImages.length === 0) return;
+
+      setQuickEditMode(true);
+      setLaunchContextResolved(true);
+      setStartupRootsResolved(true);
+      setActiveFolderPath(ALL_FOLDERS_VALUE);
+      setExplorerOpen(true);
+      setExportFolderSelectionMode(false);
+      setSelectedExportFolderPaths(new Set());
+      directoryRootsRef.current = [];
+      setDirectoryRootsVersion((previous) => previous + 1);
+      loadedTreePathsRef.current = new Set();
+      loadingTreePathsRef.current = new Set();
+      loadedFolderScanKeysRef.current = new Set();
+      loadingFolderScanKeysRef.current = new Set();
+      folderScanNextOffsetRef.current = new Map();
+      folderScanHasMoreRef.current = new Map();
+      loadedDraftPayloadByFolderRef.current = new Map();
+      loadingDraftPayloadFoldersRef.current = new Set();
+      restoredDraftImageIdsRef.current = new Set();
+      setTreeFolderNodes([]);
+      setLoadingTreePaths(new Set());
+      setLoadingFolderPaths(new Set());
+      clearImages();
+
+      await addImages(launchImages, ['Quick Edit']);
+      if (launchImages[0]?.id) {
+        setSelectedId(launchImages[0].id);
+      }
+    },
+    [addImages, clearImages, setSelectedId],
+  );
+
   useEffect(() => {
     let cancelled = false;
     let activatedQuickMode = false;
@@ -349,30 +386,7 @@ function App() {
         if (launchImages.length === 0) return;
 
         activatedQuickMode = true;
-        setQuickEditMode(true);
-        setActiveFolderPath(ALL_FOLDERS_VALUE);
-        setExplorerOpen(true);
-        setExportFolderSelectionMode(false);
-        setSelectedExportFolderPaths(new Set());
-        directoryRootsRef.current = [];
-        setDirectoryRootsVersion((previous) => previous + 1);
-        loadedTreePathsRef.current = new Set();
-        loadingTreePathsRef.current = new Set();
-        loadedFolderScanKeysRef.current = new Set();
-        loadingFolderScanKeysRef.current = new Set();
-        folderScanNextOffsetRef.current = new Map();
-        folderScanHasMoreRef.current = new Map();
-        loadedDraftPayloadByFolderRef.current = new Map();
-        loadingDraftPayloadFoldersRef.current = new Set();
-        restoredDraftImageIdsRef.current = new Set();
-        setTreeFolderNodes([]);
-        setLoadingTreePaths(new Set());
-        setLoadingFolderPaths(new Set());
-
-        await addImages(launchImages, ['Quick Edit']);
-        if (launchImages[0]?.id) {
-          setSelectedId(launchImages[0].id);
-        }
+        await activateQuickEditMode(launchImages);
       } catch (error) {
         console.warn('Failed to resolve launch quick-edit image:', error);
       } finally {
@@ -390,7 +404,37 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [addImages, setSelectedId]);
+  }, [activateQuickEditMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+      return;
+    }
+
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    const attachListener = async () => {
+      try {
+        unlisten = await listen('quick-edit-open-requested', async () => {
+          const launchImages = await loadQuickEditLaunchImages();
+          if (cancelled || launchImages.length === 0) return;
+          await activateQuickEditMode(launchImages);
+        });
+      } catch (error) {
+        console.warn('Failed to attach quick-edit open listener:', error);
+      }
+    };
+
+    void attachListener();
+
+    return () => {
+      cancelled = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [activateQuickEditMode]);
 
   useEffect(() => {
     if (images.length !== 0) return;

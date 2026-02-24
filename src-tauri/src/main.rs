@@ -8,6 +8,8 @@ mod scanner;
 mod storage;
 mod thumbnails;
 
+#[cfg(target_os = "macos")]
+use crate::helpers::is_supported_image_path;
 use std::path::PathBuf;
 use tauri::http::Response;
 use tauri::Manager;
@@ -36,7 +38,7 @@ fn load_app_icon() -> Option<tauri::image::Image<'static>> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             // Ensure we have a cache dir ready
             let _ = app.path().app_cache_dir();
@@ -139,8 +141,24 @@ fn main() {
             commands::remove_saved_root,
             commands::clear_saved_roots,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|_app_handle, _event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = _event {
+            let launch_paths: Vec<PathBuf> = urls
+                .into_iter()
+                .filter_map(|url| url.to_file_path().ok())
+                .filter(|path| path.is_file() && is_supported_image_path(path))
+                .collect();
+            if launch_paths.is_empty() {
+                return;
+            }
+            commands::enqueue_quick_edit_launch_paths(launch_paths);
+            let _ = _app_handle.emit("quick-edit-open-requested", true);
+        }
+    });
 }
 
 fn mime_from_extension(path: &std::path::Path) -> &'static str {
