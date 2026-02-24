@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/supSugam/beautiful-batches/compare/v0.3.0...v0.4.0) (2026-02-24)
+
+
+### Features
+
+* add Linux desktop template and specify category for bundle ([8dcdb4b](https://github.com/supSugam/beautiful-batches/commit/8dcdb4b8a098c02efc5e14503f6b64202e2c981f))
+
+
+### Bug Fixes
+
+* correct asset information retrieval in install script ([b624e25](https://github.com/supSugam/beautiful-batches/commit/b624e2523ac9c77cd4f3d9d57708d0d056e613c1))
+
 ## [0.3.0](https://github.com/supSugam/beautiful-batches/compare/v0.2.0...v0.3.0) (2026-02-24)
 
 
