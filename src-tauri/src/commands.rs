@@ -4,12 +4,15 @@ use std::process::{Command, Stdio};
 use rfd::FileDialog;
 use tauri::AppHandle;
 
+use crate::helpers::is_supported_image_path;
 use crate::models::{
     ExecuteExportPlanRequest, ExecuteExportPlanResult, ExportConfig, ExportInputFile,
     LoadSavedRootsResult, NativeRootScan, PickAndScanRootResult, ProcessBulkExportResult,
     SidecarCaptionResult,
 };
-use crate::scanner::{list_directory_children, scan_folder_by_path, scan_single_root};
+use crate::scanner::{
+    list_directory_children, scan_folder_by_path, scan_single_image_path, scan_single_root,
+};
 use crate::storage;
 
 const PICK_SCAN_PREVIEW_LIMIT: usize = 240;
@@ -29,6 +32,28 @@ fn spawn_detached(command: &str, args: &[&str]) -> Result<(), String> {
 #[tauri::command]
 pub async fn load_saved_roots_metadata(app: AppHandle) -> Result<Vec<String>, String> {
     storage::load_saved_root_paths(&app)
+}
+
+#[tauri::command]
+pub async fn load_quick_edit_launch_image() -> Result<Option<NativeRootScan>, String> {
+    tokio::task::spawn_blocking(|| {
+        let args = std::env::args_os().skip(1);
+        for arg in args {
+            let candidate_path = PathBuf::from(arg);
+            if !candidate_path.exists() || !candidate_path.is_file() {
+                continue;
+            }
+            if !is_supported_image_path(&candidate_path) {
+                continue;
+            }
+            if let Ok(scan) = scan_single_image_path(&candidate_path, Some("Quick Edit")) {
+                return Ok(Some(scan));
+            }
+        }
+        Ok(None)
+    })
+    .await
+    .map_err(|error| format!("Launch image resolution task failed: {error}"))?
 }
 
 #[tauri::command]

@@ -641,9 +641,9 @@ const ExportPlanModal = ({
   );
 
   const [scope, setScope] = useState<ExportScope>(() => {
+    if (selectedFolderPaths.size > 0) return 'selected_folders';
     if (hasSelectedImage) return 'current_image';
     if (currentFolderImages.length > 0) return 'current_folder';
-    if (selectedFolderPaths.size > 0) return 'selected_folders';
     return 'current_folder';
   });
 
@@ -728,7 +728,6 @@ const ExportPlanModal = ({
     const fetchSelectedImages = async () => {
       setIsScanning(true);
       try {
-        const rootPath = folderNodes.find((n) => n.depth === 0)?.path || ''; // Fallback
         const allScanned: GalleryImage[] = [];
         const seenIds = new Set<string>();
 
@@ -780,7 +779,12 @@ const ExportPlanModal = ({
     return () => {
       isCancelled = true;
     };
-  }, [scope, selectedFolderPathList, folderNodes]);
+  }, [
+    scope,
+    excludedById,
+    resolveRootForFolderPath,
+    selectedFolderPathList,
+  ]);
 
   const suggestedBaseFolder = useMemo(() => {
     if (scope === 'selected_folders')
@@ -805,12 +809,12 @@ const ExportPlanModal = ({
   useEffect(() => {
     if (scope !== 'current_image') return;
     if (hasSelectedImage) return;
-    if (currentFolderImages.length > 0) {
-      setScope('current_folder');
-      return;
-    }
     if (selectedFolderPathList.length > 0) {
       setScope('selected_folders');
+      return;
+    }
+    if (currentFolderImages.length > 0) {
+      setScope('current_folder');
       return;
     }
     setScope('current_folder');

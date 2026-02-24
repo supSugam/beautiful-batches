@@ -158,6 +158,73 @@ pub fn scan_single_root(root_path: &Path) -> Result<NativeRootScan, String> {
     })
 }
 
+/// Scan a single image file path and return it as a one-image root scan.
+pub fn scan_single_image_path(
+    image_path: &Path,
+    directory_name_override: Option<&str>,
+) -> Result<NativeRootScan, String> {
+    if !image_path.exists() || !image_path.is_file() {
+        return Err(format!(
+            "Image path is not an accessible file: {}",
+            normalize_path_for_ui(image_path)
+        ));
+    }
+    if !is_supported_image_path(image_path) {
+        return Err(format!(
+            "Unsupported image file type: {}",
+            normalize_path_for_ui(image_path)
+        ));
+    }
+
+    let canonical_file = fs::canonicalize(image_path).unwrap_or_else(|_| image_path.to_path_buf());
+    let parent_directory = canonical_file
+        .parent()
+        .ok_or_else(|| "Image file has no parent directory".to_string())?
+        .to_path_buf();
+    let canonical_parent =
+        fs::canonicalize(&parent_directory).unwrap_or_else(|_| parent_directory.clone());
+
+    let file_name = canonical_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "image".to_string());
+
+    let Some((size, last_modified, width, height)) = read_image_metadata(&canonical_file) else {
+        return Err(format!(
+            "Failed to read image metadata: {}",
+            normalize_path_for_ui(&canonical_file)
+        ));
+    };
+
+    let directory_name = directory_name_override
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            canonical_parent
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.trim().is_empty())
+                .map(|name| name.to_string())
+        })
+        .unwrap_or_else(|| "Quick Edit".to_string());
+
+    Ok(NativeRootScan {
+        root_path: normalize_path_for_ui(&canonical_parent),
+        directory_name: directory_name.clone(),
+        images: vec![NativeScannedImage {
+            relative_path: normalize_path_for_ui(&Path::new(&directory_name).join(&file_name)),
+            file_name,
+            absolute_path: normalize_path_for_ui(&canonical_file),
+            size,
+            last_modified,
+            width,
+            height,
+        }],
+    })
+}
+
 fn sanitize_relative_tail(relative_tail: &str) -> Result<PathBuf, String> {
     let normalized = relative_tail.replace('\\', "/");
     let mut sanitized = PathBuf::new();

@@ -93,6 +93,20 @@ Output:
 
 Note: native scanning and export execution require the Tauri runtime.
 
+### One-line installer (latest release)
+
+macOS / Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/supSugam/beautiful-batches/main/scripts/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/supSugam/beautiful-batches/main/scripts/install.ps1 | iex
+```
+
 ## Automated releases
 
 Releases are fully automated through GitHub Actions:

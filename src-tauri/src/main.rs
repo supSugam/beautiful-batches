@@ -129,6 +129,7 @@ fn main() {
             commands::pick_and_scan_root,
             commands::load_saved_roots_and_scan,
             commands::load_saved_roots_metadata,
+            commands::load_quick_edit_launch_image,
             commands::open_folder_in_file_explorer,
             commands::reveal_file_in_file_explorer,
             commands::read_sidecar_caption_for_image,

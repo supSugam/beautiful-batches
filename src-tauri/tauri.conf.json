@@ -28,6 +28,36 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": false,
+    "fileAssociations": [
+      {
+        "ext": ["jpg", "jpeg"],
+        "name": "JPEG Image",
+        "description": "JPEG image file",
+        "mimeType": "image/jpeg",
+        "role": "Editor"
+      },
+      {
+        "ext": ["png"],
+        "name": "PNG Image",
+        "description": "PNG image file",
+        "mimeType": "image/png",
+        "role": "Editor"
+      },
+      {
+        "ext": ["webp"],
+        "name": "WebP Image",
+        "description": "WebP image file",
+        "mimeType": "image/webp",
+        "role": "Editor"
+      },
+      {
+        "ext": ["avif"],
+        "name": "AVIF Image",
+        "description": "AVIF image file",
+        "mimeType": "image/avif",
+        "role": "Editor"
+      }
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

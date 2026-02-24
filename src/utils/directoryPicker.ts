@@ -376,6 +376,21 @@ export const loadSavedRootPaths = async (): Promise<string[]> => {
   }
 };
 
+export const loadQuickEditLaunchImages = async (): Promise<RawUploadImage[]> => {
+  if (!isTauriRuntime()) return [];
+  try {
+    const result = await invoke<NativeRootScan | null>(
+      'load_quick_edit_launch_image',
+    );
+    if (!result || !Array.isArray(result.images) || result.images.length === 0) {
+      return [];
+    }
+    return flattenNativeRootScans([result]);
+  } catch {
+    return [];
+  }
+};
+
 export const loadSidecarCaptionForImagePath = async (
   absolutePath: string,
 ): Promise<NativeSidecarCaptionResult> => {

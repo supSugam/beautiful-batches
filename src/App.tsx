@@ -12,6 +12,7 @@ import {
   clearSavedDirectoryHandle,
   clearSavedDirectoryHandleIfMatches,
   listDirectoryChildren,
+  loadQuickEditLaunchImages,
   loadSavedRootPaths,
   removeSavedRootByPath,
   scanImagesFromFolderPath,
@@ -243,6 +244,10 @@ function App() {
   const [shuffleSeed, setShuffleSeed] = useState<number>(() =>
     randomInt(SHUFFLE_SEED_MAX),
   );
+  const [launchContextResolved, setLaunchContextResolved] = useState(() =>
+    typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window),
+  );
+  const [quickEditMode, setQuickEditMode] = useState(false);
   const [startupRootsResolved, setStartupRootsResolved] = useState(false);
   const [loadingFolderPaths, setLoadingFolderPaths] = useState<Set<string>>(
     () => new Set(),
@@ -329,6 +334,65 @@ function App() {
   }, [rowHeight]);
 
   useEffect(() => {
+    let cancelled = false;
+    let activatedQuickMode = false;
+
+    const resolveLaunchContext = async () => {
+      if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+        if (!cancelled) setLaunchContextResolved(true);
+        return;
+      }
+
+      try {
+        const launchImages = await loadQuickEditLaunchImages();
+        if (cancelled) return;
+        if (launchImages.length === 0) return;
+
+        activatedQuickMode = true;
+        setQuickEditMode(true);
+        setActiveFolderPath(ALL_FOLDERS_VALUE);
+        setExplorerOpen(true);
+        setExportFolderSelectionMode(false);
+        setSelectedExportFolderPaths(new Set());
+        directoryRootsRef.current = [];
+        setDirectoryRootsVersion((previous) => previous + 1);
+        loadedTreePathsRef.current = new Set();
+        loadingTreePathsRef.current = new Set();
+        loadedFolderScanKeysRef.current = new Set();
+        loadingFolderScanKeysRef.current = new Set();
+        folderScanNextOffsetRef.current = new Map();
+        folderScanHasMoreRef.current = new Map();
+        loadedDraftPayloadByFolderRef.current = new Map();
+        loadingDraftPayloadFoldersRef.current = new Set();
+        restoredDraftImageIdsRef.current = new Set();
+        setTreeFolderNodes([]);
+        setLoadingTreePaths(new Set());
+        setLoadingFolderPaths(new Set());
+
+        await addImages(launchImages, ['Quick Edit']);
+        if (launchImages[0]?.id) {
+          setSelectedId(launchImages[0].id);
+        }
+      } catch (error) {
+        console.warn('Failed to resolve launch quick-edit image:', error);
+      } finally {
+        if (!cancelled) {
+          setLaunchContextResolved(true);
+          if (activatedQuickMode) {
+            setStartupRootsResolved(true);
+          }
+        }
+      }
+    };
+
+    void resolveLaunchContext();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [addImages, setSelectedId]);
+
+  useEffect(() => {
     if (images.length !== 0) return;
     restoredDraftImageIdsRef.current = new Set();
     loadedDraftPayloadByFolderRef.current = new Map();
@@ -336,6 +400,8 @@ function App() {
   }, [images.length]);
 
   useEffect(() => {
+    if (!launchContextResolved) return;
+    if (quickEditMode) return;
     if (cachedRootNamesBootstrappedRef.current) return;
     if (images.length > 0 || folderNodes.length > 0) return;
     cachedRootNamesBootstrappedRef.current = true;
@@ -346,9 +412,14 @@ function App() {
     if (cachedRootNames.length > 0) {
       addImages([], cachedRootNames);
     }
-  }, [addImages, folderNodes.length, images.length]);
+  }, [addImages, folderNodes.length, images.length, launchContextResolved, quickEditMode]);
 
   useEffect(() => {
+    if (!launchContextResolved) return;
+    if (quickEditMode) {
+      setStartupRootsResolved(true);
+      return;
+    }
     if (linkedRootsHydratedRef.current) return;
     if (images.length > 0) {
       setStartupRootsResolved(true);
@@ -389,9 +460,11 @@ function App() {
     }).finally(() => {
       setStartupRootsResolved(true);
     });
-  }, [addImages, images.length]);
+  }, [addImages, images.length, launchContextResolved, quickEditMode]);
 
   useEffect(() => {
+    if (!launchContextResolved) return;
+    if (quickEditMode) return;
     // Expanded paths restoration
     const storedExpanded = localStorage.getItem(EXPANDED_PATHS_STORAGE_KEY);
     if (storedExpanded) {
@@ -404,14 +477,16 @@ function App() {
         console.error('Failed to parse stored expanded paths:', err);
       }
     }
-  }, [setExpandedPaths]);
+  }, [launchContextResolved, quickEditMode, setExpandedPaths]);
 
   useEffect(() => {
+    if (!launchContextResolved) return;
+    if (quickEditMode) return;
     window.localStorage.setItem(
       EXPANDED_PATHS_STORAGE_KEY,
       JSON.stringify(Array.from(expandedPaths)),
     );
-  }, [expandedPaths]);
+  }, [expandedPaths, launchContextResolved, quickEditMode]);
 
   const mergeTreeNodes = useCallback(
     (nextNodes: FolderNode[], options: { pruneToRoots?: string[] } = {}) => {
@@ -638,6 +713,8 @@ function App() {
 
 
   useEffect(() => {
+    if (!launchContextResolved) return;
+    if (quickEditMode) return;
     if (images.length !== 0) return;
     if (folderNodes.length !== 0) return;
     const rootNames = directoryRootsRef.current
@@ -645,7 +722,7 @@ function App() {
       .filter(Boolean);
     if (rootNames.length === 0) return;
     addImages([], Array.from(new Set(rootNames)));
-  }, [addImages, folderNodes.length, images.length]);
+  }, [addImages, folderNodes.length, images.length, launchContextResolved, quickEditMode]);
 
   const scopedImages = useMemo(() => {
     if (activeFolderPath === ALL_FOLDERS_VALUE) {
@@ -899,8 +976,10 @@ function App() {
   );
 
   useEffect(() => {
+    if (!launchContextResolved) return;
+    if (quickEditMode) return;
     persistStorageValue(EXPLORER_OPEN_STORAGE_KEY, explorerOpen ? '1' : '0');
-  }, [explorerOpen]);
+  }, [explorerOpen, launchContextResolved, quickEditMode]);
 
   useEffect(() => {
     if (activeFolderPath === ALL_FOLDERS_VALUE) return;
@@ -934,14 +1013,23 @@ function App() {
 
 
   useEffect(() => {
+    if (!launchContextResolved) return;
+    if (quickEditMode) return;
     persistStorageValue(ACTIVE_FOLDER_STORAGE_KEY, activeFolderPath);
-  }, [activeFolderPath]);
+  }, [activeFolderPath, launchContextResolved, quickEditMode]);
 
   useEffect(() => {
     if (!selectedId) return;
     if (visibleImageIds.has(selectedId)) return;
     setSelectedId(null);
   }, [selectedId, setSelectedId, visibleImageIds]);
+
+  useEffect(() => {
+    if (!quickEditMode) return;
+    if (selectedId) return;
+    if (navigableVisibleImages.length === 0) return;
+    setSelectedId(navigableVisibleImages[0].id);
+  }, [navigableVisibleImages, quickEditMode, selectedId, setSelectedId]);
 
   useEffect(
     () => () => {
@@ -953,6 +1041,8 @@ function App() {
   );
 
   useEffect(() => {
+    if (!launchContextResolved) return undefined;
+    if (quickEditMode) return undefined;
     const schedulePersist = () => {
       if (draftPersistTimerRef.current) {
         window.clearTimeout(draftPersistTimerRef.current);
@@ -981,9 +1071,11 @@ function App() {
       window.clearTimeout(draftPersistTimerRef.current);
       draftPersistTimerRef.current = 0;
     };
-  }, []);
+  }, [launchContextResolved, quickEditMode]);
 
   useEffect(() => {
+    if (!launchContextResolved) return undefined;
+    if (quickEditMode) return undefined;
     const flushDraftPersistence = () => {
       const state = useStore.getState();
       if (!Array.isArray(state.images) || state.images.length === 0) return;
@@ -1008,9 +1100,11 @@ function App() {
       window.removeEventListener('beforeunload', flushDraftPersistence);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []);
+  }, [launchContextResolved, quickEditMode]);
 
   useEffect(() => {
+    if (!launchContextResolved) return undefined;
+    if (quickEditMode) return undefined;
     let cancelled = false;
 
     if (images.length === 0 || loadedRootPaths.length === 0) {
@@ -1163,7 +1257,13 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyPersistedImageDrafts, images, loadedRootPaths]);
+  }, [
+    applyPersistedImageDrafts,
+    images,
+    launchContextResolved,
+    loadedRootPaths,
+    quickEditMode,
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
@@ -1616,9 +1716,11 @@ function App() {
         onSelectFolder={handleSelectFolder}
         totalImageCount={images.length}
         onResetFolderFilter={() => setActiveFolderPath(ALL_FOLDERS_VALUE)}
-        onAddFolder={handleAddFolder}
-        onRemoveFolder={handleRemoveFolder}
-        onClearFolderDrafts={handleClearFolderDrafts}
+        onAddFolder={quickEditMode ? async () => {} : handleAddFolder}
+        onRemoveFolder={quickEditMode ? async () => {} : handleRemoveFolder}
+        onClearFolderDrafts={
+          quickEditMode ? async () => {} : handleClearFolderDrafts
+        }
         expandedPaths={expandedPaths}
         onToggleExpand={handleToggleExpand}
         onLoadMoreImages={handleLoadMoreActiveFolder}
