@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/supSugam/beautiful-batches/compare/v0.4.0...v0.5.0) (2026-02-24)
+
+
+### Features
+
+* add Emitter import for macOS support ([66b722e](https://github.com/supSugam/beautiful-batches/commit/66b722e7394bfec56046f414ed72d3187f9fc73e))
+
 ## [0.4.0](https://github.com/supSugam/beautiful-batches/compare/v0.3.0...v0.4.0) (2026-02-24)
 
 
