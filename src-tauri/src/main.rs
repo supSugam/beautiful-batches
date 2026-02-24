@@ -24,11 +24,31 @@ fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
+fn load_app_icon() -> Option<tauri::image::Image<'static>> {
+    let decoded = image::load_from_memory(include_bytes!("../icons/icon.png")).ok()?;
+    let rgba = decoded.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Some(tauri::image::Image::new_owned(
+        rgba.into_raw(),
+        width,
+        height,
+    ))
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
             // Ensure we have a cache dir ready
             let _ = app.path().app_cache_dir();
+
+            if let Some(app_icon) = load_app_icon() {
+                for window in app.webview_windows().values() {
+                    if let Err(err) = window.set_icon(app_icon.clone()) {
+                        eprintln!("Failed to set window icon: {err}");
+                    }
+                }
+            }
+
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("localfile", move |ctx, request, responder| {

@@ -65,22 +65,36 @@
   box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.15) inset;
 }
 
+.toolbar-app-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
 .toolbar-dim {
   color: var(--text-muted);
 }
 
-.toolbar-explorer-toggle {
+.toolbar-logo-toggle {
   width: 30px;
   height: 30px;
+  padding: 0;
+  border-radius: var(--radius-ui);
   border: 1px solid transparent;
   background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
 }
 
-.toolbar-explorer-toggle:hover {
+.toolbar-logo-toggle:hover {
   border-color: var(--border-hover);
 }
 
-.toolbar-explorer-toggle.is-active {
+.toolbar-logo-toggle.is-active {
   color: #c6ccff;
   border-color: rgba(129, 140, 248, 0.45);
   background: rgba(129, 140, 248, 0.14);

@@ -1,26 +1,22 @@
 # Beautiful Batches
 
-Beautiful Batches is a cross-platform desktop app for batch photo curation and editing.
-
-The main goal is simple: move through large datasets quickly, decide what stays, apply edits where needed, and export in a predictable structure.
-
-If you already know birme, this project is in that space, but with a desktop-first workflow, per-image draft state, and more control over structure and naming.
+A cross-platform desktop app for batch photo editing and captioning. Edit once, apply everywhere. Crop, Rotate, Pad, Resize, Caption, and Export, all in one place.
 
 ![Beautiful Batches showcase](./showcase.png)
 
 ## Quick links
 
 - [Install and run](#install-and-run)
+- [Automated releases](#automated-releases)
 - [Features](#features)
 - [Contributing](#contributing)
 
 ## What the app does
 
-1. Add one or more folders as roots.
-2. Browse folders and curate images in a masonry-style gallery.
-3. Open inspector for image-specific edits.
-4. Plan the export before writing files.
-5. Export to a folder or zip.
+1. Browse image folders in a masonry-style gallery.
+2. Edit one image, apply to all.
+3. Plan the export before writing files.
+4. Export to a folder or zip.
 
 ## Features
 
@@ -96,6 +92,26 @@ Output:
 | Build desktop app | `npm run tauri:build` |
 
 Note: native scanning and export execution require the Tauri runtime.
+
+## Automated releases
+
+Releases are fully automated through GitHub Actions:
+
+1. Push conventional commits to `main` (`feat:`, `fix:`, `perf:`, etc.).
+2. `.github/workflows/release.yml` runs `release-please`.
+3. `release-please` opens/updates a release PR that bumps versions in:
+   - `package.json`
+   - `src-tauri/Cargo.toml`
+   - `src-tauri/tauri.conf.json`
+4. When the release PR is merged, a GitHub Release is created and Tauri bundles are built/uploaded for:
+   - Linux
+   - Windows
+   - macOS
+
+Versioning config lives in:
+
+- `release-please-config.json`
+- `.release-please-manifest.json`
 
 ## Keyboard shortcuts
 

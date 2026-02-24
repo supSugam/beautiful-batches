@@ -217,14 +217,19 @@ const Toolbar = ({
     >
       <div data-tauri-drag-region className="toolbar-section toolbar-meta">
         <button
-          className={`btn-icon toolbar-explorer-toggle ${explorerOpen ? 'is-active' : ''}`}
+          className={`toolbar-logo-toggle ${explorerOpen ? 'is-active' : ''}`}
           onClick={onToggleExplorer}
           title="Toggle folders sidebar (Ctrl/Cmd + B)"
           type="button"
           aria-label="Toggle folders sidebar"
           aria-pressed={explorerOpen}
         >
-          <FolderOpen size={14} />
+          <img
+            src="/apple-touch-icon.png"
+            alt=""
+            className="toolbar-app-logo"
+            draggable={false}
+          />
         </button>
         <div className="toolbar-divider" />
         <FolderOpen size={15} className="toolbar-dim" />
