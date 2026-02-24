@@ -50,12 +50,12 @@ API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 RELEASE_JSON="$(curl -fsSL "$API_URL")"
 
 ASSET_INFO="$(
-  OS_KIND="$OS_KIND" ARCH_KIND="$ARCH_KIND" python3 - <<'PY' <<<"$RELEASE_JSON"
+  OS_KIND="$OS_KIND" ARCH_KIND="$ARCH_KIND" RELEASE_JSON="$RELEASE_JSON" python3 - <<'PY'
 import json
 import os
 import sys
 
-data = json.load(sys.stdin)
+data = json.loads(os.environ["RELEASE_JSON"])
 assets = data.get("assets", [])
 os_kind = os.environ["OS_KIND"]
 arch_kind = os.environ["ARCH_KIND"]
