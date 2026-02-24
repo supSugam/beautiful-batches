@@ -11,6 +11,8 @@ mod thumbnails;
 #[cfg(target_os = "macos")]
 use crate::helpers::is_supported_image_path;
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
 use tauri::http::Response;
 use tauri::Manager;
 
