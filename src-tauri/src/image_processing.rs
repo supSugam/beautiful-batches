@@ -23,12 +23,24 @@ use crate::models::{
 /// Rotate an RGBA image by an arbitrary angle (degrees clockwise), expanding
 /// the canvas so the entire rotated image is visible.
 fn rotate_with_expand(source: &RgbaImage, degrees_clockwise: f32) -> RgbaImage {
-    if degrees_clockwise.abs() <= f32::EPSILON {
+    let degrees = ((degrees_clockwise % 360.0) + 360.0) % 360.0;
+    if degrees <= f32::EPSILON || (degrees - 360.0).abs() <= f32::EPSILON {
         return source.clone();
     }
 
+    // Optimization for 90-degree increments
+    let quarter_turns = (degrees / 90.0).round() as i32 % 4;
+    if (degrees - (quarter_turns as f32 * 90.0)).abs() <= 0.001 {
+        return match quarter_turns {
+            1 => imageops::rotate90(source),
+            2 => imageops::rotate180(source),
+            3 => imageops::rotate270(source),
+            _ => source.clone(),
+        };
+    }
+
     let (width, height) = source.dimensions();
-    let radians = (-degrees_clockwise).to_radians();
+    let radians = (-degrees).to_radians();
     let cos = radians.cos().abs();
     let sin = radians.sin().abs();
 
@@ -39,12 +51,34 @@ fn rotate_with_expand(source: &RgbaImage, degrees_clockwise: f32) -> RgbaImage {
         .ceil()
         .max(1.0) as u32;
 
-    let mut padded = RgbaImage::from_pixel(expanded_width, expanded_height, Rgba([0, 0, 0, 0]));
-    let x_offset = ((expanded_width as i64 - width as i64) / 2).max(0);
-    let y_offset = ((expanded_height as i64 - height as i64) / 2).max(0);
+    // To prevent clipping during the intermediate rotation, the padded canvas must be large
+    // enough to hold the original image completely regardless of its orientation.
+    // A square canvas with side = max dimension (or diagonal) is safest.
+    let diagonal = ((width as f32).powi(2) + (height as f32).powi(2))
+        .sqrt()
+        .ceil() as u32;
+    let padded_size = diagonal.max(expanded_width).max(expanded_height);
+
+    let mut padded = RgbaImage::from_pixel(padded_size, padded_size, Rgba([0, 0, 0, 0]));
+    let x_offset = (padded_size as i64 - width as i64) / 2;
+    let y_offset = (padded_size as i64 - height as i64) / 2;
     overlay(&mut padded, source, x_offset, y_offset);
 
-    rotate_about_center(&padded, radians, Interpolation::Bicubic, Rgba([0, 0, 0, 0]))
+    let rotated_padded =
+        rotate_about_center(&padded, radians, Interpolation::Bicubic, Rgba([0, 0, 0, 0]));
+
+    // Crop the result back to the calculated expanded bounding box
+    let crop_x = (padded_size.saturating_sub(expanded_width)) / 2;
+    let crop_y = (padded_size.saturating_sub(expanded_height)) / 2;
+
+    imageops::crop_imm(
+        &rotated_padded,
+        crop_x,
+        crop_y,
+        expanded_width,
+        expanded_height,
+    )
+    .to_image()
 }
 
 /// Encode a `DynamicImage` into the requested output format.
@@ -132,7 +166,7 @@ pub fn process_bulk_export(
         let mut has_visual_changes = false;
 
         let transforms = crop_entry.transforms.unwrap_or_default();
-        if transforms.rotate.abs() > f64::EPSILON {
+        if transforms.rotate.abs() > 0.001 {
             has_visual_changes = true;
             let rotated = rotate_with_expand(&image.to_rgba8(), transforms.rotate as f32);
             image = DynamicImage::ImageRgba8(rotated);
@@ -1084,7 +1118,7 @@ fn has_visual_changes(crop: &CropConfig, source_width: u32, source_height: u32) 
 
 fn apply_primary_edits(mut image: DynamicImage, crop: &CropConfig) -> DynamicImage {
     let transforms = crop.transforms.clone().unwrap_or_default();
-    if transforms.rotate.abs() > f64::EPSILON {
+    if transforms.rotate.abs() > 0.001 {
         let rotated = rotate_with_expand(&image.to_rgba8(), transforms.rotate as f32);
         image = DynamicImage::ImageRgba8(rotated);
     }
