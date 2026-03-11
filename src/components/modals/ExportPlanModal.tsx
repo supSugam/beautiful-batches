@@ -15,6 +15,7 @@ import {
   FileText,
   Sparkles,
   X,
+  Delete,
   Loader2,
 } from 'lucide-react';
 import type {
@@ -544,9 +545,11 @@ const TreeFolder = ({
 const OutputTreeDisplay = ({
   paths,
   baseName,
+  isZip = false,
 }: {
   paths: string[];
   baseName: string;
+  isZip?: boolean;
 }) => {
   const tree = useMemo(() => buildTree(paths), [paths]);
   const sortedRootChildren = Array.from(tree.children.values()).sort((a, b) => {
@@ -559,7 +562,11 @@ const OutputTreeDisplay = ({
     <div className="export-plan-tree-wrapper">
       <div className="export-plan-tree-base-row">
         <span className="export-plan-tree-icon-wrapper">
-          <HardDriveDownload size={15} style={{ color: 'var(--accent)' }} />
+          {isZip ? (
+            <Archive size={15} style={{ color: 'var(--accent)' }} />
+          ) : (
+            <HardDriveDownload size={15} style={{ color: 'var(--accent)' }} />
+          )}
         </span>
         <span className="export-plan-tree-name root-name">
           {renderTruncatedMiddle(baseName)}
@@ -654,10 +661,7 @@ const ExportPlanModal = ({
 
   const [destinationMode, setDestinationMode] =
     useState<DestinationMode>('folder');
-  const [destinationName, setDestinationName] = useState(() => {
-    const safeFolderLabel = sanitizeFileSegment(activeFolderLabel || 'Images');
-    return `${safeFolderLabel}-Export-{date}`;
-  });
+  const [destinationName, setDestinationName] = useState('');
   const [namePattern, setNamePattern] = useState('');
   const [structureMode, setStructureMode] = useState<StructureMode>('preserve');
   const [conflictMode, setConflictMode] = useState<ConflictMode>('auto_rename');
@@ -906,7 +910,7 @@ const ExportPlanModal = ({
         sanitizeFileSegment(activeFolderLabel || 'Images'),
       )
       .trim();
-    return sanitizeFileSegment(resolvedTemplate || 'Export');
+    return sanitizeFileSegment(resolvedTemplate);
   }, [activeFolderLabel, destinationName]);
 
   const resolvedDestinationPath = useMemo(() => {
@@ -1311,6 +1315,18 @@ const ExportPlanModal = ({
     validationErrors.length,
   ]);
 
+  const handlePickFolder = useCallback(async () => {
+    try {
+      const selected = await invoke<string | null>('pick_folder');
+      if (selected) {
+        setHasCustomBaseFolder(true);
+        setBaseFolder(selected);
+      }
+    } catch (error) {
+      console.error('Failed to pick folder:', error);
+    }
+  }, []);
+
   const statusTone = validationErrors.length || exportError
     ? 'blocked'
     : isExporting || warningMessages.length
@@ -1416,16 +1432,27 @@ const ExportPlanModal = ({
 
                 <label className="export-plan-field">
                   <span>Base Folder</span>
-                  <input
-                    className="input"
-                    value={baseFolder}
-                    onChange={(event) => {
-                      setHasCustomBaseFolder(true);
-                      setBaseFolder(event.target.value);
-                    }}
-                    placeholder="/path/to/destination"
-                    type="text"
-                  />
+                  <div className="export-plan-input-with-button">
+                    <input
+                      className="input"
+                      value={baseFolder}
+                      onChange={(event) => {
+                        setHasCustomBaseFolder(true);
+                        setBaseFolder(event.target.value);
+                      }}
+                      placeholder="/path/to/destination"
+                      type="text"
+                    />
+                    <button
+                      type="button"
+                      className="btn-icon export-plan-picker-btn"
+                      onClick={handlePickFolder}
+                      title="Choose folder"
+                      aria-label="Choose folder"
+                    >
+                      <FolderOpen size={16} />
+                    </button>
+                  </div>
                 </label>
 
                 <div className="export-plan-quick-bases">
@@ -1483,27 +1510,58 @@ const ExportPlanModal = ({
                   <span>
                     Output Name
                     <div className="export-plan-token-list">
-                      <span className="export-plan-token">{`{date}`}</span>
-                      <span className="export-plan-token">{`{folder}`}</span>
+                      <span
+                        className="export-plan-token clickable"
+                        onClick={() => setDestinationName((prev) => prev + '{date}')}
+                      >{`{date}`}</span>
+                      <span
+                        className="export-plan-token clickable"
+                        onClick={() => setDestinationName((prev) => prev + '{folder}')}
+                      >{`{folder}`}</span>
                     </div>
                   </span>
-                  <input
-                    className="input"
-                    value={destinationName}
-                    onChange={(event) => setDestinationName(event.target.value)}
-                    placeholder="{folder}-Export-{date}"
-                    type="text"
-                  />
+                  <div className="export-plan-input-with-button">
+                    <input
+                      className="input"
+                      value={destinationName}
+                      onChange={(event) => setDestinationName(event.target.value)}
+                      placeholder="{folder}-Export-{date}"
+                      type="text"
+                    />
+                    {destinationName && (
+                      <button
+                        type="button"
+                        className="btn-icon export-plan-clear-btn"
+                        onClick={() => setDestinationName('')}
+                        title="Clear"
+                        aria-label="Clear output name"
+                      >
+                        <Delete size={14} />
+                      </button>
+                    )}
+                  </div>
                 </label>
 
                 <label className="export-plan-field">
                   <span>
                     Name Pattern
                     <div className="export-plan-token-list">
-                      <span className="export-plan-token">{`{name}`}</span>
-                      <span className="export-plan-token">{`{index}`}</span>
-                      <span className="export-plan-token">{`{date}`}</span>
-                      <span className="export-plan-token">{`{folder}`}</span>
+                      <span
+                        className="export-plan-token clickable"
+                        onClick={() => setNamePattern((prev) => prev + '{name}')}
+                      >{`{name}`}</span>
+                      <span
+                        className="export-plan-token clickable"
+                        onClick={() => setNamePattern((prev) => prev + '{index}')}
+                      >{`{index}`}</span>
+                      <span
+                        className="export-plan-token clickable"
+                        onClick={() => setNamePattern((prev) => prev + '{date}')}
+                      >{`{date}`}</span>
+                      <span
+                        className="export-plan-token clickable"
+                        onClick={() => setNamePattern((prev) => prev + '{folder}')}
+                      >{`{folder}`}</span>
                     </div>
                   </span>
                   <input
@@ -1655,7 +1713,11 @@ const ExportPlanModal = ({
                       }
                       return paths;
                     })}
-                    baseName={resolvedFolderName || 'Export'}
+                    baseName={
+                      resolvedDestinationPath.split(/[/\\]/).filter(Boolean).pop() ||
+                      'Destination'
+                    }
+                    isZip={destinationMode === 'zip'}
                   />
                 </div>
               </section>

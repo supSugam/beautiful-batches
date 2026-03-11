@@ -290,6 +290,15 @@ pub async fn read_sidecar_caption_for_image(
 /// Runs the blocking `rfd::FileDialog` off the main thread via async + spawn_blocking
 /// to prevent the app from freezing.
 #[tauri::command]
+pub async fn pick_folder() -> Result<Option<String>, String> {
+    let selected = tokio::task::spawn_blocking(|| FileDialog::new().pick_folder())
+        .await
+        .map_err(|error| format!("Folder picker task failed: {error}"))?;
+
+    Ok(selected.map(|p| p.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 pub async fn pick_and_scan_root(app: AppHandle) -> Result<PickAndScanRootResult, String> {
     // Run the blocking folder picker on a background thread.
     let selected = tokio::task::spawn_blocking(|| FileDialog::new().pick_folder())

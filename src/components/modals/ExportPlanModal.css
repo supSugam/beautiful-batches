@@ -298,6 +298,21 @@ input[type="text"] {
   letter-spacing: -0.02em;
 }
 
+.export-plan-token.clickable {
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.export-plan-token.clickable:hover {
+  background: rgba(129, 140, 248, 0.18);
+  border-color: rgba(129, 140, 248, 0.3);
+}
+
+.export-plan-token.clickable:active {
+  transform: scale(0.98);
+  background: rgba(129, 140, 248, 0.22);
+}
+
 .export-plan-quick-bases {
   display: flex;
   flex-wrap: wrap;
@@ -685,4 +700,63 @@ input[type="text"] {
     width: 100%;
     justify-content: flex-end;
   }
+}
+
+.export-plan-input-with-button {
+  display: flex;
+  position: relative;
+  align-items: center;
+}
+
+.export-plan-input-with-button .input {
+  flex: 1;
+  padding-right: 42px;
+}
+
+.export-plan-picker-btn {
+  position: absolute;
+  right: 5px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+}
+
+.export-plan-picker-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-bright);
+}
+
+.export-plan-picker-btn:active,
+.export-plan-clear-btn:active {
+  background: rgba(255, 255, 255, 0.12);
+  transform: scale(0.95);
+}
+
+.export-plan-clear-btn {
+  position: absolute;
+  right: 5px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+}
+
+.export-plan-clear-btn:hover {
+  background: rgba(248, 113, 113, 0.15);
+  color: #fca5a5;
 }

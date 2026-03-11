@@ -130,6 +130,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::process_bulk_export,
             commands::execute_export_plan,
+            commands::pick_folder,
             commands::pick_and_scan_root,
             commands::load_saved_roots_and_scan,
             commands::load_saved_roots_metadata,

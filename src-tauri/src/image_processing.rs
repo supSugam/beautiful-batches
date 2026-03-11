@@ -486,7 +486,7 @@ fn resolve_destination_root(base_folder: &str, destination_name: &str) -> Result
 
     let safe_segment = sanitize_file_segment(destination_name);
     if safe_segment.is_empty() {
-        return Err("Destination name is empty".to_string());
+        return Ok(PathBuf::from(expanded_base));
     }
 
     Ok(PathBuf::from(expanded_base).join(safe_segment))
