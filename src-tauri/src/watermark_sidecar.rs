@@ -72,13 +72,13 @@ fn get_python_executable(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn check_command_exists(cmd: &str) -> bool {
-    Command::new(cmd)
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let output = if cfg!(target_os = "windows") {
+        Command::new("where").arg(cmd).output()
+    } else {
+        Command::new("which").arg(cmd).output()
+    };
+    
+    output.map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Lightweight check if a library exists in venv site-packages
@@ -124,7 +124,7 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
     let python_exe = get_python_executable(app)?;
     let models_dir = get_models_dir(app)?;
     
-    let python_installed = check_command_exists("python") || check_command_exists("python3");
+    let python_installed = check_command_exists("python3") || check_command_exists("python");
     let git_installed = check_command_exists("git");
     let uv_installed = check_command_exists("uv");
     
@@ -132,7 +132,9 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
     let venv_exists = python_exe.exists();
     
     // Optimized dependency check: just check for a few key markers on disk
-    let dependencies_installed = venv_exists && repo_path.exists() && check_venv_lib_exists(app, "iopaint") && check_venv_lib_exists(app, "transformers");
+    let dependencies_installed = venv_exists && repo_path.exists() && 
+        (check_venv_lib_exists(app, "iopaint") || check_venv_lib_exists(app, "IOPaint")) && 
+        check_venv_lib_exists(app, "transformers");
 
     let mut status = WatermarkSidecarStatus {
         python_installed,
@@ -404,10 +406,9 @@ pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), Stri
         (python_exe.to_str().unwrap(), vec!["-m", "pip", "install"])
     };
 
-    // Unified single-pass install. By including iopaint in requirements.txt (with no pins),
-    // we let the resolver find a version of transformers, diffusers, and huggingface-hub 
-    // that satisfies both our explicit needs and iopaint's internal requirements.
-    emit_log(&app, &format!("Installing all dependencies using {}...", cmd_name), false);
+    // Step 1: Install all dependencies from requirements.txt (Core ML + iopaint helpers)
+    // We follow setup.sh logic: install core deps first.
+    emit_log(&app, &format!("Installing core dependencies (PyTorch, Transformers, etc) using {}...", cmd_name), false);
     let mut args = base_args.clone();
     args.extend(["--upgrade", "-r", "requirements.txt"]);
     let mut cmd = Command::new(cmd_name);
@@ -417,7 +418,20 @@ pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), Stri
        .env("TORCH_HOME", &models_dir)
        .current_dir(&repo_path);
     let status = cmd.status().map_err(|e| e.to_string())?;
-    if !status.success() { return Err("Dependency installation failed".to_string()); }
+    if !status.success() { return Err("Core dependency installation failed".to_string()); }
+
+    // Step 2: Install iopaint separately with --no-deps to avoid resolver conflicts
+    emit_log(&app, "Installing iopaint backend (--no-deps)...", false);
+    let mut args = base_args.clone();
+    args.extend(["iopaint", "--no-deps"]);
+    let mut cmd = Command::new(cmd_name);
+    cmd.args(&args)
+       .env("VIRTUAL_ENV", &venv_path)
+       .env("HF_HOME", &models_dir)
+       .env("TORCH_HOME", &models_dir)
+       .current_dir(&repo_path);
+    let status = cmd.status().map_err(|e| e.to_string())?;
+    if !status.success() { return Err("iopaint installation failed".to_string()); }
 
     emit_log(&app, "Setup completed successfully!", false);
     Ok(())
