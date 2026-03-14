@@ -273,6 +273,42 @@
   flex-shrink: 0;
 }
 
+.toolbar-mode-icon-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-ui);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.toolbar-mode-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+}
+
+.toolbar-mode-icon-btn.is-active {
+  color: #c9d0ff;
+  background: rgba(129, 140, 248, 0.12);
+  border-color: rgba(129, 140, 248, 0.24);
+}
+
+.toolbar-mode-icon-btn.is-active:hover {
+  background: rgba(129, 140, 248, 0.18);
+  color: #d8deff;
+}
+
+.toolbar-mode-icon-btn:active {
+  transform: scale(0.95);
+  background: rgba(255, 255, 255, 0.06);
+}
+
 /* Control Groups */
 .control-group {
   display: flex;

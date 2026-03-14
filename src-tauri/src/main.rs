@@ -7,13 +7,14 @@ mod models;
 mod scanner;
 mod storage;
 mod thumbnails;
+mod watermark_setup;
 
 #[cfg(target_os = "macos")]
 use crate::helpers::is_supported_image_path;
 use std::path::PathBuf;
+use tauri::http::Response;
 #[cfg(target_os = "macos")]
 use tauri::Emitter;
-use tauri::http::Response;
 use tauri::Manager;
 
 fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -137,12 +138,15 @@ fn main() {
             commands::load_quick_edit_launch_image,
             commands::open_folder_in_file_explorer,
             commands::reveal_file_in_file_explorer,
-            commands::read_sidecar_caption_for_image,
+            commands::read_image_embedded_metadata,
             commands::scan_root_by_path,
             commands::scan_folder_by_path_command,
             commands::list_directory_children_by_path,
             commands::remove_saved_root,
             commands::clear_saved_roots,
+            commands::get_watermark_setup_status,
+            commands::run_watermark_setup_step,
+            commands::remove_watermark_ai,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

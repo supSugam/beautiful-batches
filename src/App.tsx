@@ -8,6 +8,7 @@ import React, {
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { AnimatePresence } from 'framer-motion';
 import {
   ACCEPTED_IMAGE_TYPES,
   clearSavedDirectoryHandle,
@@ -22,6 +23,7 @@ import { DropZone } from './components/DropZone';
 import Toolbar from './components/Toolbar/Toolbar';
 import MainLayout from './layouts/MainLayout';
 import ExportPlanModal from './components/modals/ExportPlanModal';
+import WatermarkSettingsModal from './components/modals/WatermarkSettingsModal';
 import useStore from './store/useStore';
 import {
   clearFolderDraft,
@@ -38,6 +40,7 @@ import type {
   DirectoryRoot,
   FolderNode,
   GalleryImage,
+  InspectorMode,
   SortOption,
 } from './types/app';
 import './App.css';
@@ -46,6 +49,7 @@ const EXPLORER_OPEN_STORAGE_KEY = 'bb-explorer-open';
 const EXPANDED_PATHS_STORAGE_KEY = 'bb-expanded-paths';
 const ACTIVE_FOLDER_STORAGE_KEY = 'bb-active-folder-path';
 const LINKED_ROOT_NAMES_STORAGE_KEY = 'bb-linked-root-names';
+const INSPECTOR_MODE_STORAGE_KEY = 'bb-inspector-mode';
 const ALL_FOLDERS_VALUE = '__all__';
 const FOLDER_INITIAL_IMAGE_BATCH = 240;
 const FOLDER_LOAD_MORE_BATCH = 180;
@@ -246,6 +250,10 @@ function App() {
   const [shuffleSeed, setShuffleSeed] = useState<number>(() =>
     randomInt(SHUFFLE_SEED_MAX),
   );
+  const [inspectorMode, setInspectorMode] = useState<InspectorMode>(() => {
+    const stored = readStoredString(INSPECTOR_MODE_STORAGE_KEY, 'edit');
+    return stored === 'view' ? 'view' : 'edit';
+  });
   const [launchContextResolved, setLaunchContextResolved] = useState(() =>
     typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window),
   );
@@ -255,6 +263,7 @@ function App() {
     () => new Set(),
   );
   const [exportPlanOpen, setExportPlanOpen] = useState(false);
+  const [watermarkSettingsOpen, setWatermarkSettingsOpen] = useState(false);
   const [exportFolderSelectionMode, setExportFolderSelectionMode] = useState(false);
   const [selectedExportFolderPaths, setSelectedExportFolderPaths] = useState<
     Set<string>
@@ -531,6 +540,10 @@ function App() {
       JSON.stringify(Array.from(expandedPaths)),
     );
   }, [expandedPaths, launchContextResolved, quickEditMode]);
+
+  useEffect(() => {
+    persistStorageValue(INSPECTOR_MODE_STORAGE_KEY, inspectorMode);
+  }, [inspectorMode]);
 
   const mergeTreeNodes = useCallback(
     (nextNodes: FolderNode[], options: { pruneToRoots?: string[] } = {}) => {
@@ -1735,6 +1748,9 @@ function App() {
         rowHeight={rowHeight}
         setRowHeight={handleRowHeightChange}
         onOpenExportPlan={() => setExportPlanOpen(true)}
+        onOpenWatermarkSettings={() => setWatermarkSettingsOpen(true)}
+        inspectorMode={inspectorMode}
+        onSetInspectorMode={setInspectorMode}
       />
 
       <MainLayout
@@ -1773,6 +1789,7 @@ function App() {
         folderSelectionMode={exportFolderSelectionMode}
         selectedFolderPaths={selectedExportFolderPaths}
         onSetFolderSelectionMode={setExportFolderSelectionMode}
+        inspectorMode={inspectorMode}
         onSetSelectedFolderPaths={(paths) => {
           const nextSet = new Set(
             Array.from(paths)
@@ -1820,6 +1837,12 @@ function App() {
           onClose={() => setExportPlanOpen(false)}
         />
       )}
+
+      <AnimatePresence>
+        {watermarkSettingsOpen && (
+          <WatermarkSettingsModal onClose={() => setWatermarkSettingsOpen(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

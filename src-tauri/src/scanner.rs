@@ -73,21 +73,26 @@ fn contains_supported_image_recursive(directory: &Path) -> bool {
     false
 }
 
+fn to_unix_timestamp_seconds(value: Result<std::time::SystemTime, std::io::Error>) -> u64 {
+    value
+        .ok()
+        .and_then(|timestamp| timestamp.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
 /// Read file metadata needed by the UI scanner.
 /// Returns `None` for unreadable, empty, or invalid image files.
-fn read_image_metadata(file_path: &Path) -> Option<(u64, u64, u32, u32)> {
+fn read_image_metadata(file_path: &Path) -> Option<(u64, u64, u64, u64, u32, u32)> {
     let metadata = fs::metadata(file_path).ok()?;
     let size = metadata.len();
     if size == 0 {
         return None;
     }
 
-    let last_modified = metadata
-        .modified()
-        .ok()
-        .and_then(|timestamp| timestamp.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
+    let accessed_at = to_unix_timestamp_seconds(metadata.accessed());
+    let created_at = to_unix_timestamp_seconds(metadata.created());
+    let last_modified = to_unix_timestamp_seconds(metadata.modified());
 
     // Header-only parse for image dimensions; fails for corrupt/truncated files.
     let (width, height) = image_dimensions(file_path).ok()?;
@@ -95,7 +100,7 @@ fn read_image_metadata(file_path: &Path) -> Option<(u64, u64, u32, u32)> {
         return None;
     }
 
-    Some((size, last_modified, width, height))
+    Some((size, accessed_at, created_at, last_modified, width, height))
 }
 
 /// Scan a single root directory and return metadata for every image found.
@@ -136,7 +141,9 @@ pub fn scan_single_root(root_path: &Path) -> Result<NativeRootScan, String> {
 
         let absolute_path = normalize_path_for_ui(file_path);
 
-        let Some((size, last_modified, width, height)) = read_image_metadata(file_path) else {
+        let Some((size, accessed_at, created_at, last_modified, width, height)) =
+            read_image_metadata(file_path)
+        else {
             continue;
         };
 
@@ -145,6 +152,8 @@ pub fn scan_single_root(root_path: &Path) -> Result<NativeRootScan, String> {
             file_name,
             absolute_path,
             size,
+            accessed_at,
+            created_at,
             last_modified,
             width,
             height,
@@ -191,7 +200,9 @@ pub fn scan_single_image_path(
         .map(|name| name.to_string())
         .unwrap_or_else(|| "image".to_string());
 
-    let Some((size, last_modified, width, height)) = read_image_metadata(&canonical_file) else {
+    let Some((size, accessed_at, created_at, last_modified, width, height)) =
+        read_image_metadata(&canonical_file)
+    else {
         return Err(format!(
             "Failed to read image metadata: {}",
             normalize_path_for_ui(&canonical_file)
@@ -218,6 +229,8 @@ pub fn scan_single_image_path(
             file_name,
             absolute_path: normalize_path_for_ui(&canonical_file),
             size,
+            accessed_at,
+            created_at,
             last_modified,
             width,
             height,
@@ -401,7 +414,9 @@ pub fn scan_folder_by_path(
         let relative_path = normalize_path_for_ui(&Path::new(&directory_name).join(relative_tail));
         let absolute_path = normalize_path_for_ui(file_path);
 
-        let Some((size, last_modified, width, height)) = read_image_metadata(file_path) else {
+        let Some((size, accessed_at, created_at, last_modified, width, height)) =
+            read_image_metadata(file_path)
+        else {
             continue;
         };
 
@@ -410,6 +425,8 @@ pub fn scan_folder_by_path(
             file_name,
             absolute_path,
             size,
+            accessed_at,
+            created_at,
             last_modified,
             width,
             height,

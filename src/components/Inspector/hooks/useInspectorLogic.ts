@@ -9,6 +9,8 @@ type InspectorLogicImage = {
   id: string;
   naturalWidth: number;
   naturalHeight: number;
+  absolutePath?: string;
+  objectUrl: string;
 };
 
 type UseInspectorLogicArgs = {
@@ -206,6 +208,64 @@ export function useInspectorLogic({
     editor.resetTransforms();
   }, [editor]);
 
+  // ── Source Edit History ────────────────────────────────
+  // Keeps track of processed versions of the source image.
+  // Original is at index -1, processed versions in the array.
+  const [processedHistory, setProcessedHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [isProcessing, _setIsProcessing] = useState(false);
+
+  // Clean up Object URLs when component unmounts or image changes
+  useEffect(() => {
+    return () => {
+      processedHistory.forEach((url) => {
+        if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+      });
+    };
+  }, [imageId]);
+
+  const activeImageObjectUrl = useMemo(() => {
+    if (historyIndex === -1) return image?.objectUrl;
+    return processedHistory[historyIndex];
+  }, [image?.objectUrl, processedHistory, historyIndex]);
+
+  const canUndo = historyIndex > -1;
+  const canRedo = historyIndex < processedHistory.length - 1;
+
+  const handleRemoveWatermarks = useCallback(async () => {
+    if (!imageId || !image?.absolutePath) return;
+    _setIsProcessing(true);
+    try {
+      const res = await invoke<string>('remove_watermark_ai', {
+        imagePath: image.absolutePath,
+      });
+      setProcessedHistory((prev) => [...prev.slice(0, historyIndex + 1), res]);
+      setHistoryIndex((prev) => prev + 1);
+    } catch (e) {
+      console.error('Watermark removal failed:', e);
+      // You might want to show a toast or notification here
+    } finally {
+      _setIsProcessing(false);
+    }
+  }, [imageId, image?.absolutePath, historyIndex]);
+
+  const handleRemoveBackground = useCallback(async () => {
+    console.log('Remove Background clicked for:', imageId);
+    // TODO: Implement background removal logic
+  }, [imageId]);
+
+  const undoSourceEdit = useCallback(() => {
+    if (canUndo) {
+      setHistoryIndex((prev) => prev - 1);
+    }
+  }, [canUndo]);
+
+  const redoSourceEdit = useCallback(() => {
+    if (canRedo) {
+      setHistoryIndex((prev) => prev + 1);
+    }
+  }, [canRedo]);
+
   // ── Reset draft (full reset) ────────────────────────────
   const handleResetDraft = useCallback(() => {
     editor.resetAll();
@@ -391,8 +451,6 @@ export function useInspectorLogic({
     onClose?.();
   }, [editor, onClose]);
 
-  // ── Processing state ────────────────────────────────────
-  const isProcessing = false;
 
   // ── Return everything Inspector needs ───────────────────
   return {
@@ -449,6 +507,17 @@ export function useInspectorLogic({
     navigatePrev,
     handleClose,
     handleResetDraft,
+
+    // Source Edit History
+    activeImageObjectUrl,
+    canUndo,
+    canRedo,
+    undoSourceEdit,
+    redoSourceEdit,
+
+    // AI Processing
+    handleRemoveWatermarks,
+    handleRemoveBackground,
   };
 }
 

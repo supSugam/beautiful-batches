@@ -1,14 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import {
   AlertTriangle,
   Archive,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   FolderOpen,
-  FolderTree,
   HardDriveDownload,
   Image as ImageIcon,
   FileImage,
@@ -24,7 +21,7 @@ import type {
   FolderNode,
   GalleryImage,
 } from '../../types/app';
-import { scanImagesFromFolderPath } from '../../utils/directoryPicker';
+import { scanImagesFromFolderPath, isTauriRuntime } from '../../utils/directoryPicker';
 import SegmentedControl from '../common/SegmentedControl';
 import TriStateCheckbox from '../common/TriStateCheckbox';
 import './ExportPlanModal.css';
@@ -98,15 +95,6 @@ type ExportPlanModalProps = {
   onEnableFolderSelectionMode?: () => void;
   onClose: () => void;
 };
-
-const OUTPUT_PREVIEW_LIMIT = 8;
-const REVEAL_SECTION_TRANSITION = {
-  duration: 0.22,
-  ease: [0.22, 1, 0.36, 1] as const,
-};
-
-const isTauriRuntime = () =>
-  typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 
 const blobToBase64 = (blob: Blob): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -654,7 +642,7 @@ const ExportPlanModal = ({
     return 'current_folder';
   });
 
-  const [isScanning, setIsScanning] = useState(false);
+  const [_isScanning, setIsScanning] = useState(false);
   const [scannedSelectedImages, setScannedSelectedImages] = useState<
     GalleryImage[]
   >([]);
@@ -694,7 +682,7 @@ const ExportPlanModal = ({
     [selectedFolderPaths],
   );
 
-  const selectedFolderLabels = useMemo(() => {
+  const _selectedFolderLabels = useMemo(() => {
     return selectedFolderPathList.map((path) => ({
       path,
       label:
@@ -1153,11 +1141,8 @@ const ExportPlanModal = ({
     return errors;
   }, [
     baseFolder,
-    collisionCount,
-    conflictMode,
     exportEditedOnly,
     filteredExportSource.length,
-    namePattern,
     scope,
     scopeImages.length,
     selectedFolderPathList.length,

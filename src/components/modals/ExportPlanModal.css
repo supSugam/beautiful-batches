@@ -1,7 +1,3 @@
-input[type="text"] {
-  padding: 10px;
-}
-
 .export-plan-overlay {
   position: fixed;
   inset: 0;
@@ -759,4 +755,18 @@ input[type="text"] {
 .export-plan-clear-btn:hover {
   background: rgba(248, 113, 113, 0.15);
   color: #fca5a5;
+}
+
+.export-plan-badge-ai {
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
+  color: white;
+  margin-left: 2px;
+  box-shadow: 0 1px 3px rgba(99, 102, 241, 0.3);
+  flex-shrink: 0;
 }

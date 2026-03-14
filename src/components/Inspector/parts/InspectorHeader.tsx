@@ -1,20 +1,23 @@
 import React from 'react';
 import { ChevronLeft, ChevronRight, RotateCcw, Trash2, X } from 'lucide-react';
+import type { InspectorMode } from '../../../types/app';
 
 type InspectorHeaderProps = {
+  mode: InspectorMode;
   imageName: string;
   onOpenImageInExplorer?: () => void;
   canOpenImageInExplorer?: boolean;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
-  onReset: () => void;
-  onDelete: () => void;
+  onReset?: () => void;
+  onDelete?: () => void;
   hasPrev: boolean;
   hasNext: boolean;
 };
 
 const InspectorHeader = ({
+  mode,
   imageName,
   onOpenImageInExplorer,
   canOpenImageInExplorer = false,
@@ -26,10 +29,12 @@ const InspectorHeader = ({
   hasPrev,
   hasNext,
 }: InspectorHeaderProps) => {
+  const isEditMode = mode === 'edit';
+
   return (
     <div className="inspector-header">
       <div className="inspector-title">
-        <span>Editing Selection</span>
+        <span>{isEditMode ? 'Editing Selection' : 'Viewing Metadata'}</span>
         <button
           type="button"
           className={`inspector-title-file ${canOpenImageInExplorer ? 'is-openable' : ''}`}
@@ -53,23 +58,27 @@ const InspectorHeader = ({
             <ChevronRight size={18} />
           </button>
         </div>
-        <div className="toolbar-divider" />
-        <div className="header-tools">
-          <button
-            className="btn-icon"
-            onClick={onReset}
-            title="Reset current draft"
-          >
-            <RotateCcw size={16} />
-          </button>
-          <button
-            className="btn-icon btn-icon-danger"
-            onClick={onDelete}
-            title="Delete current file"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
+        {isEditMode && (
+          <>
+            <div className="toolbar-divider" />
+            <div className="header-tools">
+              <button
+                className="btn-icon"
+                onClick={onReset}
+                title="Reset current draft"
+              >
+                <RotateCcw size={16} />
+              </button>
+              <button
+                className="btn-icon btn-icon-danger"
+                onClick={onDelete}
+                title="Delete current file"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          </>
+        )}
         <div className="toolbar-divider" />
         <button className="btn-icon" onClick={onClose}>
           <X size={18} />

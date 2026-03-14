@@ -140,6 +140,7 @@ fn infer_output_format_from_name(name: &str) -> Option<&'static str> {
 pub fn process_bulk_export(
     files: Vec<ExportInputFile>,
     config: ExportConfig,
+    _remover: Option<&()>,
 ) -> Result<ProcessBulkExportResult, String> {
     let output_format = normalize_output_format(config.format.as_deref());
     let quality = config.quality.unwrap_or(90).clamp(1, 100);
@@ -544,7 +545,7 @@ fn with_numeric_suffix(path: &Path, index: usize) -> PathBuf {
     next
 }
 
-fn sidecar_path_for(relative_file_path: &Path) -> PathBuf {
+fn caption_path_for(relative_file_path: &Path) -> PathBuf {
     let mut next = relative_file_path.to_path_buf();
     next.set_extension("txt");
     next
@@ -571,7 +572,7 @@ fn resolve_conflict_path(
     for attempt in 1..=MAX_AUTO_RENAME_ATTEMPTS {
         let candidate = with_numeric_suffix(base_relative_path, attempt);
         let caption_candidate = if needs_caption {
-            Some(sidecar_path_for(&candidate))
+            Some(caption_path_for(&candidate))
         } else {
             None
         };
@@ -1494,9 +1495,13 @@ fn prepare_export_item(
     used_paths: &mut HashSet<String>,
     encoded_assets: &HashMap<String, String>,
     decoded_assets: &mut HashMap<String, RgbaImage>,
+    _remover: Option<&()>,
+    _remove_watermarks: bool,
 ) -> Result<Option<PreparedExportItem>, String> {
-    if item.skip.unwrap_or(false) {
-        return Ok(None);
+    if let Some(skip) = item.skip {
+        if skip {
+            return Ok(None);
+        }
     }
 
     let normalized_relative_path = normalize_relative_output_path(&item.output_path)?;
@@ -1539,6 +1544,7 @@ fn prepare_export_item(
     } else {
         let image = image::load_from_memory(&source_bytes)
             .map_err(|error| format!("Failed to decode source image {}: {error}", item.image_id))?;
+
         let image = apply_primary_edits(image, &crop);
         let image = apply_inner_padding_and_corner(image, &crop, encoded_assets, decoded_assets)?;
         encode_image_for_format(&image, desired_format, quality)?
@@ -1553,6 +1559,7 @@ fn prepare_export_item(
 
 pub fn execute_export_plan(
     request: ExecuteExportPlanRequest,
+    _remover: Option<&()>,
 ) -> Result<ExecuteExportPlanResult, String> {
     let destination_mode = DestinationMode::parse(&request.destination_mode)?;
     let conflict_mode = ConflictMode::parse(&request.conflict_mode)?;
@@ -1607,6 +1614,8 @@ pub fn execute_export_plan(
                     &mut used_paths,
                     &request.padding_image_assets,
                     &mut decoded_assets,
+                    None,
+                    false,
                 ) {
                     Ok(Some(prepared)) => {
                         if let Err(error) =
@@ -1626,7 +1635,7 @@ pub fn execute_export_plan(
                         written_count += 1;
 
                         if let Some(caption) = prepared.caption_text.as_ref() {
-                            let sidecar = sidecar_path_for(&prepared.relative_output_path);
+                            let sidecar = caption_path_for(&prepared.relative_output_path);
                             if let Err(error) = sink.write_entry(&sidecar, caption.as_bytes()) {
                                 failed_count += 1;
                                 push_warning(
@@ -1714,6 +1723,8 @@ pub fn execute_export_plan(
                     &mut used_paths,
                     &request.padding_image_assets,
                     &mut decoded_assets,
+                    None,
+                    false,
                 ) {
                     Ok(Some(prepared)) => {
                         if let Err(error) =
@@ -1733,7 +1744,7 @@ pub fn execute_export_plan(
                         written_count += 1;
 
                         if let Some(caption) = prepared.caption_text.as_ref() {
-                            let sidecar = sidecar_path_for(&prepared.relative_output_path);
+                            let sidecar = caption_path_for(&prepared.relative_output_path);
                             if let Err(error) = sink.write_entry(&sidecar, caption.as_bytes()) {
                                 failed_count += 1;
                                 push_warning(

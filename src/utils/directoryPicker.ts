@@ -35,6 +35,8 @@ type NativeScannedImage = {
   fileName: string;
   absolutePath: string;
   size: number;
+  accessedAt: number;
+  createdAt: number;
   lastModified: number;
   width: number;
   height: number;
@@ -52,11 +54,6 @@ type NativeDirectoryChild = {
   depth: number;
 };
 
-type NativeSidecarCaptionResult = {
-  exists: boolean;
-  content: string;
-};
-
 type NativePickAndScanRootResult = {
   cancelled: boolean;
   root: NativeRootScan | null;
@@ -68,7 +65,7 @@ export type NativeLoadSavedRootsResult = {
   savedRootPaths: string[];
 };
 
-const isTauriRuntime = () =>
+export const isTauriRuntime = () =>
   typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 
 const normalizePath = (value: unknown): string =>
@@ -140,6 +137,10 @@ const nativeScannedImageToRawUpload = (
     nativeSize: image.size,
     nativeWidth: Number(image.width || 0) || undefined,
     nativeHeight: Number(image.height || 0) || undefined,
+    nativeAccessedAt: Math.max(0, Number(image.accessedAt || 0) || 0) * 1000,
+    nativeCreatedAt: Math.max(0, Number(image.createdAt || 0) || 0) * 1000,
+    nativeLastModifiedAt:
+      Math.max(0, Number(image.lastModified || 0) || 0) * 1000,
   };
 };
 
@@ -388,30 +389,6 @@ export const loadQuickEditLaunchImages = async (): Promise<RawUploadImage[]> => 
     return flattenNativeRootScans([result]);
   } catch {
     return [];
-  }
-};
-
-export const loadSidecarCaptionForImagePath = async (
-  absolutePath: string,
-): Promise<NativeSidecarCaptionResult> => {
-  const normalizedPath = normalizePath(absolutePath);
-  if (!isTauriRuntime() || !normalizedPath) {
-    return { exists: false, content: '' };
-  }
-
-  try {
-    const result = await invoke<NativeSidecarCaptionResult>(
-      'read_sidecar_caption_for_image',
-      {
-        imagePath: normalizedPath,
-      },
-    );
-    return {
-      exists: Boolean(result?.exists),
-      content: typeof result?.content === 'string' ? result.content : '',
-    };
-  } catch {
-    return { exists: false, content: '' };
   }
 };
 

@@ -6,6 +6,8 @@ import {
   Type,
   Scale,
   Shuffle,
+  Eye,
+  SlidersHorizontal,
   Check,
   ChevronDown,
   Grid3x3,
@@ -17,7 +19,7 @@ import {
 } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { LucideIcon } from 'lucide-react';
-import type { SortOption } from '../../types/app';
+import type { InspectorMode, SortOption } from '../../types/app';
 import './Toolbar.css';
 
 const MIN_ROW_HEIGHT = 150;
@@ -95,6 +97,9 @@ type ToolbarProps = {
   rowHeight: number;
   setRowHeight: (value: number) => void;
   onOpenExportPlan: () => void;
+  onOpenWatermarkSettings: () => void;
+  inspectorMode: InspectorMode;
+  onSetInspectorMode: (mode: InspectorMode) => void;
 };
 
 const Toolbar = ({
@@ -110,6 +115,9 @@ const Toolbar = ({
   rowHeight,
   setRowHeight,
   onOpenExportPlan,
+  onOpenWatermarkSettings,
+  inspectorMode,
+  onSetInspectorMode,
 }: ToolbarProps) => {
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -300,6 +308,7 @@ const Toolbar = ({
           )}
         </div>
 
+
         <div className="control-group">
           <Grid3x3 size={13} className="toolbar-dim" />
           <input
@@ -321,6 +330,27 @@ const Toolbar = ({
       </div>
 
       <div className="toolbar-section toolbar-actions">
+        <button
+          type="button"
+          className="toolbar-mode-icon-btn"
+          onClick={onOpenWatermarkSettings}
+          title="Watermark AI Settings"
+          aria-label="Watermark AI Settings"
+        >
+          <SlidersHorizontal size={16} />
+        </button>
+
+        <button
+          type="button"
+          className={`toolbar-mode-icon-btn ${inspectorMode === 'view' ? 'is-active' : ''}`}
+          onClick={() => onSetInspectorMode(inspectorMode === 'edit' ? 'view' : 'edit')}
+          title={inspectorMode === 'edit' ? 'Switch to View mode' : 'Switch to Edit mode'}
+          aria-label={inspectorMode === 'edit' ? 'Switch to View mode' : 'Switch to Edit mode'}
+          aria-pressed={inspectorMode === 'view'}
+        >
+          <Eye size={16} />
+        </button>
+
         <button
           type="button"
           className="toolbar-export-btn"

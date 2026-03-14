@@ -125,6 +125,8 @@ pub struct NativeScannedImage {
     pub file_name: String,
     pub absolute_path: String,
     pub size: u64,
+    pub accessed_at: u64,
+    pub created_at: u64,
     pub last_modified: u64,
     pub width: u32,
     pub height: u32,
@@ -163,7 +165,14 @@ pub struct LoadSavedRootsResult {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SidecarCaptionResult {
-    pub exists: bool,
-    pub content: String,
+pub struct EmbeddedMetadataEntry {
+    pub key: String,
+    pub value: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedMetadataResult {
+    pub entries: Vec<EmbeddedMetadataEntry>,
 }

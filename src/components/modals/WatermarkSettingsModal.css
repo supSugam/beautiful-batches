@@ -1,0 +1,167 @@
+.watermark-setup-modal {
+  width: min(860px, 100%);
+}
+
+.watermark-setup-modal .header-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.watermark-setup-modal .header-icon {
+  color: var(--accent);
+  padding: 8px;
+  background: var(--accent-dim);
+  border-radius: 10px;
+}
+
+.watermark-setup-status-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-ui);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  transition: all 0.2s;
+}
+
+.watermark-setup-status-item.is-ready {
+  border-color: rgba(52, 211, 153, 0.15);
+  background: rgba(52, 211, 153, 0.02);
+}
+
+.watermark-setup-status-item .status-item-icon {
+  color: var(--text-muted);
+  padding-top: 2px;
+}
+
+.watermark-setup-status-item.is-ready .status-item-icon {
+  color: var(--success);
+}
+
+.watermark-setup-status-item .status-item-content {
+  flex: 1;
+}
+
+.watermark-setup-status-item .status-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.watermark-setup-status-item .status-item-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.watermark-setup-status-item .status-badge {
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
+.watermark-setup-status-item .status-badge.ready {
+  background: rgba(52, 211, 153, 0.12);
+  color: #34d399;
+}
+
+.watermark-setup-status-item .status-badge.missing {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+}
+
+.watermark-setup-status-item .status-item-description {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.watermark-setup-modal .btn-action {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ui);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 550;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+}
+
+.watermark-setup-modal .btn-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--border-hover);
+  color: var(--text-bright);
+}
+
+.watermark-setup-modal .btn-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.watermark-setup-modal .btn-action .arrow {
+  margin-left: auto;
+  opacity: 0.4;
+}
+
+.watermark-setup-modal .terminal-logs {
+  background: #09090b;
+  border-radius: var(--radius-ui);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.watermark-setup-modal .terminal-header {
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.watermark-setup-modal .terminal-content {
+  padding: 10px 12px;
+  height: 180px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.68rem;
+  line-height: 1.5;
+  color: #a1a1aa;
+}
+
+.watermark-setup-modal .log-line {
+  margin-bottom: 1px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.watermark-setup-modal .dim {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.watermark-setup-modal .spin {
+  animation: watermarkSetupSpin 1s linear infinite;
+}
+
+@keyframes watermarkSetupSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

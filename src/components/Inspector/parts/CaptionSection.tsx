@@ -1,18 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
 import useStore from '../../../store/useStore';
-import { loadSidecarCaptionForImagePath } from '../../../utils/directoryPicker';
 
 type CaptionSectionProps = {
   imageId: string;
   imageName: string;
   imageAbsolutePath?: string;
-};
-
-type SidecarCaptionState = {
-  loading: boolean;
-  exists: boolean;
-  content: string;
 };
 
 const SparkleGlyph = ({ active }: { active: boolean }) => (
@@ -41,24 +33,15 @@ const SparkleGlyph = ({ active }: { active: boolean }) => (
 
 const CaptionSection = ({
   imageId,
-  imageName,
-  imageAbsolutePath,
 }: CaptionSectionProps) => {
   const hasCaptionOverride = useStore((state) => state.captionById.has(imageId));
   const captionOverride = useStore(
     (state) => state.captionById.get(imageId) ?? '',
   );
   const setCaptionForImage = useStore((state) => state.setCaptionForImage);
-  const resetCaptionForImage = useStore((state) => state.resetCaptionForImage);
 
   const [isProcessing, setIsProcessing] = useState(false);
-  const [sidecarCaption, setSidecarCaption] = useState<SidecarCaptionState>({
-    loading: false,
-    exists: false,
-    content: '',
-  });
   const magicTimerRef = useRef<number | null>(null);
-  const sidecarRequestIdRef = useRef(0);
 
   useEffect(
     () => () => {
@@ -89,83 +72,10 @@ const CaptionSection = ({
     }
   }, [imageId]);
 
-  useEffect(() => {
-    const path = String(imageAbsolutePath || '').trim();
-    sidecarRequestIdRef.current += 1;
-    const requestId = sidecarRequestIdRef.current;
-
-    if (!path) {
-      setSidecarCaption({
-        loading: false,
-        exists: false,
-        content: '',
-      });
-      return;
-    }
-
-    setSidecarCaption({
-      loading: true,
-      exists: false,
-      content: '',
-    });
-
-    loadSidecarCaptionForImagePath(path)
-      .then((result) => {
-        if (sidecarRequestIdRef.current !== requestId) return;
-        const nextValue = {
-          exists: Boolean(result?.exists),
-          content: typeof result?.content === 'string' ? result.content : '',
-        };
-        setSidecarCaption({
-          loading: false,
-          exists: nextValue.exists,
-          content: nextValue.content,
-        });
-      })
-      .catch(() => {
-        if (sidecarRequestIdRef.current !== requestId) return;
-        setSidecarCaption({
-          loading: false,
-          exists: false,
-          content: '',
-        });
-      });
-  }, [imageAbsolutePath, imageId]);
-
-  const sidecarFileName = useMemo(() => {
-    const safeName = String(imageName || '').trim();
-    if (!safeName) return 'caption.txt';
-    const dotIndex = safeName.lastIndexOf('.');
-    const baseName =
-      dotIndex > 0 ? safeName.slice(0, dotIndex).trim() : safeName;
-    return `${baseName || safeName}.txt`;
-  }, [imageName]);
-
-  const caption = hasCaptionOverride ? captionOverride : sidecarCaption.content;
-  const hasSidecarCaption = sidecarCaption.exists;
-  const canResetToSidecar = hasSidecarCaption && hasCaptionOverride;
-  const hasEmptyOverride = hasCaptionOverride && captionOverride.length === 0;
-  const outcomeLabel = useMemo(() => {
-    if (hasCaptionOverride) {
-      if (hasEmptyOverride) {
-        return 'Caption text will be skipped for this image.';
-      }
-      return 'Your custom caption will be exported for this image.';
-    }
-    if (sidecarCaption.loading) {
-      return `${sidecarFileName} will be used once it finishes loading.`;
-    }
-    if (hasSidecarCaption) {
-      return `${sidecarFileName} will be used for export.`;
-    }
-    return 'Caption text will be skipped for this image.';
-  }, [
-    hasEmptyOverride,
-    hasCaptionOverride,
-    hasSidecarCaption,
-    sidecarCaption.loading,
-    sidecarFileName,
-  ]);
+  const caption = captionOverride;
+  const outcomeLabel = hasCaptionOverride && captionOverride.length > 0
+    ? 'Your custom caption will be exported for this image.'
+    : 'Caption text will be skipped for this image.';
 
   return (
     <section className="control-section caption-section">
@@ -187,17 +97,6 @@ const CaptionSection = ({
         >
           <SparkleGlyph active={isProcessing} />
         </button>
-        {canResetToSidecar && (
-          <button
-            type="button"
-            className="caption-reset-inline-btn"
-            onClick={() => resetCaptionForImage(imageId)}
-            title={`Revert to ${sidecarFileName}`}
-            aria-label={`Revert caption to ${sidecarFileName}`}
-          >
-            <RotateCcw size={14} />
-          </button>
-        )}
       </div>
       <div className="caption-meta-row">
         <p className="caption-outcome-note">{outcomeLabel}</p>

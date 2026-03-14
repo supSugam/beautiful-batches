@@ -12,17 +12,19 @@ import {
 import InspectorHeader from './Inspector/parts/InspectorHeader';
 import InspectorPreview from './Inspector/parts/InspectorPreview';
 import InspectorStats from './Inspector/parts/InspectorStats';
+import InspectorMetadataView from './Inspector/parts/InspectorMetadataView';
 import SelectionControls from './Inspector/parts/SelectionControls';
 import TransformControls from './Inspector/parts/TransformControls';
 import PaddingSection from './Inspector/parts/PaddingSection';
 import CaptionSection from './Inspector/parts/CaptionSection';
 import ExportResizeSection from './Inspector/parts/ExportResizeSection';
 import BulkApplySection from './Inspector/parts/BulkApplySection';
+import SourceEditSection from './Inspector/parts/SourceEditSection';
 
 import { useInspectorLogic } from './Inspector/hooks/useInspectorLogic';
 import { useSidebarResize } from './Inspector/hooks/useSidebarResize';
 import useStore from '../store/useStore';
-import type { CropEntry, GalleryImage } from '../types/app';
+import type { CropEntry, GalleryImage, InspectorMode } from '../types/app';
 
 
 import './Inspector.css';
@@ -50,9 +52,10 @@ type InspectorProps = {
   onApplyTo: (type: ApplyTargetType, options?: ApplyOptions) => void;
   width: number;
   onResize: (width: number) => void;
+  mode: InspectorMode;
 };
 
-type InspectorSessionProps = {
+type InspectorEditSessionProps = {
   image: GalleryImage;
   onCropChange: (id: string, coords: CropEntry) => void;
   onClose: () => void;
@@ -64,7 +67,7 @@ type InspectorSessionProps = {
   onApplyTo: (type: ApplyTargetType, options?: ApplyOptions) => void;
 };
 
-const InspectorSession = ({
+const InspectorEditSession = ({
   image,
   onCropChange,
   onClose,
@@ -74,7 +77,7 @@ const InspectorSession = ({
   hasNext,
   hasPrev,
   onApplyTo,
-}: InspectorSessionProps) => {
+}: InspectorEditSessionProps) => {
   const cropState = useStore((state) => state.cropData.get(image.id));
   const normalizedImagePath = String(image?.absolutePath || '')
     .replace(/\\/g, '/')
@@ -150,6 +153,7 @@ const InspectorSession = ({
   return (
     <>
       <InspectorHeader
+        mode="edit"
         imageName={image.name}
         onOpenImageInExplorer={handleOpenImageInExplorer}
         canOpenImageInExplorer={canOpenImageInExplorer}
@@ -173,7 +177,7 @@ const InspectorSession = ({
         <div className="inspector-preview-section">
           <InspectorPreview
             isProcessing={logic.isProcessing}
-            imageObjectUrl={image.objectUrl}
+            imageObjectUrl={logic.activeImageObjectUrl || image.objectUrl}
             editor={logic.editor}
           />
 
@@ -206,6 +210,18 @@ const InspectorSession = ({
         </div>
 
         <div className="inspector-controls">
+          <section className="settings-section-card settings-section-card--source-edit">
+            <SourceEditSection
+              onRemoveWatermarks={logic.handleRemoveWatermarks}
+              onRemoveBackground={logic.handleRemoveBackground}
+              onUndo={logic.undoSourceEdit}
+              onRedo={logic.redoSourceEdit}
+              canUndo={logic.canUndo}
+              canRedo={logic.canRedo}
+              isProcessing={logic.isProcessing}
+            />
+          </section>
+
           <section className="settings-section-card settings-section-card--transform">
             <TransformControls
               rotation={logic.rotation}
@@ -274,6 +290,104 @@ const InspectorSession = ({
   );
 };
 
+type InspectorViewSessionProps = {
+  image: GalleryImage;
+  onClose: () => void;
+  onNext: () => void;
+  onPrev: () => void;
+  hasNext: boolean;
+  hasPrev: boolean;
+};
+
+const InspectorViewSession = ({
+  image,
+  onClose,
+  onNext,
+  onPrev,
+  hasNext,
+  hasPrev,
+}: InspectorViewSessionProps) => {
+  const normalizedImagePath = String(image?.absolutePath || '')
+    .replace(/\\/g, '/')
+    .trim();
+  const canOpenImageInExplorer =
+    normalizedImagePath.length > 0 &&
+    typeof window !== 'undefined' &&
+    '__TAURI_INTERNALS__' in window;
+
+  const handleOpenImageInExplorer = useCallback(async () => {
+    if (!canOpenImageInExplorer) return;
+    try {
+      await invoke('reveal_file_in_file_explorer', {
+        filePath: normalizedImagePath,
+      });
+    } catch (error) {
+      console.error('Failed to reveal image in file explorer:', error);
+    }
+  }, [canOpenImageInExplorer, normalizedImagePath]);
+
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      if (!element) return false;
+      if (element.isContentEditable) return true;
+
+      const tagName = String(element.tagName || '').toLowerCase();
+      if (tagName === 'textarea' || tagName === 'select') return true;
+      if (tagName === 'input') {
+        const input = element as HTMLInputElement;
+        const type = String(input.type || '').toLowerCase();
+        return type !== 'checkbox' && type !== 'radio' && type !== 'button';
+      }
+      return false;
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+
+      if (event.key === 'ArrowRight') {
+        if (!hasNext) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onNext();
+        return;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        if (!hasPrev) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onPrev();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [hasNext, hasPrev, onNext, onPrev]);
+
+  return (
+    <>
+      <InspectorHeader
+        mode="view"
+        imageName={image.name}
+        onOpenImageInExplorer={handleOpenImageInExplorer}
+        canOpenImageInExplorer={canOpenImageInExplorer}
+        onClose={onClose}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={hasPrev}
+        hasNext={hasNext}
+      />
+
+      <div className="inspector-scroll">
+        <InspectorMetadataView image={image} />
+      </div>
+    </>
+  );
+};
+
 export const Inspector = ({
   image,
   onCropChange,
@@ -286,10 +400,12 @@ export const Inspector = ({
   onApplyTo,
   width: sidebarWidth,
   onResize,
+  mode,
 }: InspectorProps) => {
   const { isResizing, startResizing, viewportWidth, liveWidth } =
     useSidebarResize(sidebarWidth, onResize);
-  const isSingleColumn = liveWidth <= viewportWidth * 0.5;
+  const isDashboard = mode === 'edit' && liveWidth > viewportWidth * 0.5;
+  const isWideViewMode = mode === 'view' && liveWidth >= 860;
 
   if (!image) return null;
 
@@ -299,29 +415,41 @@ export const Inspector = ({
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: '100%', opacity: 0 }}
       transition={{ type: 'tween', duration: 0.16, ease: 'easeOut' }}
-      className={`inspector ${isResizing ? 'resizing' : ''} ${isSingleColumn ? '' : 'inspector-dashboard'}`}
+      className={`inspector ${isResizing ? 'resizing' : ''} ${isDashboard ? 'inspector-dashboard' : ''} ${mode === 'view' ? 'inspector-view-mode' : ''} ${isWideViewMode ? 'inspector-view-wide' : ''}`}
       style={{ width: liveWidth }}
     >
       <div
         className="resizer-handle"
         role="separator"
         aria-orientation="vertical"
-        title="Drag to resize settings panel"
+        title="Drag to resize inspector"
         onPointerDown={startResizing}
       />
 
-      <InspectorSession
-        key={image.id}
-        image={image}
-        onCropChange={onCropChange}
-        onClose={onClose}
-        onDelete={onDelete}
-        onNext={onNext}
-        onPrev={onPrev}
-        hasNext={hasNext}
-        hasPrev={hasPrev}
-        onApplyTo={onApplyTo}
-      />
+      {mode === 'view' ? (
+        <InspectorViewSession
+          key={image.id}
+          image={image}
+          onClose={onClose}
+          onNext={onNext}
+          onPrev={onPrev}
+          hasNext={hasNext}
+          hasPrev={hasPrev}
+        />
+      ) : (
+        <InspectorEditSession
+          key={image.id}
+          image={image}
+          onCropChange={onCropChange}
+          onClose={onClose}
+          onDelete={onDelete}
+          onNext={onNext}
+          onPrev={onPrev}
+          hasNext={hasNext}
+          hasPrev={hasPrev}
+          onApplyTo={onApplyTo}
+        />
+      )}
     </motion.div>
   );
 };

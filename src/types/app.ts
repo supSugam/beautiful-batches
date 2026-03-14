@@ -7,6 +7,8 @@ export type SortOption =
   | 'size_asc'
   | 'shuffle';
 
+export type InspectorMode = 'edit' | 'view';
+
 export type ExportFormat = 'png' | 'jpeg' | 'webp';
 
 export interface FlipState {
@@ -91,6 +93,12 @@ export interface RawUploadImage {
   nativeWidth?: number;
   /** Image height in pixels from native scan metadata. */
   nativeHeight?: number;
+  /** Last accessed timestamp in milliseconds from native scan metadata. */
+  nativeAccessedAt?: number;
+  /** Creation timestamp in milliseconds from native scan metadata. */
+  nativeCreatedAt?: number;
+  /** Last modified timestamp in milliseconds from native scan metadata. */
+  nativeLastModifiedAt?: number;
 }
 
 export interface GalleryImage extends RawUploadImage {
@@ -101,6 +109,8 @@ export interface GalleryImage extends RawUploadImage {
   naturalHeight: number;
   naturalRatio: number;
   dimensionsLoaded: boolean;
+  sourceAccessedAt: number;
+  sourceCreatedAt: number;
   sourceLastModified: number;
   sourceSize: number;
   loadedAt: number;

@@ -1,20 +1,24 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
+use flate2::read::ZlibDecoder;
 use rfd::FileDialog;
 use tauri::AppHandle;
 
 use crate::helpers::is_supported_image_path;
 use crate::models::{
-    ExecuteExportPlanRequest, ExecuteExportPlanResult, ExportConfig, ExportInputFile,
-    LoadSavedRootsResult, NativeRootScan, PickAndScanRootResult, ProcessBulkExportResult,
-    SidecarCaptionResult,
+    EmbeddedMetadataEntry, EmbeddedMetadataResult, ExecuteExportPlanRequest,
+    ExecuteExportPlanResult, ExportConfig, ExportInputFile, LoadSavedRootsResult, NativeRootScan,
+    PickAndScanRootResult, ProcessBulkExportResult,
 };
 use crate::scanner::{
     list_directory_children, scan_folder_by_path, scan_single_image_path, scan_single_root,
 };
 use crate::storage;
+use crate::watermark_setup;
+use tauri::Emitter;
 
 const PICK_SCAN_PREVIEW_LIMIT: usize = 240;
 static PENDING_QUICK_EDIT_PATHS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
@@ -49,6 +53,126 @@ fn spawn_detached(command: &str, args: &[&str]) -> Result<(), String> {
     cmd.spawn()
         .map(|_| ())
         .map_err(|error| format!("{command}: {error}"))
+}
+
+fn inflate_zlib_bytes(data: &[u8]) -> Option<Vec<u8>> {
+    let mut decoder = ZlibDecoder::new(data);
+    let mut output = Vec::new();
+    decoder.read_to_end(&mut output).ok()?;
+    Some(output)
+}
+
+fn parse_png_text_entries(bytes: &[u8]) -> Vec<EmbeddedMetadataEntry> {
+    const PNG_SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+    if bytes.len() < PNG_SIGNATURE.len() || bytes[..8] != PNG_SIGNATURE {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+    let mut cursor: usize = 8;
+
+    while cursor + 12 <= bytes.len() {
+        let length = u32::from_be_bytes([
+            bytes[cursor],
+            bytes[cursor + 1],
+            bytes[cursor + 2],
+            bytes[cursor + 3],
+        ]) as usize;
+        let chunk_type = &bytes[cursor + 4..cursor + 8];
+        let data_start = cursor + 8;
+        let data_end = data_start + length;
+        let crc_end = data_end + 4;
+        if crc_end > bytes.len() {
+            break;
+        }
+
+        let data = &bytes[data_start..data_end];
+        match chunk_type {
+            b"tEXt" => {
+                if let Some(separator_index) = data.iter().position(|value| *value == 0) {
+                    let key = String::from_utf8_lossy(&data[..separator_index]).to_string();
+                    let value = String::from_utf8_lossy(&data[separator_index + 1..]).to_string();
+                    if !key.trim().is_empty() {
+                        entries.push(EmbeddedMetadataEntry {
+                            key,
+                            value,
+                            source: "png:tEXt".to_string(),
+                        });
+                    }
+                }
+            }
+            b"iTXt" => {
+                if let Some(key_end) = data.iter().position(|value| *value == 0) {
+                    let key = String::from_utf8_lossy(&data[..key_end]).to_string();
+                    if !key.trim().is_empty() && data.len() > key_end + 3 {
+                        let compression_flag = data[key_end + 1];
+                        let _compression_method = data[key_end + 2];
+                        let mut cursor_itxt = key_end + 3;
+
+                        // language tag
+                        if let Some(language_end) =
+                            data[cursor_itxt..].iter().position(|value| *value == 0)
+                        {
+                            cursor_itxt += language_end + 1;
+                        } else {
+                            cursor_itxt = data.len();
+                        }
+
+                        // translated keyword
+                        if cursor_itxt < data.len() {
+                            if let Some(translated_end) =
+                                data[cursor_itxt..].iter().position(|value| *value == 0)
+                            {
+                                cursor_itxt += translated_end + 1;
+                            } else {
+                                cursor_itxt = data.len();
+                            }
+                        }
+
+                        if cursor_itxt <= data.len() {
+                            let text_payload = &data[cursor_itxt..];
+                            let value_bytes = if compression_flag == 1 {
+                                inflate_zlib_bytes(text_payload)
+                                    .unwrap_or_else(|| text_payload.to_vec())
+                            } else {
+                                text_payload.to_vec()
+                            };
+                            let value = String::from_utf8_lossy(&value_bytes).to_string();
+                            entries.push(EmbeddedMetadataEntry {
+                                key,
+                                value,
+                                source: "png:iTXt".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+            b"zTXt" => {
+                if let Some(key_end) = data.iter().position(|value| *value == 0) {
+                    let key = String::from_utf8_lossy(&data[..key_end]).to_string();
+                    if !key.trim().is_empty() && data.len() > key_end + 2 {
+                        let compressed_payload = &data[key_end + 2..];
+                        let value_bytes = inflate_zlib_bytes(compressed_payload)
+                            .unwrap_or_else(|| compressed_payload.to_vec());
+                        let value = String::from_utf8_lossy(&value_bytes).to_string();
+                        entries.push(EmbeddedMetadataEntry {
+                            key,
+                            value,
+                            source: "png:zTXt".to_string(),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        if chunk_type == b"IEND" {
+            break;
+        }
+        cursor = crc_end;
+    }
+
+    entries
 }
 
 /// Load linked/saved root paths without scanning their contents.
@@ -128,27 +252,31 @@ pub async fn open_folder_in_file_explorer(folder_path: String) -> Result<(), Str
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         // Prefer explicit file managers to avoid bad/default MIME handlers.
-        let direct_candidates: &[(&str, &[&str])] = &[
-            ("/usr/bin/nautilus", &[target_ref]),
-            ("nautilus", &[target_ref]),
-            ("/usr/bin/dolphin", &[target_ref]),
-            ("dolphin", &[target_ref]),
-            ("/usr/bin/thunar", &[target_ref]),
-            ("thunar", &[target_ref]),
-            ("/usr/bin/nemo", &[target_ref]),
-            ("nemo", &[target_ref]),
-            ("/usr/bin/pcmanfm", &[target_ref]),
-            ("pcmanfm", &[target_ref]),
-            ("/usr/bin/xdg-open", &[target_ref]),
-            ("/bin/xdg-open", &[target_ref]),
-            ("xdg-open", &[target_ref]),
-            ("/usr/bin/gio", &["open", target_ref]),
-            ("gio", &["open", target_ref]),
+        let direct_candidates: Vec<(&str, Vec<String>)> = vec![
+            ("/usr/bin/nautilus", vec![target_ref.to_string()]),
+            ("nautilus", vec![target_ref.to_string()]),
+            ("/usr/bin/dolphin", vec![target_ref.to_string()]),
+            ("dolphin", vec![target_ref.to_string()]),
+            ("/usr/bin/thunar", vec![target_ref.to_string()]),
+            ("thunar", vec![target_ref.to_string()]),
+            ("/usr/bin/nemo", vec![target_ref.to_string()]),
+            ("nemo", vec![target_ref.to_string()]),
+            ("/usr/bin/pcmanfm", vec![target_ref.to_string()]),
+            ("pcmanfm", vec![target_ref.to_string()]),
+            ("/usr/bin/xdg-open", vec![target_ref.to_string()]),
+            ("/bin/xdg-open", vec![target_ref.to_string()]),
+            ("xdg-open", vec![target_ref.to_string()]),
+            (
+                "/usr/bin/gio",
+                vec!["open".to_string(), target_ref.to_string()],
+            ),
+            ("gio", vec!["open".to_string(), target_ref.to_string()]),
         ];
 
         let mut last_error = String::new();
-        for (command, args) in direct_candidates {
-            match spawn_detached(command, args) {
+        for (command, args) in &direct_candidates {
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            match spawn_detached(*command, &args_refs) {
                 Ok(()) => return Ok(()),
                 Err(error) => last_error = error,
             }
@@ -245,44 +373,42 @@ pub async fn reveal_file_in_file_explorer(file_path: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub async fn read_sidecar_caption_for_image(
+pub async fn read_image_embedded_metadata(
     image_path: String,
-) -> Result<SidecarCaptionResult, String> {
+) -> Result<EmbeddedMetadataResult, String> {
     let normalized = image_path.trim().to_string();
     if normalized.is_empty() {
-        return Ok(SidecarCaptionResult {
-            exists: false,
-            content: String::new(),
+        return Ok(EmbeddedMetadataResult {
+            entries: Vec::new(),
         });
     }
 
     tokio::task::spawn_blocking(move || {
         let image_path = Path::new(&normalized);
-        let mut sidecar_path = image_path.to_path_buf();
-        sidecar_path.set_extension("txt");
-
-        if !sidecar_path.exists() || !sidecar_path.is_file() {
-            return Ok(SidecarCaptionResult {
-                exists: false,
-                content: String::new(),
+        if !image_path.exists() || !image_path.is_file() {
+            return Ok(EmbeddedMetadataResult {
+                entries: Vec::new(),
             });
         }
 
-        let bytes = std::fs::read(&sidecar_path)
-            .map_err(|error| format!("Failed to read caption sidecar file: {error}"))?;
-        let mut content = String::from_utf8_lossy(&bytes).to_string();
-        if content.starts_with('\u{feff}') {
-            content = content.trim_start_matches('\u{feff}').to_string();
-        }
-        content = content.replace("\r\n", "\n").replace('\r', "\n");
+        let extension = image_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let bytes = std::fs::read(image_path)
+            .map_err(|error| format!("Failed to read image for metadata: {error}"))?;
 
-        Ok(SidecarCaptionResult {
-            exists: true,
-            content,
-        })
+        let entries = if extension == "png" {
+            parse_png_text_entries(&bytes)
+        } else {
+            Vec::new()
+        };
+
+        Ok(EmbeddedMetadataResult { entries })
     })
     .await
-    .map_err(|error| format!("Caption sidecar task failed: {error}"))?
+    .map_err(|error| format!("Embedded metadata task failed: {error}"))?
 }
 
 /// Open the native folder picker and return a small initial preview scan.
@@ -477,20 +603,80 @@ pub async fn clear_saved_roots(app: AppHandle) -> Result<bool, String> {
 /// return a base64-encoded ZIP archive.
 #[tauri::command]
 pub async fn process_bulk_export(
+    _app: AppHandle,
     files: Vec<ExportInputFile>,
     config: ExportConfig,
 ) -> Result<ProcessBulkExportResult, String> {
-    // Run the CPU-heavy image processing off the main thread.
-    tokio::task::spawn_blocking(move || crate::image_processing::process_bulk_export(files, config))
-        .await
-        .map_err(|error| format!("Export task failed: {error}"))?
+    tokio::task::spawn_blocking(move || {
+        crate::image_processing::process_bulk_export(files, config, None)
+    })
+    .await
+    .map_err(|error| format!("Export task failed: {error}"))?
 }
 
 #[tauri::command]
 pub async fn execute_export_plan(
+    _app: AppHandle,
     request: ExecuteExportPlanRequest,
 ) -> Result<ExecuteExportPlanResult, String> {
-    tokio::task::spawn_blocking(move || crate::image_processing::execute_export_plan(request))
-        .await
-        .map_err(|error| format!("Export plan task failed: {error}"))?
+    tokio::task::spawn_blocking(move || {
+        crate::image_processing::execute_export_plan(request, None)
+    })
+    .await
+    .map_err(|error| format!("Export plan task failed: {error}"))?
 }
+
+#[tauri::command]
+pub async fn get_watermark_setup_status(app: AppHandle) -> Result<watermark_setup::WatermarkSetupStatus, String> {
+    Ok(watermark_setup::get_status(&app))
+}
+
+#[tauri::command]
+pub async fn run_watermark_setup_step(app: AppHandle, step: String) -> Result<(), String> {
+    let app_clone = app.clone();
+    watermark_setup::run_setup_step(app, step, move |msg| {
+        let _ = app_clone.emit("watermark-setup-progress", msg);
+    }).await
+}
+
+#[tauri::command]
+pub async fn remove_watermark_ai(app: AppHandle, image_path: String) -> Result<String, String> {
+    let status = watermark_setup::get_status(&app);
+    if !status.deps_installed {
+        return Err("Watermark remover not setup. Please go to settings and finish setup.".to_string());
+    }
+
+    let repo_path = watermark_setup::get_remover_path(&app);
+    let python_exe = status.python_path;
+    let script_path = repo_path.join("remwm.py");
+
+    // We'll create a temporary output file
+    let temp_dir = std::env::temp_dir();
+    let output_path = temp_dir.join(format!("remwm_{}.png", uuid::Uuid::new_v4()));
+
+    let output = Command::new(python_exe)
+        .arg(script_path)
+        .arg(&image_path)
+        .arg(&output_path)
+        .arg("--max-bbox-percent")
+        .arg("10")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("Failed to execute script: {}", e))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Script failed: {}", err));
+    }
+
+    if !output_path.exists() {
+        return Err("Output file was not created by script".to_string());
+    }
+
+    let bytes = std::fs::read(&output_path).map_err(|e| e.to_string())?;
+    // Base64 encode for frontend preview
+    use base64::{Engine as _, engine::general_purpose};
+    Ok(format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(bytes)))
+}
+

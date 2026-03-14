@@ -56,6 +56,12 @@ const toGalleryImageShell = (raw: RawUploadImage): GalleryImage => {
   const naturalWidth = hasNativeDimensions ? nativeWidth : 1;
   const naturalHeight = hasNativeDimensions ? nativeHeight : 1;
   const naturalRatio = naturalWidth / Math.max(1, naturalHeight);
+  const sourceLastModified =
+    Number(raw.nativeLastModifiedAt || raw?.file?.lastModified || 0) || 0;
+  const sourceAccessedAt =
+    Number(raw.nativeAccessedAt || sourceLastModified || 0) || 0;
+  const sourceCreatedAt =
+    Number(raw.nativeCreatedAt || sourceLastModified || 0) || 0;
 
   return {
     ...raw,
@@ -67,7 +73,9 @@ const toGalleryImageShell = (raw: RawUploadImage): GalleryImage => {
     naturalHeight,
     naturalRatio: Number.isFinite(naturalRatio) && naturalRatio > 0 ? naturalRatio : 1,
     dimensionsLoaded: hasNativeDimensions,
-    sourceLastModified: Number(raw?.file?.lastModified || 0) || 0,
+    sourceAccessedAt,
+    sourceCreatedAt,
+    sourceLastModified,
     sourceSize: raw.nativeSize ?? (Number(raw?.file?.size || 0) || 0),
     loadedAt: getNowTs(),
   };

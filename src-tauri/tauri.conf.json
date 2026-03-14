@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Beautiful Batches",
-  "version": "0.5.0",
-  "identifier": "com.ctrlcat.beautifulbatches",
+  "version": "0.4.0",
+  "identifier": "com.supSugam.beautifulbatches",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -31,37 +31,28 @@
     "createUpdaterArtifacts": false,
     "fileAssociations": [
       {
-        "ext": [
-          "jpg",
-          "jpeg"
-        ],
+        "ext": ["jpg", "jpeg"],
         "name": "JPEG Image",
         "description": "JPEG image file",
         "mimeType": "image/jpeg",
         "role": "Editor"
       },
       {
-        "ext": [
-          "png"
-        ],
+        "ext": ["png"],
         "name": "PNG Image",
         "description": "PNG image file",
         "mimeType": "image/png",
         "role": "Editor"
       },
       {
-        "ext": [
-          "webp"
-        ],
+        "ext": ["webp"],
         "name": "WebP Image",
         "description": "WebP image file",
         "mimeType": "image/webp",
         "role": "Editor"
       },
       {
-        "ext": [
-          "avif"
-        ],
+        "ext": ["avif"],
         "name": "AVIF Image",
         "description": "AVIF image file",
         "mimeType": "image/avif",

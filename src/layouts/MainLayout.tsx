@@ -3,7 +3,12 @@ import { AnimatePresence } from 'framer-motion';
 import { JustifiedGrid } from '../components/JustifiedGrid';
 import { Inspector } from '../components/Inspector';
 import FolderExplorer from '../components/FolderExplorer';
-import type { CropEntry, FolderNode, GalleryImage } from '../types/app';
+import type {
+  CropEntry,
+  FolderNode,
+  GalleryImage,
+  InspectorMode,
+} from '../types/app';
 import './MainLayout.css';
 
 type ApplyTargetType = 'all' | 'rest' | 'prev';
@@ -48,6 +53,7 @@ type MainLayoutProps = {
   selectedFolderPaths?: Set<string>;
   onSetFolderSelectionMode?: (value: boolean) => void;
   onSetSelectedFolderPaths?: (paths: Set<string>) => void;
+  inspectorMode: InspectorMode;
 };
 
 const MainLayout = ({
@@ -84,6 +90,7 @@ const MainLayout = ({
   selectedFolderPaths = new Set<string>(),
   onSetFolderSelectionMode,
   onSetSelectedFolderPaths,
+  inspectorMode,
 }: MainLayoutProps) => {
   const navigableImages = images.filter((img) => !excludedById.has(img.id));
   const selectedImage =
@@ -179,6 +186,7 @@ const MainLayout = ({
             hasPrev={
               navigableImages.findIndex((img) => img.id === selectedId) > 0
             }
+            mode={inspectorMode}
           />
         )}
       </AnimatePresence>
