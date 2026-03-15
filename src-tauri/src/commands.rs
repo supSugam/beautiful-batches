@@ -6,6 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use flate2::read::ZlibDecoder;
 use rfd::FileDialog;
 use tauri::AppHandle;
+use serde_json::json;
 
 use crate::helpers::is_supported_image_path;
 use crate::models::{
@@ -17,8 +18,7 @@ use crate::scanner::{
     list_directory_children, scan_folder_by_path, scan_single_image_path, scan_single_root,
 };
 use crate::storage;
-use crate::watermark_setup;
-use tauri::Emitter;
+use crate::watermark_sidecar;
 
 const PICK_SCAN_PREVIEW_LIMIT: usize = 240;
 static PENDING_QUICK_EDIT_PATHS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
@@ -626,57 +626,85 @@ pub async fn execute_export_plan(
     .map_err(|error| format!("Export plan task failed: {error}"))?
 }
 
+// ── Watermark Sidecar ────────────────────────────────────────────────
+
 #[tauri::command]
-pub async fn get_watermark_setup_status(app: AppHandle) -> Result<watermark_setup::WatermarkSetupStatus, String> {
-    Ok(watermark_setup::get_status(&app))
+pub async fn get_watermark_sidecar_status(
+    app: AppHandle,
+) -> Result<crate::models::WatermarkSidecarStatus, String> {
+    watermark_sidecar::get_status(&app)
 }
 
 #[tauri::command]
-pub async fn run_watermark_setup_step(app: AppHandle, step: String) -> Result<(), String> {
-    let app_clone = app.clone();
-    watermark_setup::run_setup_step(app, step, move |msg| {
-        let _ = app_clone.emit("watermark-setup-progress", msg);
-    }).await
+pub async fn run_watermark_setup(
+    app: AppHandle,
+    force_reinstall: Option<bool>,
+) -> Result<(), String> {
+    watermark_sidecar::run_setup(app, force_reinstall.unwrap_or(false)).await
 }
 
 #[tauri::command]
-pub async fn remove_watermark_ai(app: AppHandle, image_path: String) -> Result<String, String> {
-    let status = watermark_setup::get_status(&app);
-    if !status.deps_installed {
-        return Err("Watermark remover not setup. Please go to settings and finish setup.".to_string());
-    }
-
-    let repo_path = watermark_setup::get_remover_path(&app);
-    let python_exe = status.python_path;
-    let script_path = repo_path.join("remwm.py");
-
-    // We'll create a temporary output file
-    let temp_dir = std::env::temp_dir();
-    let output_path = temp_dir.join(format!("remwm_{}.png", uuid::Uuid::new_v4()));
-
-    let output = Command::new(python_exe)
-        .arg(script_path)
-        .arg(&image_path)
-        .arg(&output_path)
-        .arg("--max-bbox-percent")
-        .arg("10")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("Failed to execute script: {}", e))?;
-
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Script failed: {}", err));
-    }
-
-    if !output_path.exists() {
-        return Err("Output file was not created by script".to_string());
-    }
-
-    let bytes = std::fs::read(&output_path).map_err(|e| e.to_string())?;
-    // Base64 encode for frontend preview
-    use base64::{Engine as _, engine::general_purpose};
-    Ok(format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(bytes)))
+pub async fn reset_watermark_setup(app: AppHandle) -> Result<(), String> {
+    watermark_sidecar::reset_setup(&app)
 }
 
+#[tauri::command]
+pub async fn download_watermark_model(app: AppHandle, model_id: String) -> Result<(), String> {
+    watermark_sidecar::download_model(app, model_id).await
+}
+
+#[tauri::command]
+pub async fn delete_watermark_model(app: AppHandle, model_id: String) -> Result<(), String> {
+    watermark_sidecar::delete_model(app, model_id).await
+}
+
+#[tauri::command]
+pub async fn load_watermark_models(
+    app: AppHandle,
+    detection_model: String,
+    inpainting_model: String,
+) -> Result<(), String> {
+    let bridge_arc = watermark_sidecar::get_or_create_bridge(&app)?;
+    let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
+
+    let response = bridge.send_command(json!({
+        "command": "load",
+        "detection_model": detection_model,
+        "inpainting_model": inpainting_model
+    }))?;
+
+    if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
+        return Err(err.to_string());
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_watermark_single(
+    app: AppHandle,
+    image_path: String,
+    prompt: Option<String>,
+    max_bbox_percent: Option<f64>,
+) -> Result<String, String> {
+    let bridge_arc = watermark_sidecar::ensure_bridge_ready(&app)?;
+    let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
+
+    let response = bridge.send_command(json!({
+        "command": "process",
+        "path": image_path,
+        "max_bbox_percent": max_bbox_percent.unwrap_or(10.0),
+        "prompt": prompt.unwrap_or_else(|| "watermark".to_string())
+    }))?;
+
+    if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
+        return Err(err.to_string());
+    }
+
+    if response.get("status").and_then(|s| s.as_str()) == Some("success") {
+        let base64 = response.get("image_base64").and_then(|s| s.as_str()).ok_or("No image data returned")?;
+        Ok(format!("data:image/png;base64,{base64}"))
+    } else {
+        Err(response.get("message").and_then(|s| s.as_str()).unwrap_or("Skipped").to_string())
+    }
+}

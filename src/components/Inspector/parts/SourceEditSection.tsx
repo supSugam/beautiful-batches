@@ -1,5 +1,5 @@
 import React from 'react';
-import { Stamp, Undo, Redo } from 'lucide-react';
+import { Undo, Redo, Stamp, Loader2 } from 'lucide-react';
 
 /**
  * SourceEditSection — AI-powered edits like watermark removal and background removal.
@@ -16,6 +16,7 @@ type SourceEditSectionProps = {
   canUndo: boolean;
   canRedo: boolean;
   isProcessing?: boolean;
+  isWatermarkReady?: boolean;
 };
 
 const BandageIcon = ({ size = 16 }: { size?: number }) => (
@@ -67,6 +68,7 @@ const SourceEditSection = ({
   canUndo,
   canRedo,
   isProcessing = false,
+  isWatermarkReady = false,
 }: SourceEditSectionProps) => {
   return (
     <section className="control-section source-edit-section">
@@ -118,14 +120,28 @@ const SourceEditSection = ({
       <div className="icon-action-row">
         <div className="icon-action-row-inner" style={{ gap: '8px' }}>
           <button
-            className="btn-icon-box"
+            className={`btn-icon-box ${isWatermarkReady ? 'ai-magic-btn' : ''}`}
             onClick={onRemoveWatermarks}
-            disabled={isProcessing}
-            title="Remove Watermarks"
-            style={{ display: 'flex', flexDirection: 'column', gap: '4px', height: 'auto', padding: '12px 0' }}
+            disabled={isProcessing || !isWatermarkReady}
+            title={isWatermarkReady ? 'Automatically remove watermarks (loads AI on first use)' : 'Watermark AI not set up — open Settings to deploy'}
+            style={{ display: 'flex', flexDirection: 'column', gap: '4px', height: 'auto', padding: '12px 0', position: 'relative' }}
           >
-            <Stamp size={20} />
+            {isProcessing ? <Loader2 size={20} className="spin" /> : <Stamp size={20} />}
             <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', opacity: 0.8 }}>Watermark</span>
+            <div style={{ 
+              position: 'absolute', 
+              top: -4, 
+              right: -4, 
+              fontSize: '0.5rem', 
+              fontWeight: 900,
+              padding: '2px 4px',
+              borderRadius: '4px',
+              background: isWatermarkReady ? 'var(--success)' : 'var(--border)',
+              color: isWatermarkReady ? 'white' : 'var(--text-muted)',
+              border: '1px solid var(--bg-surface)'
+            }}>
+              {isWatermarkReady ? 'READY' : 'MISSING'}
+            </div>
           </button>
 
           <button

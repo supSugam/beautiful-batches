@@ -179,3 +179,38 @@ export interface ResolvedDraftsById {
   modifiedAtById: Record<string, number>;
   restoredCount: number;
 }
+
+// ── Watermark Sidecar ────────────────────────────────────────────────
+
+export type WatermarkModelStatus = {
+  id: string;
+  name: string;
+  description: string;
+  downloaded: boolean;
+  sizeBytes: number;
+  expectedSizeBytes: number;
+  modelType: 'detection' | 'inpainting';
+};
+
+export type WatermarkSidecarStatus = {
+  pythonInstalled: boolean;
+  gitInstalled: boolean;
+  uvInstalled: boolean;
+  repoCloned: boolean;
+  venvExists: boolean;
+  dependenciesInstalled: boolean;
+  isBridgeActive: boolean;
+  isModelsLoaded: boolean;
+  modelCachePath: string;
+  repoPath: string;
+  pythonPath: string;
+  detectionModels: WatermarkModelStatus[];
+  inpaintingModels: WatermarkModelStatus[];
+  totalSizeBytes: number;
+};
+
+export type WatermarkSidecarSettings = {
+  useUv: boolean;
+  detectionModelId: string;
+  inpaintingModelId: string;
+};

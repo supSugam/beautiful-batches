@@ -65,8 +65,9 @@ export type NativeLoadSavedRootsResult = {
   savedRootPaths: string[];
 };
 
-export const isTauriRuntime = () =>
-  typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
+export const isTauriRuntime = () => {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+};
 
 const normalizePath = (value: unknown): string =>
   String(value || '').replace(/\\/g, '/');

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
 import {
@@ -24,7 +24,7 @@ import SourceEditSection from './Inspector/parts/SourceEditSection';
 import { useInspectorLogic } from './Inspector/hooks/useInspectorLogic';
 import { useSidebarResize } from './Inspector/hooks/useSidebarResize';
 import useStore from '../store/useStore';
-import type { CropEntry, GalleryImage, InspectorMode } from '../types/app';
+import type { CropEntry, GalleryImage, InspectorMode, WatermarkSidecarStatus } from '../types/app';
 
 
 import './Inspector.css';
@@ -78,6 +78,20 @@ const InspectorEditSession = ({
   hasPrev,
   onApplyTo,
 }: InspectorEditSessionProps) => {
+  const [sidecarStatus, setSidecarStatus] = useState<WatermarkSidecarStatus | null>(null);
+  
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const status = await invoke<WatermarkSidecarStatus>('get_watermark_sidecar_status');
+        setSidecarStatus(status);
+      } catch (e) {
+        console.error('Failed to fetch sidecar status:', e);
+      }
+    };
+    void fetchStatus();
+  }, []);
+
   const cropState = useStore((state) => state.cropData.get(image.id));
   const normalizedImagePath = String(image?.absolutePath || '')
     .replace(/\\/g, '/')
@@ -219,6 +233,7 @@ const InspectorEditSession = ({
               canUndo={logic.canUndo}
               canRedo={logic.canRedo}
               isProcessing={logic.isProcessing}
+              isWatermarkReady={Boolean(sidecarStatus?.dependenciesInstalled)}
             />
           </section>
 

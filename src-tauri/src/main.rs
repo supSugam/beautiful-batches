@@ -7,7 +7,7 @@ mod models;
 mod scanner;
 mod storage;
 mod thumbnails;
-mod watermark_setup;
+mod watermark_sidecar;
 
 #[cfg(target_os = "macos")]
 use crate::helpers::is_supported_image_path;
@@ -144,9 +144,13 @@ fn main() {
             commands::list_directory_children_by_path,
             commands::remove_saved_root,
             commands::clear_saved_roots,
-            commands::get_watermark_setup_status,
-            commands::run_watermark_setup_step,
-            commands::remove_watermark_ai,
+            commands::get_watermark_sidecar_status,
+            commands::run_watermark_setup,
+            commands::reset_watermark_setup,
+            commands::download_watermark_model,
+            commands::delete_watermark_model,
+            commands::load_watermark_models,
+            commands::remove_watermark_single,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -1,272 +1,447 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { 
-  X, 
-  Settings, 
-  CheckCircle2, 
-  AlertCircle, 
-  Download, 
-  Terminal, 
-  RefreshCcw,
-  ExternalLink,
-  ChevronRight,
-  GitBranch,
-  Box
-} from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import {
+  X,
+  CheckCircle2,
+  AlertTriangle,
+  Terminal,
+  Cpu,
+  RefreshCcw,
+  Trash2,
+  Download,
+  Database,
+} from 'lucide-react';
+import type { WatermarkSidecarStatus } from '../../types/app';
 import './WatermarkSettingsModal.css';
-
-type WatermarkSetupStatus = {
-  pythonInstalled: boolean;
-  gitInstalled: boolean;
-  uvInstalled: boolean;
-  repoCloned: boolean;
-  venvReady: boolean;
-  depsInstalled: boolean;
-  repoPath: string;
-  pythonPath: string;
-};
 
 type WatermarkSettingsModalProps = {
   onClose: () => void;
 };
 
+type LogEntry = {
+  message: string;
+  isError: boolean;
+  timestamp: number;
+};
+
+const formatBytes = (bytes: number): string => {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+const HealthRow = ({ label, ok, error }: { label: string; ok: boolean; error?: boolean }) => (
+  <div className="wsm-health-row">
+    <span className={`wsm-led ${ok ? 'is-ok' : error ? 'is-error' : 'is-idle'}`} />
+    <span className="wsm-health-label">{label}</span>
+    <span className="wsm-health-status">{ok ? 'OK' : error ? 'Missing' : 'Pending'}</span>
+  </div>
+);
+
 const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
-  const [status, setStatus] = useState<WatermarkSetupStatus | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [isSettingUp, setIsSettingUp] = useState(false);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState<WatermarkSidecarStatus | null>(null);
+  const [isSetupRunning, setIsSetupRunning] = useState(false);
+  const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [selectedDetectionId, setSelectedDetectionId] = useState('florence-2-large');
+  const [selectedInpaintingId, setSelectedInpaintingId] = useState('lama');
 
-  const fetchStatus = async () => {
+  const logsContainerRef = useRef<HTMLDivElement>(null);
+
+  const fetchStatus = useCallback(async () => {
     try {
-      const res = await invoke<WatermarkSetupStatus>('get_watermark_setup_status');
-      setStatus(res);
-    } catch (e) {
-      console.error(e);
+      const nextStatus = await invoke<WatermarkSidecarStatus>('get_watermark_sidecar_status');
+      setStatus(nextStatus);
+    } catch (error) {
+      console.error('Failed to fetch sidecar status:', error);
     }
-  };
-
-  useEffect(() => {
-    fetchStatus();
-    
-    const unlisten = listen<string>('watermark-setup-progress', (event) => {
-      setLogs(prev => [...prev, event.payload].slice(-100));
-    });
-
-    return () => {
-      unlisten.then(f => f());
-    };
   }, []);
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    void fetchStatus();
+    const interval = setInterval(fetchStatus, 5000);
+    return () => clearInterval(interval);
+  }, [fetchStatus]);
+
+  useEffect(() => {
+    let unlistenFn: (() => void) | null = null;
+    let isMounted = true;
+    const setupListener = async () => {
+      const unlisten = await listen<LogEntry>('watermark-setup-log', (event) => {
+        if (!isMounted) return;
+        setLogs((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.message === event.payload.message && last.timestamp === event.payload.timestamp) return prev;
+          return [...prev, event.payload];
+        });
+      });
+      if (isMounted) unlistenFn = unlisten; else unlisten();
+    };
+    void setupListener();
+    return () => { isMounted = false; if (unlistenFn) unlistenFn(); };
+  }, []);
+
+  useEffect(() => {
+    if (logsContainerRef.current) {
+      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
+    }
   }, [logs]);
 
-  const runStep = async (step: string) => {
-    setIsSettingUp(true);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); onClose(); }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const handleRunSetup = async (force = false) => {
+    if (isSetupRunning) return;
+    setIsSetupRunning(true);
+    setLogs([]);
     try {
-      await invoke('run_watermark_setup_step', { step });
+      await invoke('run_watermark_setup', { forceReinstall: force });
       await fetchStatus();
-    } catch (e: any) {
-      setLogs(prev => [...prev, `Error: ${e}`]);
+    } catch (error) {
+      console.error('Setup failed:', error);
     } finally {
-      setIsSettingUp(false);
+      setIsSetupRunning(false);
     }
   };
 
-  const StatusItem = ({ 
-    label, 
-    value, 
-    icon: Icon,
-    description 
-  }: { 
-    label: string; 
-    value: boolean; 
-    icon: any;
-    description: string;
-  }) => (
-    <div className={`watermark-setup-status-item ${value ? 'is-ready' : 'is-missing'}`}>
-      <div className="status-item-icon">
-        <Icon size={18} />
-      </div>
-      <div className="status-item-content">
-        <div className="status-item-header">
-          <span className="status-item-label">{label}</span>
-          {value ? (
-            <span className="status-badge ready">Ready</span>
-          ) : (
-            <span className="status-badge missing">Missing</span>
-          )}
-        </div>
-        <p className="status-item-description">{description}</p>
-      </div>
-    </div>
-  );
+  const handleLoadModels = async () => {
+    if (isLoadingModels) return;
+    setIsLoadingModels(true);
+    try {
+      const detId = selectedDetectionId === 'florence-2-large'
+        ? 'florence-community/Florence-2-large'
+        : 'florence-community/Florence-2-base';
+      await invoke('load_watermark_models', { detectionModel: detId, inpaintingModel: selectedInpaintingId });
+      await fetchStatus();
+    } catch (error) {
+      console.error('Failed to load models:', error);
+      setLogs(prev => [...prev, { message: `Load failed: ${error}`, isError: true, timestamp: Date.now() }]);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!window.confirm('Are you sure you want to delete the Watermark AI setup?')) return;
+    try {
+      await invoke('reset_watermark_setup');
+      setLogs([]);
+      await fetchStatus();
+    } catch (error) {
+      console.error('Reset failed:', error);
+    }
+  };
+
+  const handleDownloadModel = async (modelId: string) => {
+    if (downloadingModelId) return;
+    setDownloadingModelId(modelId);
+    try {
+      await invoke('download_watermark_model', { modelId });
+      await fetchStatus();
+    } catch (error) {
+      console.error('Download failed:', error);
+    } finally {
+      setDownloadingModelId(null);
+    }
+  };
+
+  const handleDeleteModel = async (modelId: string) => {
+    if (!window.confirm('Are you sure you want to delete this model?')) return;
+    try {
+      await invoke('delete_watermark_model', { modelId });
+      await fetchStatus();
+    } catch (error) {
+      console.error('Delete failed:', error);
+    }
+  };
+
+  const isFullySetup = status
+    ? status.repoCloned && status.venvExists && status.dependenciesInstalled
+    : false;
 
   return (
-    <div className="export-plan-overlay" role="presentation" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <motion.section 
+    <div
+      className="wsm-overlay"
+      role="presentation"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <motion.section
         layout
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="export-plan-modal watermark-setup-modal"
+        className="wsm-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Watermark AI setup"
+        aria-label="Watermark AI Settings"
+        initial={{ opacity: 0, y: 10, scale: 0.99 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.18, ease: 'easeOut' }}
       >
-        <header className="export-plan-header">
-          <div className="header-title">
-            <Settings size={20} className="header-icon" />
-            <div>
-              <h2>AI Watermark Remover Setup</h2>
-              <p>Configure the optional AI processing module</p>
+        {/* Header */}
+        <header className="wsm-header">
+          <div className="wsm-header-left">
+            <div className="wsm-header-icon">
+              <Cpu size={14} />
             </div>
+            <div>
+              <h2>Watermark AI</h2>
+              <p>Object detection and context-aware inpainting engine.</p>
+            </div>
+            {status && (
+              <div className="wsm-storage-pill">
+                <Database size={11} />
+                <span>{formatBytes(status.totalSizeBytes)}</span>
+              </div>
+            )}
           </div>
-          <button className="btn-icon export-plan-close" onClick={onClose} aria-label="Close">
-            <X size={20} />
+          <button
+            type="button"
+            className="btn-icon wsm-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={16} />
           </button>
         </header>
 
-        <div className="export-plan-body">
-          <div className="export-plan-config-grid">
-            <div className="setup-section status-section">
-              <h3 className="section-label" style={{ marginBottom: '12px' }}>System Requirements</h3>
-              <div className="status-list">
-                <StatusItem 
-                  label="Python" 
-                  value={status?.pythonInstalled || false} 
-                  icon={Box}
-                  description="Required to run AI models and scripts."
-                />
-                <StatusItem 
-                  label="Git" 
-                  value={status?.gitInstalled || false} 
-                  icon={GitBranch}
-                  description="Required to clone and update the remover module."
-                />
-                <StatusItem 
-                  label="UV (Optional)" 
-                  value={status?.uvInstalled || false} 
-                  icon={Terminal}
-                  description="Blazing fast package manager. Recommended."
-                />
-              </div>
-
-              <h3 className="section-label" style={{ marginTop: '24px', marginBottom: '12px' }}>Module Status</h3>
-              <div className="status-list">
-                <StatusItem 
-                  label="Repository" 
-                  value={status?.repoCloned || false} 
-                  icon={Download}
-                  description="The core remover source code."
-                />
-                <StatusItem 
-                  label="Environment" 
-                  value={status?.venvReady || false} 
-                  icon={Box}
-                  description="Isolated Python environment for dependencies."
-                />
-                <StatusItem 
-                  label="Dependencies" 
-                  value={status?.depsInstalled || false} 
-                  icon={CheckCircle2}
-                  description="AI libraries (PyTorch, Transformers, etc)."
-                />
-              </div>
+        {/* Body */}
+        <div className="wsm-body">
+          {!status ? (
+            <div className="wsm-loading">
+              <RefreshCcw size={22} className="spin" style={{ color: 'var(--accent)' }} />
+              <span>Scanning environment…</span>
             </div>
-
-            <div className="setup-section actions-section" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div className="export-plan-card">
-                <h3 className="section-label" style={{ marginBottom: '4px' }}>Setup Actions</h3>
-                <div className="action-buttons" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-                  <button 
-                    className="btn-action" 
-                    disabled={isSettingUp || !status?.gitInstalled}
-                    onClick={() => runStep('clone')}
-                  >
-                    <Download size={16} />
-                    <span>{status?.repoCloned ? 'Update Repo' : 'Clone Repo'}</span>
-                    <ChevronRight size={14} className="arrow" />
-                  </button>
-                  
-                  <button 
-                    className="btn-action" 
-                    disabled={isSettingUp || !status?.repoCloned || !status?.pythonInstalled}
-                    onClick={() => runStep('venv')}
-                  >
-                    <Box size={16} />
-                    <span>Create Venv</span>
-                    <ChevronRight size={14} className="arrow" />
-                  </button>
-
-                  <button 
-                    className="btn-action" 
-                    disabled={isSettingUp || !status?.venvReady}
-                    onClick={() => runStep('deps')}
-                  >
-                    <Terminal size={16} />
-                    <span>Install Dependencies</span>
-                    <ChevronRight size={14} className="arrow" />
-                  </button>
-                </div>
-
-                <div className="terminal-logs" style={{ marginTop: '16px' }}>
-                  <div className="terminal-header">
-                    <Terminal size={12} />
-                    <span>Setup Logs</span>
-                    {isSettingUp && <RefreshCcw size={12} className="spin" />}
+          ) : (
+            <div className="wsm-grid">
+              {/* Left column: Health */}
+              <div className="wsm-col">
+                <section className="wsm-card">
+                  <h3>Engine Health</h3>
+                  <div className="wsm-health-list">
+                    <HealthRow label="Python" ok={status.pythonInstalled} error={!status.pythonInstalled} />
+                    <HealthRow label="Git" ok={status.gitInstalled} />
+                    <HealthRow label="uv Runtime" ok={status.uvInstalled} />
+                    <HealthRow label="Repository" ok={status.repoCloned} />
+                    <HealthRow label="Dependencies" ok={status.dependenciesInstalled} />
+                    <HealthRow label="Bridge" ok={status.isBridgeActive} />
                   </div>
-                  <div className="terminal-content">
+                </section>
+              </div>
+
+              {/* Right column: Unified model list + Logs */}
+              <div className="wsm-col">
+                <section className="wsm-card">
+                  <div className="wsm-models-header">
+                    <h3>Models</h3>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${status.isModelsLoaded ? 'btn-secondary' : 'btn-primary'}`}
+                      disabled={!isFullySetup || isSetupRunning || isLoadingModels}
+                      onClick={handleLoadModels}
+                    >
+                      {isLoadingModels
+                        ? <RefreshCcw size={13} className="spin" />
+                        : <Cpu size={13} />}
+                      {status.isModelsLoaded ? 'Reload Engine' : 'Initialize Engine'}
+                    </button>
+                  </div>
+
+                  {/* Detection group */}
+                  <p className="wsm-model-group-label">Detection</p>
+                  <div className="wsm-models-list">
+                    {status.detectionModels.map((model) => (
+                      <button
+                        key={model.id}
+                        type="button"
+                        className={`wsm-model-row ${selectedDetectionId === model.id ? 'is-selected' : ''}`}
+                        onClick={() => setSelectedDetectionId(model.id)}
+                      >
+                        <span className="wsm-model-radio" />
+                        <span className="wsm-model-info">
+                          <span className="wsm-model-name">{model.name}</span>
+                          <span className="wsm-model-desc">{model.description}</span>
+                        </span>
+                        <span className="wsm-model-action">
+                          {model.downloaded ? (
+                            <span className="wsm-model-ready">
+                              <CheckCircle2 size={13} />
+                              <span>{formatBytes(model.sizeBytes)}</span>
+                              <button
+                                type="button"
+                                className="btn-icon wsm-model-delete"
+                                onClick={(e) => { e.stopPropagation(); void handleDeleteModel(model.id); }}
+                                aria-label="Delete model"
+                                title="Delete model"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </span>
+                          ) : model.sizeBytes > 0 ? (
+                            <span className="wsm-model-ready wsm-model-error">
+                              <AlertTriangle size={13} style={{ color: 'var(--danger)' }} />
+                              <span style={{ color: 'var(--danger)' }}>Incomplete ({formatBytes(model.sizeBytes)})</span>
+                              <span
+                                role="button"
+                                className="wsm-deploy-btn"
+                                onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
+                                aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
+                              >
+                                {downloadingModelId === model.id
+                                  ? <RefreshCcw size={12} className="spin" />
+                                  : <Download size={12} />}
+                                Redownload
+                              </span>
+                            </span>
+                          ) : (
+                            <span
+                              role="button"
+                              className="wsm-deploy-btn"
+                              onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
+                              aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
+                            >
+                              {downloadingModelId === model.id
+                                ? <RefreshCcw size={12} className="spin" />
+                                : <Download size={12} />}
+                              Deploy
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Inpainting group */}
+                  <p className="wsm-model-group-label">Inpainting</p>
+                  <div className="wsm-models-list">
+                    {status.inpaintingModels.map((model) => (
+                      <button
+                        key={model.id}
+                        type="button"
+                        className={`wsm-model-row ${selectedInpaintingId === model.id ? 'is-selected' : ''}`}
+                        onClick={() => setSelectedInpaintingId(model.id)}
+                      >
+                        <span className="wsm-model-radio" />
+                        <span className="wsm-model-info">
+                          <span className="wsm-model-name">{model.name}</span>
+                          <span className="wsm-model-desc">{model.description}</span>
+                        </span>
+                        <span className="wsm-model-action">
+                          {model.downloaded ? (
+                            <span className="wsm-model-ready">
+                              <CheckCircle2 size={13} />
+                              <span>{formatBytes(model.sizeBytes)}</span>
+                              <button
+                                type="button"
+                                className="btn-icon wsm-model-delete"
+                                onClick={(e) => { e.stopPropagation(); void handleDeleteModel(model.id); }}
+                                aria-label="Delete model"
+                                title="Delete model"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </span>
+                          ) : model.sizeBytes > 0 ? (
+                            <span className="wsm-model-ready wsm-model-error">
+                              <AlertTriangle size={13} style={{ color: 'var(--danger)' }} />
+                              <span style={{ color: 'var(--danger)' }}>Incomplete ({formatBytes(model.sizeBytes)})</span>
+                              <span
+                                role="button"
+                                className="wsm-deploy-btn"
+                                onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
+                                aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
+                              >
+                                {downloadingModelId === model.id
+                                  ? <RefreshCcw size={12} className="spin" />
+                                  : <Download size={12} />}
+                                Redownload
+                              </span>
+                            </span>
+                          ) : (
+                            <span
+                              role="button"
+                              className="wsm-deploy-btn"
+                              onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
+                              aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
+                            >
+                              {downloadingModelId === model.id
+                                ? <RefreshCcw size={12} className="spin" />
+                                : <Download size={12} />}
+                              Deploy
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="wsm-card wsm-card-logs">
+                  <div className="wsm-logs-header">
+                    <span><Terminal size={12} />Engine Streams</span>
+                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => setLogs([])}>
+                      Clear
+                    </button>
+                  </div>
+                  <div className="wsm-log-body" ref={logsContainerRef}>
                     {logs.length === 0 ? (
-                      <span className="dim">No logs yet...</span>
+                      <p className="wsm-log-empty">Waiting for signals…</p>
                     ) : (
-                      logs.map((log, i) => <div key={i} className="log-line">{log}</div>)
+                      logs.map((log, i) => (
+                        <div key={`${log.timestamp}-${i}`} className={`wsm-log-entry ${log.isError ? 'is-error' : ''}`}>
+                          <span className="wsm-log-time">
+                            [{new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]
+                          </span>
+                          <span className="wsm-log-msg">{log.message}</span>
+                        </div>
+                      ))
                     )}
-                    <div ref={logEndRef} />
                   </div>
-                </div>
-              </div>
-
-              <div className="info-box" style={{ 
-                padding: '12px', 
-                background: 'rgba(129, 140, 248, 0.05)', 
-                border: '1px solid rgba(129, 140, 248, 0.2)', 
-                borderRadius: 'var(--radius-ui)',
-                display: 'flex',
-                gap: '12px',
-                alignItems: 'flex-start'
-              }}>
-                <AlertCircle size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)', line_height: '1.4' }}>
-                  This module requires about 2-4GB of disk space for dependencies and models. 
-                  Models are downloaded automatically on first run.
-                </p>
+                </section>
               </div>
             </div>
-          </div>
+          )}
         </div>
 
-        <footer className="export-plan-footer">
-          <div className="footer-links">
-            <a href="https://github.com/supSugam/WatermarkRemover-AI" target="_blank" rel="noreferrer" style={{ 
-              fontSize: '0.75rem', 
-              color: 'var(--text-muted)', 
-              text_decoration: 'none', 
-              display: 'flex', 
-              align_items: 'center', 
-              gap: '4px' 
-            }}>
-              View Source <ExternalLink size={12} />
-            </a>
+        {/* Footer */}
+        <footer className="wsm-footer">
+          <div className="wsm-footer-status">
+            {!status ? null : isFullySetup ? (
+              <span className="wsm-status-ok">
+                <CheckCircle2 size={13} />
+                AI Core Ready
+              </span>
+            ) : (
+              <span className="wsm-status-warn">
+                <AlertTriangle size={13} />
+                Setup Required
+              </span>
+            )}
           </div>
-          <div className="export-plan-actions">
-            <button className="btn btn-secondary" onClick={onClose}>
-              Cancel
+          <div className="wsm-footer-actions">
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost btn-danger-ghost"
+              onClick={handleReset}
+            >
+              <Trash2 size={13} />
+              Wipe Engine
             </button>
-            <button className="btn btn-primary" onClick={onClose}>
-              {status?.depsInstalled ? 'Done' : 'Configure Later'}
+            <button
+              type="button"
+              className={`btn btn-sm ${isFullySetup ? 'btn-secondary' : 'btn-primary'}`}
+              onClick={() => handleRunSetup()}
+              disabled={isSetupRunning || !status?.pythonInstalled || !status?.gitInstalled}
+            >
+              <RefreshCcw size={13} className={isSetupRunning ? 'spin' : ''} />
+              {isSetupRunning ? 'Rebuilding…' : status?.repoCloned ? 'Update System' : 'One-Click Deploy'}
             </button>
           </div>
         </footer>

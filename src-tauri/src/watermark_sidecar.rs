@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager, Emitter};
 use serde::Serialize;
 
 use crate::models::{WatermarkSidecarStatus, WatermarkModelStatus};
+use reqwest::Client;
 
 const REPO_URL: &str = "https://github.com/supSugam/WatermarkRemover-AI";
 const REPO_DIR_NAME: &str = "watermark-remover-ai";
@@ -55,7 +56,7 @@ fn get_venv_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn get_models_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = sidecar_base_dir(app)?.join("models");
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&dir).map_err(|e: std::io::Error| e.to_string())?;
     Ok(dir)
 }
 
@@ -119,6 +120,67 @@ fn check_venv_lib_exists(app: &AppHandle, lib_name: &str) -> bool {
     false
 }
 
+
+async fn fetch_hf_model_size(model_id: &str, file_name: &str) -> Option<u64> {
+    let url = format!("https://huggingface.co/{}/resolve/main/{}", model_id, file_name);
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    
+    let resp = client.head(&url).send().await.ok()?;
+    if resp.status().is_success() {
+        if let Some(content_length) = resp.headers().get(reqwest::header::CONTENT_LENGTH) {
+            if let Ok(size) = content_length.to_str().unwrap_or("").parse::<u64>() {
+                return Some(size);
+            }
+        }
+    }
+    None
+}
+
+fn check_model_files(models_dir: &Path, id: &str, name: &str, desc: &str, expected: u64, m_type: &str) -> WatermarkModelStatus {
+    let p = if id.contains("florence") {
+        models_dir.join("hub").join(format!("models--florence-community--{}", id.replace("florence-2-", "Florence-2-")))
+    } else {
+        models_dir.join("torch").join("hub").join("checkpoints").join("big-lama.pt")
+    };
+    
+    let size = if p.is_file() {
+        p.metadata().map(|m| m.len()).unwrap_or(0)
+    } else if p.is_dir() {
+        fn get_dir_size(path: &Path) -> u64 {
+            let mut size = 0;
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_file() {
+                        size += p.metadata().map(|m| m.len()).unwrap_or(0);
+                    } else if p.is_dir() {
+                        size += get_dir_size(&p);
+                    }
+                }
+            }
+            size
+        }
+        get_dir_size(&p)
+    } else {
+        0
+    };
+
+    let downloaded = size > 0 && (size as f64) > (expected as f64 * 0.85);
+
+    WatermarkModelStatus {
+        id: id.to_string(),
+        name: name.to_string(),
+        description: desc.to_string(),
+        downloaded,
+        size_bytes: size,
+        expected_size_bytes: expected,
+        model_type: m_type.to_string(),
+    }
+}
+
 pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
     let repo_path = get_repo_path(app)?;
     let python_exe = get_python_executable(app)?;
@@ -136,6 +198,18 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
         (check_venv_lib_exists(app, "iopaint") || check_venv_lib_exists(app, "IOPaint")) && 
         check_venv_lib_exists(app, "transformers");
 
+    let mut is_bridge_active = false;
+    let mut is_models_loaded = false;
+    
+    if let Ok(instance) = BRIDGE_INSTANCE.lock() {
+        if let Some(bridge_arc) = instance.as_ref() {
+            if let Ok(bridge) = bridge_arc.lock() {
+                is_bridge_active = true;
+                is_models_loaded = bridge.is_ready;
+            }
+        }
+    }
+
     let mut status = WatermarkSidecarStatus {
         python_installed,
         git_installed,
@@ -143,60 +217,21 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
         repo_cloned,
         venv_exists,
         dependencies_installed,
+        is_bridge_active,
+        is_models_loaded,
         repo_path: repo_path.to_string_lossy().to_string(),
         python_path: python_exe.to_string_lossy().to_string(),
         model_cache_path: models_dir.to_string_lossy().to_string(),
         ..Default::default()
     };
 
-    let check_model = |id: &str, name: &str, desc: &str, expected: u64, m_type: &str| -> WatermarkModelStatus {
-        let p = if id.contains("florence") {
-            models_dir.join("hub").join(format!("models--florence-community--{}", id.replace("florence-2-", "Florence-2-")))
-        } else {
-            models_dir.join("torch").join("hub").join("checkpoints").join("big-lama.pt")
-        };
-        
-        let size = if p.is_file() {
-            p.metadata().map(|m| m.len()).unwrap_or(0)
-        } else if p.is_dir() {
-            fn get_dir_size(path: &Path) -> u64 {
-                let mut size = 0;
-                if let Ok(entries) = std::fs::read_dir(path) {
-                    for entry in entries.flatten() {
-                        let p = entry.path();
-                        if p.is_file() {
-                            size += p.metadata().map(|m| m.len()).unwrap_or(0);
-                        } else if p.is_dir() {
-                            size += get_dir_size(&p);
-                        }
-                    }
-                }
-                size
-            }
-            get_dir_size(&p)
-        } else {
-            0
-        };
-
-        let downloaded = size > 0;
-        WatermarkModelStatus {
-            id: id.to_string(),
-            name: name.to_string(),
-            description: desc.to_string(),
-            downloaded,
-            size_bytes: size,
-            expected_size_bytes: expected,
-            model_type: m_type.to_string(),
-        }
-    };
-
     status.detection_models = vec![
-        check_model(DETECTION_MODEL_BASE.0, DETECTION_MODEL_BASE.1, DETECTION_MODEL_BASE.2, DETECTION_MODEL_BASE.3, "detection"),
-        check_model(DETECTION_MODEL_LARGE.0, DETECTION_MODEL_LARGE.1, DETECTION_MODEL_LARGE.2, DETECTION_MODEL_LARGE.3, "detection"),
+        check_model_files(&models_dir, DETECTION_MODEL_BASE.0, DETECTION_MODEL_BASE.1, DETECTION_MODEL_BASE.2, DETECTION_MODEL_BASE.3, "detection"),
+        check_model_files(&models_dir, DETECTION_MODEL_LARGE.0, DETECTION_MODEL_LARGE.1, DETECTION_MODEL_LARGE.2, DETECTION_MODEL_LARGE.3, "detection"),
     ];
 
     status.inpainting_models = vec![
-        check_model(INPAINTING_MODEL_LAMA.0, INPAINTING_MODEL_LAMA.1, INPAINTING_MODEL_LAMA.2, INPAINTING_MODEL_LAMA.3, "inpainting"),
+        check_model_files(&models_dir, INPAINTING_MODEL_LAMA.0, INPAINTING_MODEL_LAMA.1, INPAINTING_MODEL_LAMA.2, INPAINTING_MODEL_LAMA.3, "inpainting"),
     ];
 
     status.total_size_bytes = status.detection_models.iter().map(|m| m.size_bytes).sum::<u64>()
@@ -229,46 +264,69 @@ pub struct WatermarkBridgeRuntime {
     _child: Child,
     stdin: ChildStdin,
     reader: BufReader<std::process::ChildStdout>,
+    pub is_ready: bool,
 }
 
 impl WatermarkBridgeRuntime {
     pub fn new(app: &AppHandle) -> Result<Self, String> {
         let repo_path = get_repo_path(app)?;
         let python_exe = get_python_executable(app)?;
-        let bridge_script = repo_path.join("bridge.py");
         let models_dir = get_models_dir(app)?;
 
         if !python_exe.exists() {
             return Err("Python environment not found. Please run setup first.".to_string());
         }
 
+        // bridge.py lives in the cloned WatermarkRemover-AI repo (fetched via git pull in setup)
+        let bridge_script = repo_path.join("bridge.py");
+
+        if !bridge_script.exists() {
+            return Err("bridge.py not found in repository. Please run setup to clone/update the repo.".to_string());
+        }
+
         let mut child = Command::new(python_exe)
-            .arg(bridge_script)
+            .arg(&bridge_script)
             .env("HF_HOME", &models_dir)
             .env("XDG_CACHE_HOME", &models_dir)
             .env("TORCH_HOME", &models_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            .current_dir(repo_path)
+            .current_dir(&repo_path)
             .spawn()
             .map_err(|e| format!("Failed to spawn bridge: {e}"))?;
 
         let stdin = child.stdin.take().ok_or("Failed to open stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
-        let reader = BufReader::new(stdout);
+        let mut reader = BufReader::new(stdout);
 
-        Ok(Self { _child: child, stdin, reader })
+        // Read the startup message: {"status": "bridge_started"}
+        // Our deployed bridge.py always prints this. Wait up to 30s for Python to import.
+        let mut startup_line = String::new();
+        reader.read_line(&mut startup_line)
+            .map_err(|e| format!("Bridge failed to start (no startup message): {e}"))?;
+        eprintln!("[watermark-bridge] startup: {}", startup_line.trim());
+
+        Ok(Self { _child: child, stdin, reader, is_ready: false })
     }
 
     pub fn send_command(&mut self, cmd: serde_json::Value) -> Result<serde_json::Value, String> {
         let line = format!("{}\n", cmd.to_string());
-        self.stdin.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
-        self.stdin.flush().map_err(|e| e.to_string())?;
+        self.stdin.write_all(line.as_bytes()).map_err(|e: std::io::Error| e.to_string())?;
+        self.stdin.flush().map_err(|e: std::io::Error| e.to_string())?;
 
         let mut response = String::new();
-        self.reader.read_line(&mut response).map_err(|e| e.to_string())?;
-        serde_json::from_str(&response).map_err(|e| e.to_string())
+        self.reader.read_line(&mut response).map_err(|e: std::io::Error| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(&response).map_err(|e: serde_json::Error| e.to_string())?;
+        
+        // Track readiness
+        if let Some(cmd_val) = cmd.get("command") {
+            if cmd_val == "load" && parsed.get("status").and_then(|s| s.as_str()) == Some("ready") {
+                self.is_ready = true;
+            }
+        }
+        
+        Ok(parsed)
     }
 }
 
@@ -281,6 +339,42 @@ pub fn get_or_create_bridge(app: &AppHandle) -> Result<Arc<Mutex<WatermarkBridge
         *instance = Some(Arc::new(Mutex::new(bridge)));
     }
     Ok(instance.as_ref().unwrap().clone())
+}
+
+/// Auto-start bridge and load models if not already ready.
+/// This is the main entry point for commands that need the bridge.
+pub fn ensure_bridge_ready(app: &AppHandle) -> Result<Arc<Mutex<WatermarkBridgeRuntime>>, String> {
+    let bridge_arc = get_or_create_bridge(app)?;
+    
+    // Check if models are already loaded
+    {
+        let bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
+        if bridge.is_ready {
+            return Ok(bridge_arc.clone());
+        }
+    }
+    
+    // Models not loaded yet — send load command with defaults
+    eprintln!("[watermark-bridge] Auto-loading models (first use)...");
+    {
+        let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
+        let response = bridge.send_command(serde_json::json!({
+            "command": "load",
+            "detection_model": "florence-community/Florence-2-large",
+            "inpainting_model": "lama"
+        }))?;
+        
+        // Check for errors — Python sends {"error": null} on success, {"error": "msg"} on failure
+        if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
+            return Err(format!("Failed to auto-load models: {err}"));
+        }
+        
+        if response.get("status").and_then(|s| s.as_str()) != Some("ready") {
+            return Err("Bridge did not report ready after loading models".to_string());
+        }
+    }
+    
+    Ok(bridge_arc)
 }
 
 pub async fn download_model(app: AppHandle, model_id: String) -> Result<(), String> {
@@ -307,7 +401,7 @@ pub async fn download_model(app: AppHandle, model_id: String) -> Result<(), Stri
     let app_clone = app.clone();
     let stdout_handle = std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             emit_log(&app_clone, &line, false);
         }
     });
@@ -315,7 +409,7 @@ pub async fn download_model(app: AppHandle, model_id: String) -> Result<(), Stri
     let app_clone_err = app.clone();
     let stderr_handle = std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             emit_log(&app_clone_err, &line, true);
         }
     });
@@ -331,6 +425,28 @@ pub async fn download_model(app: AppHandle, model_id: String) -> Result<(), Stri
         emit_log(&app, &format!("Model {model_id} download failed! Check logs above."), true);
         Err(format!("Download failed for {model_id}"))
     }
+}
+
+
+pub async fn delete_model(app: AppHandle, model_id: String) -> Result<(), String> {
+    let models_dir = get_models_dir(&app)?;
+    emit_log(&app, &format!("Deleting model {}...", model_id), false);
+    
+    let p = if model_id.contains("florence") {
+        models_dir.join("hub").join(format!("models--florence-community--{}", model_id.replace("florence-2-", "Florence-2-")))
+    } else {
+        models_dir.join("torch").join("hub").join("checkpoints").join("big-lama.pt")
+    };
+    
+    if p.exists() {
+        if p.is_dir() { std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?; }
+        else { std::fs::remove_file(&p).map_err(|e| e.to_string())?; }
+        emit_log(&app, &format!("Model {} deleted successfully.", model_id), false);
+    } else {
+        emit_log(&app, &format!("Model {} not found on disk.", model_id), false);
+    }
+    
+    Ok(())
 }
 
 pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), String> {

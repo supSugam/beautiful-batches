@@ -79,8 +79,8 @@ export const ImageCard = memo(
     };
 
     const handleSelect = useCallback(() => {
-      if (excluded) return;
-      onSelect(selected ? null : image.id);
+      if (excluded || selected) return;
+      onSelect(image.id);
     }, [excluded, image.id, onSelect, selected]);
 
     // Live Crop Visuals

@@ -4,6 +4,7 @@ import type {
   CropEntry,
   PaddingFillType,
 } from '../../../types/app';
+import { invoke } from '@tauri-apps/api/core';
 
 type InspectorLogicImage = {
   id: string;
@@ -213,7 +214,7 @@ export function useInspectorLogic({
   // Original is at index -1, processed versions in the array.
   const [processedHistory, setProcessedHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const [isProcessing, _setIsProcessing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Clean up Object URLs when component unmounts or image changes
   useEffect(() => {
@@ -232,23 +233,6 @@ export function useInspectorLogic({
   const canUndo = historyIndex > -1;
   const canRedo = historyIndex < processedHistory.length - 1;
 
-  const handleRemoveWatermarks = useCallback(async () => {
-    if (!imageId || !image?.absolutePath) return;
-    _setIsProcessing(true);
-    try {
-      const res = await invoke<string>('remove_watermark_ai', {
-        imagePath: image.absolutePath,
-      });
-      setProcessedHistory((prev) => [...prev.slice(0, historyIndex + 1), res]);
-      setHistoryIndex((prev) => prev + 1);
-    } catch (e) {
-      console.error('Watermark removal failed:', e);
-      // You might want to show a toast or notification here
-    } finally {
-      _setIsProcessing(false);
-    }
-  }, [imageId, image?.absolutePath, historyIndex]);
-
   const handleRemoveBackground = useCallback(async () => {
     console.log('Remove Background clicked for:', imageId);
     // TODO: Implement background removal logic
@@ -265,6 +249,31 @@ export function useInspectorLogic({
       setHistoryIndex((prev) => prev + 1);
     }
   }, [canRedo]);
+
+  const handleRemoveWatermarks = useCallback(async () => {
+    console.log('handleRemoveWatermarks triggered', { imageId, absolutePath: image.absolutePath });
+    if (!imageId || !image.absolutePath) {
+      console.warn('Missing imageId or absolutePath');
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      console.log('Invoking remove_watermark_single...');
+      const resultBase64 = await invoke<string>('remove_watermark_single', {
+        imagePath: image.absolutePath,
+        maxBboxPercent: 10.0,
+      });
+      console.log('Result received, updating history');
+      // Add to history
+      setProcessedHistory((prev) => [...prev, resultBase64]);
+      setHistoryIndex((prev) => prev + 1);
+    } catch (error) {
+      console.error('Watermark removal failed:', error);
+      alert(`Watermark removal failed: ${error}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [imageId, image.absolutePath]);
 
   // ── Reset draft (full reset) ────────────────────────────
   const handleResetDraft = useCallback(() => {

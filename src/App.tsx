@@ -8,7 +8,6 @@ import React, {
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { AnimatePresence } from 'framer-motion';
 import {
   ACCEPTED_IMAGE_TYPES,
   clearSavedDirectoryHandle,
@@ -1838,11 +1837,11 @@ function App() {
         />
       )}
 
-      <AnimatePresence>
-        {watermarkSettingsOpen && (
-          <WatermarkSettingsModal onClose={() => setWatermarkSettingsOpen(false)} />
-        )}
-      </AnimatePresence>
+      {watermarkSettingsOpen && (
+        <WatermarkSettingsModal
+          onClose={() => setWatermarkSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }

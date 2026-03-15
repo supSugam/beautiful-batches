@@ -176,3 +176,36 @@ pub struct EmbeddedMetadataEntry {
 pub struct EmbeddedMetadataResult {
     pub entries: Vec<EmbeddedMetadataEntry>,
 }
+
+// ── Watermark Sidecar Status ─────────────────────────────────────────
+
+#[derive(Debug, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WatermarkSidecarStatus {
+    pub python_installed: bool,
+    pub git_installed: bool,
+    pub uv_installed: bool,
+    pub repo_cloned: bool,
+    pub venv_exists: bool,
+    pub dependencies_installed: bool,
+    pub is_bridge_active: bool,
+    pub is_models_loaded: bool,
+    pub model_cache_path: String,
+    pub repo_path: String,
+    pub python_path: String,
+    pub detection_models: Vec<WatermarkModelStatus>,
+    pub inpainting_models: Vec<WatermarkModelStatus>,
+    pub total_size_bytes: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WatermarkModelStatus {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub downloaded: bool,
+    pub size_bytes: u64,
+    pub expected_size_bytes: u64,
+    pub model_type: String, // "detection" or "inpainting"
+}

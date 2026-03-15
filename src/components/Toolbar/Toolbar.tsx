@@ -7,12 +7,12 @@ import {
   Scale,
   Shuffle,
   Eye,
-  SlidersHorizontal,
   Check,
   ChevronDown,
   Grid3x3,
   Maximize as MaximizeIcon,
   Download,
+  Settings,
   X,
   Minus,
   Square,
@@ -332,16 +332,6 @@ const Toolbar = ({
       <div className="toolbar-section toolbar-actions">
         <button
           type="button"
-          className="toolbar-mode-icon-btn"
-          onClick={onOpenWatermarkSettings}
-          title="Watermark AI Settings"
-          aria-label="Watermark AI Settings"
-        >
-          <SlidersHorizontal size={16} />
-        </button>
-
-        <button
-          type="button"
           className={`toolbar-mode-icon-btn ${inspectorMode === 'view' ? 'is-active' : ''}`}
           onClick={() => onSetInspectorMode(inspectorMode === 'edit' ? 'view' : 'edit')}
           title={inspectorMode === 'edit' ? 'Switch to View mode' : 'Switch to Edit mode'}
@@ -349,6 +339,16 @@ const Toolbar = ({
           aria-pressed={inspectorMode === 'view'}
         >
           <Eye size={16} />
+        </button>
+
+        <button
+          type="button"
+          className="toolbar-mode-icon-btn"
+          onClick={onOpenWatermarkSettings}
+          title="Watermark AI Settings"
+          aria-label="Watermark AI Settings"
+        >
+          <Settings size={16} />
         </button>
 
         <button
