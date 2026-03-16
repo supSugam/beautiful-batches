@@ -5,6 +5,7 @@ import type {
   PaddingFillType,
 } from '../../../types/app';
 import { invoke } from '@tauri-apps/api/core';
+import useStore from '../../../store/useStore';
 
 type InspectorLogicImage = {
   id: string;
@@ -58,6 +59,7 @@ export function useInspectorLogic({
   hasNext,
   hasPrev,
 }: UseInspectorLogicArgs) {
+  const setLastUsedHardware = useStore((state) => state.setLastUsedHardware);
   const imageId = image?.id || '';
   const naturalWidth = image?.naturalWidth || 1;
   const naturalHeight = image?.naturalHeight || 1;
@@ -212,9 +214,15 @@ export function useInspectorLogic({
   // ── Source Edit History ────────────────────────────────
   // Keeps track of processed versions of the source image.
   // Original is at index -1, processed versions in the array.
-  const [processedHistory, setProcessedHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [processedHistory, setProcessedHistory] = useState<string[]>(
+    () => cropState?.sourceEditHistory || [],
+  );
+  const [historyIndex, setHistoryIndex] = useState(
+    () => cropState?.sourceEditHistoryIndex ?? -1,
+  );
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isRemovingWatermark, setIsRemovingWatermark] = useState(false);
+  const [isRemovingBackground, setIsRemovingBackground] = useState(false);
 
   // Clean up Object URLs when component unmounts or image changes
   useEffect(() => {
@@ -223,7 +231,24 @@ export function useInspectorLogic({
         if (url.startsWith('blob:')) URL.revokeObjectURL(url);
       });
     };
-  }, [imageId]);
+  }, [imageId]); // Intentionally not including processedHistory since we only want to cleanup when image changes or unmounts
+
+  // Sync to store when history changes (if they don't match initialize ref)
+  useEffect(() => {
+    if (!imageId) return;
+    if (
+      cropStateRef.current?.sourceEditHistoryIndex !== historyIndex ||
+      cropStateRef.current?.sourceEditHistory !== processedHistory
+    ) {
+      onCropChange?.(imageId, {
+        ...cropStateRef.current,
+        sourceEditHistory: processedHistory,
+        sourceEditHistoryIndex: historyIndex,
+      });
+      // Force bumped last modified for draft persistence
+      useStore.getState().sessionModifiedAt.set(imageId, Date.now());
+    }
+  }, [processedHistory, historyIndex, imageId, onCropChange]);
 
   const activeImageObjectUrl = useMemo(() => {
     if (historyIndex === -1) return image?.objectUrl;
@@ -234,9 +259,28 @@ export function useInspectorLogic({
   const canRedo = historyIndex < processedHistory.length - 1;
 
   const handleRemoveBackground = useCallback(async () => {
-    console.log('Remove Background clicked for:', imageId);
-    // TODO: Implement background removal logic
-  }, [imageId]);
+    console.log('handleRemoveBackground triggered', { imageId, absolutePath: image.absolutePath });
+    if (!imageId || !image.absolutePath) {
+      console.warn('Missing imageId or absolutePath');
+      return;
+    }
+    setIsRemovingBackground(true);
+    try {
+      console.log('Invoking remove_background_single...');
+      const result = await invoke<{ imageBase64: string; deviceUsed?: string }>('remove_background_single', {
+        imagePath: image.absolutePath,
+      });
+      console.log('Background removal result received, updating history. Hardware used:', result.deviceUsed);
+      if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);
+      setProcessedHistory((prev) => [...prev, result.imageBase64]);
+      setHistoryIndex((prev) => prev + 1);
+    } catch (error) {
+      console.error('Background removal failed:', error);
+      alert(`Background removal failed: ${error}`);
+    } finally {
+      setIsRemovingBackground(false);
+    }
+  }, [imageId, image.absolutePath]);
 
   const undoSourceEdit = useCallback(() => {
     if (canUndo) {
@@ -250,28 +294,38 @@ export function useInspectorLogic({
     }
   }, [canRedo]);
 
+  const resetSourceEdit = useCallback(() => {
+    if (historyIndex > -1 || processedHistory.length > 0) {
+      setHistoryIndex(-1);
+      setProcessedHistory([]);
+    }
+  }, [historyIndex, processedHistory]);
+
+  const canReset = historyIndex > -1 || processedHistory.length > 0;
+
   const handleRemoveWatermarks = useCallback(async () => {
     console.log('handleRemoveWatermarks triggered', { imageId, absolutePath: image.absolutePath });
     if (!imageId || !image.absolutePath) {
       console.warn('Missing imageId or absolutePath');
       return;
     }
-    setIsProcessing(true);
+    setIsRemovingWatermark(true);
     try {
       console.log('Invoking remove_watermark_single...');
-      const resultBase64 = await invoke<string>('remove_watermark_single', {
+      const result = await invoke<{ imageBase64: string; deviceUsed?: string }>('remove_watermark_single', {
         imagePath: image.absolutePath,
         maxBboxPercent: 10.0,
       });
-      console.log('Result received, updating history');
+      console.log('Result received, updating history. Hardware used:', result.deviceUsed);
+      if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);
       // Add to history
-      setProcessedHistory((prev) => [...prev, resultBase64]);
+      setProcessedHistory((prev) => [...prev, result.imageBase64]);
       setHistoryIndex((prev) => prev + 1);
     } catch (error) {
       console.error('Watermark removal failed:', error);
       alert(`Watermark removal failed: ${error}`);
     } finally {
-      setIsProcessing(false);
+      setIsRemovingWatermark(false);
     }
   }, [imageId, image.absolutePath]);
 
@@ -465,6 +519,8 @@ export function useInspectorLogic({
   return {
     editor,
     isProcessing,
+    isRemovingWatermark,
+    isRemovingBackground,
 
     // Crop state
     aspect: editor.aspect,
@@ -523,6 +579,8 @@ export function useInspectorLogic({
     canRedo,
     undoSourceEdit,
     redoSourceEdit,
+    resetSourceEdit,
+    canReset,
 
     // AI Processing
     handleRemoveWatermarks,

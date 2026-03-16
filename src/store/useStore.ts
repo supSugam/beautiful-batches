@@ -488,6 +488,8 @@ export interface UseStoreState {
   expandedPaths: Set<string>;
   toggleExpandedPath: (path: string) => void;
   setExpandedPaths: (paths: Set<string>) => void;
+  lastUsedHardware: string | null;
+  setLastUsedHardware: (hardware: string | null) => void;
 }
 
 const useStore = create<UseStoreState>((set, get) => {
@@ -695,8 +697,11 @@ const useStore = create<UseStoreState>((set, get) => {
     explorerWidth: getDefaultExplorerWidth(),
     sortOption: 'last_modified',
     expandedPaths: new Set<string>(),
+    lastUsedHardware: null,
 
     // --- Actions ---
+
+    setLastUsedHardware: (hardware) => set({ lastUsedHardware: hardware }),
 
     // Images
     setImages: async (rawImages, rootNames) => {

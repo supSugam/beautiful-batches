@@ -203,6 +203,60 @@ input[type='number']::-webkit-inner-spin-button {
   to { transform: rotate(360deg); }
 }
 
+@keyframes nebula-move-1 {
+  0% { transform: translate(-20%, -20%) rotate(0deg); }
+  50% { transform: translate(10%, 10%) rotate(180deg); }
+  100% { transform: translate(-20%, -20%) rotate(360deg); }
+}
+
+@keyframes nebula-move-2 {
+  0% { transform: translate(10%, 10%) rotate(0deg); }
+  50% { transform: translate(-20%, -20%) rotate(-180deg); }
+  100% { transform: translate(10%, 10%) rotate(-360deg); }
+}
+
+.button-processing-glow {
+  position: relative !important;
+  overflow: hidden !important;
+  background: var(--bg-elevated) !important;
+}
+
+.button-processing-glow:disabled {
+  opacity: 1 !important;
+  cursor: wait;
+}
+
+.button-processing-glow::before,
+.button-processing-glow::after {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  width: 200%;
+  height: 200%;
+  z-index: 1;
+  pointer-events: none;
+  filter: blur(20px);
+  opacity: 0.6;
+}
+
+.button-processing-glow::before {
+  background: radial-gradient(circle at 30% 30%, var(--accent) 0%, transparent 60%);
+  animation: nebula-move-1 8s infinite linear;
+}
+
+.button-processing-glow::after {
+  background: radial-gradient(circle at 70% 70%, #a78bfa 0%, transparent 60%);
+  animation: nebula-move-2 10s infinite linear;
+  opacity: 0.4;
+}
+
+.button-processing-glow > * {
+  position: relative;
+  z-index: 2;
+  opacity: 1 !important;
+  color: var(--text-bright) !important;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }

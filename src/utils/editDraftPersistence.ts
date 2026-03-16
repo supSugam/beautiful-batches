@@ -187,6 +187,15 @@ const normalizePersistedPayload = (
     const sourceSize = Number(rawEntry.sourceSize || 0) || 0;
     const modifiedAt = Number(rawEntry.modifiedAt || 0) || 0;
 
+    // Validate sourceEditHistory array if present
+    if (crop?.sourceEditHistory && !Array.isArray(crop.sourceEditHistory)) {
+      delete crop.sourceEditHistory;
+    } else if (Array.isArray(crop?.sourceEditHistory)) {
+      crop.sourceEditHistory = crop.sourceEditHistory.filter(
+        (url) => typeof url === 'string',
+      );
+    }
+
     if (!crop && !hasCaptionOverride && !excluded) return;
 
     nextImages[normalizedPath] = {
@@ -294,7 +303,8 @@ export const persistFolderDrafts = async ({
         const isExcluded = excludedById.has(image.id);
         const isModified = sessionModifiedAt.has(image.id);
         const safeCrop = safeClone(cropData.get(image.id));
-        const hasDraft = isModified || hasCaptionOverride || isExcluded;
+        const hasSourceEdits = !!safeCrop?.sourceEditHistory?.length;
+        const hasDraft = isModified || hasCaptionOverride || isExcluded || hasSourceEdits;
 
         if (!hasDraft) {
           if (nextImages[relativePath]) {
@@ -304,7 +314,7 @@ export const persistFolderDrafts = async ({
           return;
         }
 
-        if (!safeCrop && !hasCaptionOverride && !isExcluded) {
+        if (!safeCrop && !hasCaptionOverride && !isExcluded && !hasSourceEdits) {
           if (nextImages[relativePath]) {
             delete nextImages[relativePath];
             didChange = true;

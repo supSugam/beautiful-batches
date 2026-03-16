@@ -680,13 +680,20 @@ pub async fn load_watermark_models(
     Ok(())
 }
 
+#[derive(serde::Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveResult {
+    pub image_base64: String,
+    pub device_used: Option<String>,
+}
+
 #[tauri::command]
 pub async fn remove_watermark_single(
     app: AppHandle,
     image_path: String,
     prompt: Option<String>,
     max_bbox_percent: Option<f64>,
-) -> Result<String, String> {
+) -> Result<RemoveResult, String> {
     let bridge_arc = watermark_sidecar::ensure_bridge_ready(&app)?;
     let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
 
@@ -703,8 +710,41 @@ pub async fn remove_watermark_single(
 
     if response.get("status").and_then(|s| s.as_str()) == Some("success") {
         let base64 = response.get("image_base64").and_then(|s| s.as_str()).ok_or("No image data returned")?;
-        Ok(format!("data:image/png;base64,{base64}"))
+        let device = response.get("device_used").and_then(|s| s.as_str()).map(|s| s.to_string());
+        Ok(RemoveResult {
+            image_base64: format!("data:image/png;base64,{base64}"),
+            device_used: device,
+        })
     } else {
         Err(response.get("message").and_then(|s| s.as_str()).unwrap_or("Skipped").to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn remove_background_single(
+    app: AppHandle,
+    image_path: String,
+) -> Result<RemoveResult, String> {
+    let bridge_arc = watermark_sidecar::get_or_create_bridge(&app)?;
+    let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
+
+    let response = bridge.send_command(json!({
+        "command": "remove_bg",
+        "path": image_path
+    }))?;
+
+    if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
+        return Err(err.to_string());
+    }
+
+    if response.get("status").and_then(|s| s.as_str()) == Some("success") {
+        let base64 = response.get("image_base64").and_then(|s| s.as_str()).ok_or("No image data returned")?;
+        let provider = response.get("provider_used").and_then(|s| s.as_str()).map(|s| s.to_string());
+        Ok(RemoveResult {
+            image_base64: format!("data:image/png;base64,{base64}"),
+            device_used: provider,
+        })
+    } else {
+        Err(response.get("message").and_then(|s| s.as_str()).unwrap_or("Background removal failed").to_string())
     }
 }

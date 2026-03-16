@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager, Emitter};
 use serde::Serialize;
 
 use crate::models::{WatermarkSidecarStatus, WatermarkModelStatus};
-use reqwest::Client;
+
 
 const REPO_URL: &str = "https://github.com/supSugam/WatermarkRemover-AI";
 const REPO_DIR_NAME: &str = "watermark-remover-ai";
@@ -34,6 +34,45 @@ const INPAINTING_MODEL_LAMA: (&str, &str, &str, u64) = (
     "Standard high-quality inpainting model (~200MB)",
     200_000_000,
 );
+const BACKGROUND_REMOVAL_MODEL_REMBG: (&str, &str, &str, u64) = (
+    "rembg",
+    "RMBG-1.4 (isnet)",
+    "Higher quality background removal model (~180MB)",
+    180_000_000,
+);
+
+pub fn detect_hardware() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        return "apple".to_string();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Simple check for NVIDIA on windows via nvidia-smi
+        if Command::new("nvidia-smi").output().is_ok() {
+            return "nvidia".to_string();
+        }
+        // DirectML is generally available on any modern Windows GPU (AMD/Intel/NVIDIA)
+        // so we can often default to "windows_gpu" or detect specifically for AMD
+        return "windows_gpu".to_string();
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        // Check NVIDIA on Linux
+        if Command::new("nvidia-smi").output().is_ok() {
+            return "nvidia".to_string();
+        }
+        
+        // Check AMD/ROCm on Linux
+        if Command::new("rocminfo").output().is_ok() || Path::new("/sys/module/amdgpu").exists() {
+            return "amd".to_string();
+        }
+    }
+    
+    "cpu".to_string()
+}
 
 fn sidecar_base_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app
@@ -121,27 +160,13 @@ fn check_venv_lib_exists(app: &AppHandle, lib_name: &str) -> bool {
 }
 
 
-async fn fetch_hf_model_size(model_id: &str, file_name: &str) -> Option<u64> {
-    let url = format!("https://huggingface.co/{}/resolve/main/{}", model_id, file_name);
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .ok()?;
-    
-    let resp = client.head(&url).send().await.ok()?;
-    if resp.status().is_success() {
-        if let Some(content_length) = resp.headers().get(reqwest::header::CONTENT_LENGTH) {
-            if let Ok(size) = content_length.to_str().unwrap_or("").parse::<u64>() {
-                return Some(size);
-            }
-        }
-    }
-    None
-}
+
 
 fn check_model_files(models_dir: &Path, id: &str, name: &str, desc: &str, expected: u64, m_type: &str) -> WatermarkModelStatus {
     let p = if id.contains("florence") {
         models_dir.join("hub").join(format!("models--florence-community--{}", id.replace("florence-2-", "Florence-2-")))
+    } else if id == "rembg" {
+        models_dir.join("isnet-general-use.onnx")
     } else {
         models_dir.join("torch").join("hub").join("checkpoints").join("big-lama.pt")
     };
@@ -196,16 +221,21 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
     // Optimized dependency check: just check for a few key markers on disk
     let dependencies_installed = venv_exists && repo_path.exists() && 
         (check_venv_lib_exists(app, "iopaint") || check_venv_lib_exists(app, "IOPaint")) && 
-        check_venv_lib_exists(app, "transformers");
+        check_venv_lib_exists(app, "transformers") &&
+        check_venv_lib_exists(app, "rembg");
 
     let mut is_bridge_active = false;
     let mut is_models_loaded = false;
     
     if let Ok(instance) = BRIDGE_INSTANCE.lock() {
         if let Some(bridge_arc) = instance.as_ref() {
-            if let Ok(bridge) = bridge_arc.lock() {
-                is_bridge_active = true;
+            is_bridge_active = true;
+            // Use try_lock to avoid blocking the status check if the bridge is currently processing an image
+            if let Ok(bridge) = bridge_arc.try_lock() {
                 is_models_loaded = bridge.is_ready;
+            } else {
+                // If we can't lock it, it's busy processing, so it's definitely loaded
+                is_models_loaded = true;
             }
         }
     }
@@ -222,6 +252,7 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
         repo_path: repo_path.to_string_lossy().to_string(),
         python_path: python_exe.to_string_lossy().to_string(),
         model_cache_path: models_dir.to_string_lossy().to_string(),
+        hardware_type: detect_hardware(),
         ..Default::default()
     };
 
@@ -234,8 +265,13 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
         check_model_files(&models_dir, INPAINTING_MODEL_LAMA.0, INPAINTING_MODEL_LAMA.1, INPAINTING_MODEL_LAMA.2, INPAINTING_MODEL_LAMA.3, "inpainting"),
     ];
 
+    status.background_removal_models = vec![
+        check_model_files(&models_dir, BACKGROUND_REMOVAL_MODEL_REMBG.0, BACKGROUND_REMOVAL_MODEL_REMBG.1, BACKGROUND_REMOVAL_MODEL_REMBG.2, BACKGROUND_REMOVAL_MODEL_REMBG.3, "background_removal"),
+    ];
+
     status.total_size_bytes = status.detection_models.iter().map(|m| m.size_bytes).sum::<u64>()
-        + status.inpainting_models.iter().map(|m| m.size_bytes).sum::<u64>();
+        + status.inpainting_models.iter().map(|m| m.size_bytes).sum::<u64>()
+        + status.background_removal_models.iter().map(|m| m.size_bytes).sum::<u64>();
 
     Ok(status)
 }
@@ -289,6 +325,7 @@ impl WatermarkBridgeRuntime {
             .env("HF_HOME", &models_dir)
             .env("XDG_CACHE_HOME", &models_dir)
             .env("TORCH_HOME", &models_dir)
+            .env("U2NET_HOME", &models_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -434,6 +471,8 @@ pub async fn delete_model(app: AppHandle, model_id: String) -> Result<(), String
     
     let p = if model_id.contains("florence") {
         models_dir.join("hub").join(format!("models--florence-community--{}", model_id.replace("florence-2-", "Florence-2-")))
+    } else if model_id == "rembg" {
+        models_dir.join("isnet-general-use.onnx")
     } else {
         models_dir.join("torch").join("hub").join("checkpoints").join("big-lama.pt")
     };
@@ -492,8 +531,6 @@ pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), Stri
         }
     }
 
-    // We no longer overwrite bridge.py, we trust the python repository.
-
     if !venv_path.exists() || force_reinstall {
         if venv_path.exists() {
             emit_log(&app, "Removing existing virtual environment...", false);
@@ -522,9 +559,43 @@ pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), Stri
         (python_exe.to_str().unwrap(), vec!["-m", "pip", "install"])
     };
 
-    // Step 1: Install all dependencies from requirements.txt (Core ML + iopaint helpers)
-    // We follow setup.sh logic: install core deps first.
-    emit_log(&app, &format!("Installing core dependencies (PyTorch, Transformers, etc) using {}...", cmd_name), false);
+    // Step 0: Detect hardware and install PyTorch/ONNX accordingly
+    let hw = detect_hardware();
+    emit_log(&app, &format!("Hardware detected: {}", hw.to_uppercase()), false);
+    emit_log(&app, &format!("Installing PyTorch and ONNX Runtime using {}...", cmd_name), false);
+
+    let mut hw_args = base_args.clone();
+    if hw == "nvidia" {
+        hw_args.extend(["--extra-index-url", "https://download.pytorch.org/whl/cu124", "torch>=2.4.0", "torchvision>=0.19.0", "onnxruntime-gpu", "rembg[gpu]"]);
+    } else if hw == "amd" {
+        // ROCm (Linux specifically)
+        hw_args.extend(["--extra-index-url", "https://download.pytorch.org/whl/rocm6.1", "torch>=2.4.0", "torchvision>=0.19.0", "onnxruntime-rocm", "rembg"]);
+    } else if hw == "windows_gpu" {
+        // Windows DirectML support
+        hw_args.extend(["torch>=2.4.0", "torchvision>=0.19.0", "onnxruntime-directml", "rembg"]);
+    } else if hw == "apple" {
+        // macOS CoreML/MPS support
+        hw_args.extend(["torch>=2.4.0", "torchvision>=0.19.0", "onnxruntime-coreml", "rembg"]);
+    } else {
+        hw_args.extend(["torch>=2.4.0", "torchvision>=0.19.0", "rembg"]);
+    }
+
+    // Always attempt to install OpenVINO for non-Apple systems as a high-performance CPU/iGPU fallback
+    if hw != "apple" {
+        hw_args.push("onnxruntime-openvino");
+    }
+
+    let mut cmd = Command::new(cmd_name);
+    cmd.args(&hw_args)
+       .env("VIRTUAL_ENV", &venv_path)
+       .env("HF_HOME", &models_dir)
+       .env("TORCH_HOME", &models_dir)
+       .current_dir(&repo_path);
+    let status = cmd.status().map_err(|e| e.to_string())?;
+    if !status.success() { return Err("Hardware dependency installation failed".to_string()); }
+
+    // Step 1: Install remaining dependencies from requirements.txt
+    emit_log(&app, &format!("Installing remaining bridge dependencies using {}...", cmd_name), false);
     let mut args = base_args.clone();
     args.extend(["--upgrade", "-r", "requirements.txt"]);
     let mut cmd = Command::new(cmd_name);
@@ -546,8 +617,8 @@ pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), Stri
        .env("HF_HOME", &models_dir)
        .env("TORCH_HOME", &models_dir)
        .current_dir(&repo_path);
-    let status = cmd.status().map_err(|e| e.to_string())?;
-    if !status.success() { return Err("iopaint installation failed".to_string()); }
+    let _status = cmd.status().map_err(|e| e.to_string())?;
+    // (rembg is now installed dynamically in Step 0 based on hardware)
 
     emit_log(&app, "Setup completed successfully!", false);
     Ok(())

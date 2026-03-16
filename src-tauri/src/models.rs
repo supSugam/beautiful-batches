@@ -195,7 +195,9 @@ pub struct WatermarkSidecarStatus {
     pub python_path: String,
     pub detection_models: Vec<WatermarkModelStatus>,
     pub inpainting_models: Vec<WatermarkModelStatus>,
+    pub background_removal_models: Vec<WatermarkModelStatus>,
     pub total_size_bytes: u64,
+    pub hardware_type: String,
 }
 
 #[derive(Debug, Serialize, Clone)]

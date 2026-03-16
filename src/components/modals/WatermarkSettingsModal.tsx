@@ -12,8 +12,11 @@ import {
   Trash2,
   Download,
   Database,
+  MonitorCheck,
+  Check,
 } from 'lucide-react';
 import type { WatermarkSidecarStatus } from '../../types/app';
+import useStore from '../../store/useStore';
 import './WatermarkSettingsModal.css';
 
 type WatermarkSettingsModalProps = {
@@ -34,24 +37,116 @@ const formatBytes = (bytes: number): string => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
-const HealthRow = ({ label, ok, error }: { label: string; ok: boolean; error?: boolean }) => (
-  <div className="wsm-health-row">
+const HealthDot = ({ label, ok, error }: { label: string; ok: boolean; error?: boolean }) => (
+  <div className="wsm-health-dot" title={`${label}: ${ok ? 'OK' : error ? 'Missing' : 'Pending'}`}>
     <span className={`wsm-led ${ok ? 'is-ok' : error ? 'is-error' : 'is-idle'}`} />
     <span className="wsm-health-label">{label}</span>
-    <span className="wsm-health-status">{ok ? 'OK' : error ? 'Missing' : 'Pending'}</span>
   </div>
 );
 
+const HardwareBadge: React.FC<{ type: string }> = ({ type }) => {
+  const normalized = type.toLowerCase();
+  let label = 'Unknown HW';
+  let color = 'var(--text-secondary)';
+  
+  if (normalized === 'apple') {
+    label = 'Apple Silicon';
+    color = 'var(--text-bright)';
+  } else if (normalized === 'nvidia') {
+    label = 'NVIDIA GPU';
+    color = '#76b900'; 
+  } else if (normalized === 'amd') {
+    label = 'AMD GPU';
+    color = '#ed1c24';
+  } else if (normalized === 'windows_gpu' || normalized.includes('gpu')) {
+    label = 'DirectML GPU';
+    color = 'var(--accent)';
+  } else if (normalized === 'cpu') {
+    label = 'CPU Mode';
+    color = '#0071c5';
+  }
+
+  return (
+    <div className="wsm-storage-pill" style={{ borderColor: color, color }}>
+      <MonitorCheck size={11} />
+      <span>{label}</span>
+    </div>
+  );
+};
+
+const DriverInstructions = ({ hw, os }: { hw: string; os: string }) => {
+  if (hw === 'apple') {
+    return (
+      <div className="wsm-driver-box">
+        <p>Your Mac is using <b>CoreML</b> and metal-accelerated <b>MPS</b>. No additional setup is required for maximum speed.</p>
+      </div>
+    );
+  }
+
+  if (os === 'windows') {
+    return (
+      <div className="wsm-driver-box">
+        <p>To enable <b>DirectML</b> or <b>CUDA</b> acceleration on Windows, ensure your drivers are up-to-date:</p>
+        <div className="wsm-command-list">
+          <div className="wsm-command-item">
+            <span>Drivers:</span>
+            <code>{hw === 'nvidia' ? 'Download NVIDIA Studio Drivers' : 'Download AMD Adrenalin Software'}</code>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (hw === 'amd' && os === 'linux') {
+    return (
+      <div className="wsm-driver-box">
+        <p>AMD Integrated GPU detected. <b>OpenVINO Turbo Mode</b> is already active to give you 2-5x speed with 0MB extra disk space.</p>
+        <div className="wsm-command-list">
+          <div className="wsm-command-item is-advanced">
+            <span>Optional (Discrete GPU only):</span>
+            <p>If you have a powerful dedicated AMD card, you can install ROCm, but be aware it uses <b>20GB+ of disk space</b>.</p>
+            <code>sudo apt install rocm-runtime</code>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (hw === 'nvidia' && os === 'linux') {
+    return (
+      <div className="wsm-driver-box">
+        <p>NVIDIA GPU detected, but CPU is being used. Install the <b>CUDA</b> toolkit:</p>
+          <div className="wsm-command-item">
+            <span>Ubuntu/Debian:</span>
+            <code>sudo apt install nvidia-cuda-toolkit</code>
+          </div>
+      </div>
+    );
+  }
+  return null;
+};
+
 const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
+  const lastUsedHardware = useStore((state) => state.lastUsedHardware);
   const [status, setStatus] = useState<WatermarkSidecarStatus | null>(null);
   const [isSetupRunning, setIsSetupRunning] = useState(false);
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
+  const [showWipeConfirm, setShowWipeConfirm] = useState(false);
+  const [confirmDeleteModelId, setConfirmDeleteModelId] = useState<string | null>(null);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [selectedDetectionId, setSelectedDetectionId] = useState('florence-2-large');
   const [selectedInpaintingId, setSelectedInpaintingId] = useState('lama');
 
   const logsContainerRef = useRef<HTMLDivElement>(null);
+  const wipeTimeoutRef = useRef<number | null>(null);
+  const deleteTimeoutRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    return () => {
+      if (wipeTimeoutRef.current) window.clearTimeout(wipeTimeoutRef.current);
+      Object.values(deleteTimeoutRef.current).forEach(t => window.clearTimeout(t));
+    };
+  }, []);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -132,13 +227,22 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
   };
 
   const handleReset = async () => {
-    if (!window.confirm('Are you sure you want to delete the Watermark AI setup?')) return;
+    if (!showWipeConfirm) {
+      setShowWipeConfirm(true);
+      if (wipeTimeoutRef.current) window.clearTimeout(wipeTimeoutRef.current);
+      wipeTimeoutRef.current = window.setTimeout(() => setShowWipeConfirm(false), 5000);
+      return;
+    }
+    
+    if (wipeTimeoutRef.current) window.clearTimeout(wipeTimeoutRef.current);
     try {
       await invoke('reset_watermark_setup');
       setLogs([]);
       await fetchStatus();
     } catch (error) {
       console.error('Reset failed:', error);
+    } finally {
+      setShowWipeConfirm(false);
     }
   };
 
@@ -156,12 +260,23 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
   };
 
   const handleDeleteModel = async (modelId: string) => {
-    if (!window.confirm('Are you sure you want to delete this model?')) return;
+    if (confirmDeleteModelId !== modelId) {
+      setConfirmDeleteModelId(modelId);
+      if (deleteTimeoutRef.current[modelId]) window.clearTimeout(deleteTimeoutRef.current[modelId]);
+      deleteTimeoutRef.current[modelId] = window.setTimeout(() => {
+        setConfirmDeleteModelId(prev => prev === modelId ? null : prev);
+      }, 5000);
+      return;
+    }
+    
+    if (deleteTimeoutRef.current[modelId]) window.clearTimeout(deleteTimeoutRef.current[modelId]);
     try {
       await invoke('delete_watermark_model', { modelId });
       await fetchStatus();
     } catch (error) {
       console.error('Delete failed:', error);
+    } finally {
+      setConfirmDeleteModelId(null);
     }
   };
 
@@ -192,24 +307,27 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
               <Cpu size={14} />
             </div>
             <div>
-              <h2>Watermark AI</h2>
-              <p>Object detection and context-aware inpainting engine.</p>
+              <h2>Settings</h2>
+              <p>Configure hardware acceleration and manage AI models for watermark removal.</p>
             </div>
+          </div>
+          
+          <div className="wsm-header-right">
             {status && (
               <div className="wsm-storage-pill">
                 <Database size={11} />
                 <span>{formatBytes(status.totalSizeBytes)}</span>
               </div>
             )}
+            <button
+              type="button"
+              className="btn-icon wsm-close"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              <X size={16} />
+            </button>
           </div>
-          <button
-            type="button"
-            className="btn-icon wsm-close"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <X size={16} />
-          </button>
         </header>
 
         {/* Body */}
@@ -220,25 +338,69 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
               <span>Scanning environment…</span>
             </div>
           ) : (
-            <div className="wsm-grid">
-              {/* Left column: Health */}
-              <div className="wsm-col">
-                <section className="wsm-card">
-                  <h3>Engine Health</h3>
-                  <div className="wsm-health-list">
-                    <HealthRow label="Python" ok={status.pythonInstalled} error={!status.pythonInstalled} />
-                    <HealthRow label="Git" ok={status.gitInstalled} />
-                    <HealthRow label="uv Runtime" ok={status.uvInstalled} />
-                    <HealthRow label="Repository" ok={status.repoCloned} />
-                    <HealthRow label="Dependencies" ok={status.dependenciesInstalled} />
-                    <HealthRow label="Bridge" ok={status.isBridgeActive} />
+            <>
+              <div className="wsm-health-indicator-row">
+                <HealthDot label="Hardware Detected" ok={true} />
+                <HealthDot label="Python" ok={status.pythonInstalled} error={!status.pythonInstalled} />
+                <HealthDot label="Git" ok={status.gitInstalled} />
+                <HealthDot label="uv Runtime" ok={status.uvInstalled} />
+                <HealthDot label="Repository" ok={status.repoCloned} />
+                <HealthDot label="Dependencies" ok={status.dependenciesInstalled} />
+                <HealthDot label="Bridge" ok={status.isBridgeActive} />
+              </div>
+              <div className="wsm-grid">
+                {/* Left column: Health */}
+                <div className="wsm-col">
+                  <section className="wsm-card is-hardware">
+                  <h3>Hardware Diagnostics</h3>
+                  <div className="wsm-diag-info">
+                    <div className="wsm-diag-row">
+                      <span>Physical Hardware</span>
+                      <HardwareBadge type={status.hardwareType || 'cpu'} />
+                    </div>
+                    <div className="wsm-diag-row">
+                      <span>Active Engine</span>
+                      <div className="wsm-diag-val">
+                        {lastUsedHardware ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span className={
+                              lastUsedHardware.toLowerCase().includes('cpu') ? 'is-warning' : 'is-success'
+                            }>
+                              {lastUsedHardware.replace('ExecutionProvider', '')}
+                            </span>
+                            {lastUsedHardware.includes('OpenVINO') && (
+                              <span className="hw-badge is-turbo" title="OpenVINO CPU/iGPU Optimization Active">
+                                <RefreshCcw size={10} className="spin-slow" />
+                                TURBO
+                              </span>
+                            )}
+                            {(lastUsedHardware.includes('CUDA') || lastUsedHardware.includes('ROCM') || lastUsedHardware.includes('CoreML') || lastUsedHardware.includes('DirectML')) && (
+                              <span className="hw-badge is-accelerated" title="Hardware Acceleration Active">
+                                <MonitorCheck size={10} />
+                                ACCELERATED
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="is-dimmed">No process run yet</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
+
+                  {(status.hardwareType === 'amd' || status.hardwareType === 'nvidia') && 
+                   (!lastUsedHardware || lastUsedHardware.toLowerCase().includes('cpu')) && (
+                    <DriverInstructions 
+                      hw={status.hardwareType} 
+                      os={window.navigator.platform.toLowerCase().includes('win') ? 'windows' : 'linux'} 
+                    />
+                  )}
                 </section>
               </div>
 
               {/* Right column: Unified model list + Logs */}
               <div className="wsm-col">
-                <section className="wsm-card">
+                <section className="wsm-card is-models">
                   <div className="wsm-models-header">
                     <h3>Models</h3>
                     <button
@@ -267,7 +429,9 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                         <span className="wsm-model-radio" />
                         <span className="wsm-model-info">
                           <span className="wsm-model-name">{model.name}</span>
-                          <span className="wsm-model-desc">{model.description}</span>
+                          <span className="wsm-model-desc">
+                            {model.id.includes('large') ? '~3GB' : model.id.includes('base') ? '~1GB' : model.description}
+                          </span>
                         </span>
                         <span className="wsm-model-action">
                           {model.downloaded ? (
@@ -276,12 +440,12 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                               <span>{formatBytes(model.sizeBytes)}</span>
                               <button
                                 type="button"
-                                className="btn-icon wsm-model-delete"
+                                className={`btn-icon wsm-model-delete ${confirmDeleteModelId === model.id ? 'is-confirming' : ''}`}
                                 onClick={(e) => { e.stopPropagation(); void handleDeleteModel(model.id); }}
                                 aria-label="Delete model"
-                                title="Delete model"
+                                title={confirmDeleteModelId === model.id ? "Confirm Delete" : "Delete model"}
                               >
-                                <Trash2 size={13} />
+                                {confirmDeleteModelId === model.id ? <Check size={13} /> : <Trash2 size={13} />}
                               </button>
                             </span>
                           ) : model.sizeBytes > 0 ? (
@@ -310,7 +474,7 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                               {downloadingModelId === model.id
                                 ? <RefreshCcw size={12} className="spin" />
                                 : <Download size={12} />}
-                              Deploy
+                              Download
                             </span>
                           )}
                         </span>
@@ -331,7 +495,9 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                         <span className="wsm-model-radio" />
                         <span className="wsm-model-info">
                           <span className="wsm-model-name">{model.name}</span>
-                          <span className="wsm-model-desc">{model.description}</span>
+                          <span className="wsm-model-desc">
+                            {model.id === 'lama' ? '~200MB' : model.id === 'rembg' ? '~200MB' : model.description}
+                          </span>
                         </span>
                         <span className="wsm-model-action">
                           {model.downloaded ? (
@@ -340,12 +506,12 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                               <span>{formatBytes(model.sizeBytes)}</span>
                               <button
                                 type="button"
-                                className="btn-icon wsm-model-delete"
+                                className={`btn-icon wsm-model-delete ${confirmDeleteModelId === model.id ? 'is-confirming' : ''}`}
                                 onClick={(e) => { e.stopPropagation(); void handleDeleteModel(model.id); }}
                                 aria-label="Delete model"
-                                title="Delete model"
+                                title={confirmDeleteModelId === model.id ? "Confirm Delete" : "Delete model"}
                               >
-                                <Trash2 size={13} />
+                                {confirmDeleteModelId === model.id ? <Check size={13} /> : <Trash2 size={13} />}
                               </button>
                             </span>
                           ) : model.sizeBytes > 0 ? (
@@ -374,7 +540,57 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                               {downloadingModelId === model.id
                                 ? <RefreshCcw size={12} className="spin" />
                                 : <Download size={12} />}
-                              Deploy
+                              Download
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Background Removal group */}
+                  <p className="wsm-model-group-label" style={{ marginTop: '12px' }}>BACKGROUND REMOVAL</p>
+                  <div className="wsm-models-list">
+                    {status.backgroundRemovalModels.map((model) => (
+                      <button
+                        key={model.id}
+                        type="button"
+                        className={`wsm-model-row ${model.id === 'rembg' ? 'is-selected' : ''}`}
+                        style={{ cursor: 'default' }}
+                      >
+                        <span className="wsm-model-radio" />
+                        <span className="wsm-model-info">
+                          <span className="wsm-model-name">{model.name}</span>
+                          <span className="wsm-model-desc">
+                            {model.id === 'rembg' ? '~200MB' : model.description}
+                          </span>
+                        </span>
+                        <span className="wsm-model-action">
+                          {model.downloaded ? (
+                            <span className="wsm-model-ready">
+                              <CheckCircle2 size={13} />
+                              <span>{formatBytes(model.sizeBytes)}</span>
+                              <button
+                                type="button"
+                                className={`btn-icon wsm-model-delete ${confirmDeleteModelId === model.id ? 'is-confirming' : ''}`}
+                                onClick={(e) => { e.stopPropagation(); void handleDeleteModel(model.id); }}
+                                aria-label="Delete model"
+                                title={confirmDeleteModelId === model.id ? "Confirm Delete" : "Delete model"}
+                              >
+                                {confirmDeleteModelId === model.id ? <Check size={13} /> : <Trash2 size={13} />}
+                              </button>
+                            </span>
+                          ) : (
+                            <span
+                              role="button"
+                              className="wsm-deploy-btn"
+                              onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
+                              aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
+                            >
+                              {downloadingModelId === model.id
+                                ? <RefreshCcw size={12} className="spin" />
+                                : <Download size={12} />}
+                              Download
                             </span>
                           )}
                         </span>
@@ -382,58 +598,58 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                     ))}
                   </div>
                 </section>
-
-                <section className="wsm-card wsm-card-logs">
-                  <div className="wsm-logs-header">
-                    <span><Terminal size={12} />Engine Streams</span>
-                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => setLogs([])}>
-                      Clear
-                    </button>
-                  </div>
-                  <div className="wsm-log-body" ref={logsContainerRef}>
-                    {logs.length === 0 ? (
-                      <p className="wsm-log-empty">Waiting for signals…</p>
-                    ) : (
-                      logs.map((log, i) => (
-                        <div key={`${log.timestamp}-${i}`} className={`wsm-log-entry ${log.isError ? 'is-error' : ''}`}>
-                          <span className="wsm-log-time">
-                            [{new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]
-                          </span>
-                          <span className="wsm-log-msg">{log.message}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </section>
               </div>
             </div>
-          )}
-        </div>
+            
+            <section className="wsm-card wsm-card-logs wsm-full-width-logs">
+              <div className="wsm-logs-header">
+                <span><Terminal size={12} />Engine Streams</span>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setLogs([])}>
+                  Clear
+                </button>
+              </div>
+              <div className="wsm-log-body" ref={logsContainerRef}>
+                {logs.length === 0 ? (
+                  <p className="wsm-log-empty">Waiting for signals…</p>
+                ) : (
+                  logs.map((log, i) => (
+                    <div key={`${log.timestamp}-${i}`} className={`wsm-log-entry ${log.isError ? 'is-error' : ''}`}>
+                      <span className="wsm-log-time">
+                        [{new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]
+                      </span>
+                      <span className="wsm-log-msg">{log.message}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </>
+        )}
+      </div>
 
         {/* Footer */}
         <footer className="wsm-footer">
+          <div className="wsm-footer-left">
+            <button
+              type="button"
+              className={`btn btn-sm btn-ghost btn-danger-ghost wsm-wipe-btn ${showWipeConfirm ? 'is-confirming' : ''}`}
+              onClick={handleReset}
+            >
+              {showWipeConfirm ? <Check size={13} /> : <Trash2 size={13} />}
+              Wipe Engine
+            </button>
+          </div>
+          
           <div className="wsm-footer-status">
-            {!status ? null : isFullySetup ? (
-              <span className="wsm-status-ok">
-                <CheckCircle2 size={13} />
-                AI Core Ready
-              </span>
-            ) : (
+            {!status || isFullySetup ? null : (
               <span className="wsm-status-warn">
                 <AlertTriangle size={13} />
                 Setup Required
               </span>
             )}
           </div>
+
           <div className="wsm-footer-actions">
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost btn-danger-ghost"
-              onClick={handleReset}
-            >
-              <Trash2 size={13} />
-              Wipe Engine
-            </button>
             <button
               type="button"
               className={`btn btn-sm ${isFullySetup ? 'btn-secondary' : 'btn-primary'}`}
@@ -441,7 +657,7 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
               disabled={isSetupRunning || !status?.pythonInstalled || !status?.gitInstalled}
             >
               <RefreshCcw size={13} className={isSetupRunning ? 'spin' : ''} />
-              {isSetupRunning ? 'Rebuilding…' : status?.repoCloned ? 'Update System' : 'One-Click Deploy'}
+              {isSetupRunning ? 'Rebuilding…' : status?.repoCloned ? 'Update System' : 'Install Engine'}
             </button>
           </div>
         </footer>

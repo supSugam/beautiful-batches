@@ -230,9 +230,13 @@ const InspectorEditSession = ({
               onRemoveBackground={logic.handleRemoveBackground}
               onUndo={logic.undoSourceEdit}
               onRedo={logic.redoSourceEdit}
+              onReset={logic.resetSourceEdit}
               canUndo={logic.canUndo}
               canRedo={logic.canRedo}
+              canReset={logic.canReset}
               isProcessing={logic.isProcessing}
+              isRemovingWatermark={logic.isRemovingWatermark}
+              isRemovingBackground={logic.isRemovingBackground}
               isWatermarkReady={Boolean(sidecarStatus?.dependenciesInstalled)}
             />
           </section>

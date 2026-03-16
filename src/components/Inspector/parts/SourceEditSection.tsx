@@ -1,5 +1,5 @@
 import React from 'react';
-import { Undo, Redo, Stamp, Loader2 } from 'lucide-react';
+import { Undo, Redo, Stamp, RotateCcw } from 'lucide-react';
 
 /**
  * SourceEditSection — AI-powered edits like watermark removal and background removal.
@@ -13,10 +13,14 @@ type SourceEditSectionProps = {
   onRemoveBackground: () => void;
   onUndo: () => void;
   onRedo: () => void;
+  onReset: () => void;
   canUndo: boolean;
   canRedo: boolean;
-  isProcessing?: boolean;
-  isWatermarkReady?: boolean;
+  canReset: boolean;
+  isProcessing: boolean;
+  isRemovingWatermark?: boolean;
+  isRemovingBackground?: boolean;
+  isWatermarkReady: boolean;
 };
 
 const BandageIcon = ({ size = 16 }: { size?: number }) => (
@@ -41,7 +45,7 @@ const BandageIcon = ({ size = 16 }: { size?: number }) => (
   </svg>
 );
 
-const RemoveBackgroundIcon = ({ size = 16 }: { size?: number }) => (
+const RemoveBackgroundIcon = ({ size = 16, style }: { size?: number; style?: React.CSSProperties }) => (
   <svg
     width={size}
     height={size}
@@ -51,6 +55,7 @@ const RemoveBackgroundIcon = ({ size = 16 }: { size?: number }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
+    style={style}
   >
     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
     <circle cx="9" cy="7" r="4" />
@@ -65,10 +70,14 @@ const SourceEditSection = ({
   onRemoveBackground,
   onUndo,
   onRedo,
+  onReset,
   canUndo,
   canRedo,
-  isProcessing = false,
-  isWatermarkReady = false,
+  canReset,
+  isProcessing,
+  isRemovingWatermark = false,
+  isRemovingBackground = false,
+  isWatermarkReady,
 }: SourceEditSectionProps) => {
   return (
     <section className="control-section source-edit-section">
@@ -98,6 +107,24 @@ const SourceEditSection = ({
           </button>
           <button
             className="btn-icon-tiny"
+            onClick={onReset}
+            disabled={!canReset || isProcessing}
+            title="Reset to original image"
+            style={{ 
+              opacity: canReset ? 0.8 : 0.2,
+              background: 'transparent',
+              border: 'none',
+              cursor: canReset ? 'pointer' : 'default',
+              padding: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              color: 'inherit'
+            }}
+          >
+            <RotateCcw size={14} />
+          </button>
+          <button
+            className="btn-icon-tiny"
             onClick={onRedo}
             disabled={!canRedo || isProcessing}
             title="Redo last edit"
@@ -120,39 +147,41 @@ const SourceEditSection = ({
       <div className="icon-action-row">
         <div className="icon-action-row-inner" style={{ gap: '8px' }}>
           <button
-            className={`btn-icon-box ${isWatermarkReady ? 'ai-magic-btn' : ''}`}
+            className={`btn-icon-box ${isWatermarkReady ? 'ai-magic-btn' : ''} ${isRemovingWatermark ? 'button-processing-glow' : ''}`}
             onClick={onRemoveWatermarks}
-            disabled={isProcessing || !isWatermarkReady}
+            disabled={isRemovingWatermark || !isWatermarkReady}
             title={isWatermarkReady ? 'Automatically remove watermarks (loads AI on first use)' : 'Watermark AI not set up — open Settings to deploy'}
-            style={{ display: 'flex', flexDirection: 'column', gap: '4px', height: 'auto', padding: '12px 0', position: 'relative' }}
+            style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '4px', 
+              height: 'auto', 
+              padding: '12px 0', 
+              position: 'relative',
+              overflow: 'hidden'
+            }}
           >
-            {isProcessing ? <Loader2 size={20} className="spin" /> : <Stamp size={20} />}
-            <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', opacity: 0.8 }}>Watermark</span>
-            <div style={{ 
-              position: 'absolute', 
-              top: -4, 
-              right: -4, 
-              fontSize: '0.5rem', 
-              fontWeight: 900,
-              padding: '2px 4px',
-              borderRadius: '4px',
-              background: isWatermarkReady ? 'var(--success)' : 'var(--border)',
-              color: isWatermarkReady ? 'white' : 'var(--text-muted)',
-              border: '1px solid var(--bg-surface)'
-            }}>
-              {isWatermarkReady ? 'READY' : 'MISSING'}
-            </div>
+            <Stamp size={20} style={{ zIndex: 2 }} />
+            <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', zIndex: 2 }}>Watermark</span>
           </button>
 
           <button
-            className="btn-icon-box"
+            className={`btn-icon-box ai-magic-btn ${isRemovingBackground ? 'button-processing-glow' : ''}`}
             onClick={onRemoveBackground}
-            disabled={isProcessing}
-            title="Remove Background"
-            style={{ display: 'flex', flexDirection: 'column', gap: '4px', height: 'auto', padding: '12px 0' }}
+            disabled={isRemovingBackground || isProcessing}
+            title="Remove background (loads AI model on first use)"
+            style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '4px', 
+              height: 'auto', 
+              padding: '12px 0',
+              position: 'relative',
+              overflow: 'hidden'
+            }}
           >
-            <RemoveBackgroundIcon size={20} />
-            <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', opacity: 0.8 }}>Background</span>
+            <RemoveBackgroundIcon size={20} style={{ zIndex: 2 }} />
+            <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', zIndex: 2 }}>Background</span>
           </button>
         </div>
       </div>

@@ -76,6 +76,8 @@ export interface CropEntry {
   imageWidth?: number;
   imageHeight?: number;
   clearImageMetadata?: boolean;
+  sourceEditHistory?: string[];
+  sourceEditHistoryIndex?: number;
 }
 
 export interface RawUploadImage {
@@ -206,7 +208,9 @@ export type WatermarkSidecarStatus = {
   pythonPath: string;
   detectionModels: WatermarkModelStatus[];
   inpaintingModels: WatermarkModelStatus[];
+  backgroundRemovalModels: WatermarkModelStatus[];
   totalSizeBytes: number;
+  hardwareType: string;
 };
 
 export type WatermarkSidecarSettings = {
