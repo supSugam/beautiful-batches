@@ -41,6 +41,13 @@ type CropOverlayProps = {
   onDragEnd?: () => void;
   isPinching?: boolean;
   centerStatus?: { horizontal: boolean; vertical: boolean };
+  contentRect?: { x: number; y: number; w: number; h: number } | null;
+  contentGuideStatus?: {
+    left: boolean;
+    right: boolean;
+    top: boolean;
+    bottom: boolean;
+  };
 };
 
 const CropOverlay = ({
@@ -54,6 +61,8 @@ const CropOverlay = ({
   onDragEnd,
   isPinching = false,
   centerStatus,
+  contentRect = null,
+  contentGuideStatus,
 }: CropOverlayProps) => {
   // ── ALL hooks must be called unconditionally (before any early return) ──
 
@@ -253,7 +262,7 @@ const CropOverlay = ({
         className={`center-guide-line center-guide-line--vertical ${
           centerStatus?.horizontal
             ? 'visible snapped'
-            : isDragging
+            : isActive
               ? 'visible hint'
               : ''
         }`}
@@ -267,7 +276,7 @@ const CropOverlay = ({
         className={`center-guide-line center-guide-line--horizontal ${
           centerStatus?.vertical
             ? 'visible snapped'
-            : isDragging
+            : isActive
               ? 'visible hint'
               : ''
         }`}
@@ -277,6 +286,68 @@ const CropOverlay = ({
           top: offsetY + displayH / 2,
         }}
       />
+
+      {/* Padding/content boundary guide lines */}
+      {contentRect && contentRect.w > 0 && contentRect.h > 0 && (
+        <>
+          <div
+            className={`padding-guide-line padding-guide-line--vertical ${
+              contentGuideStatus?.left
+                ? 'visible snapped'
+                : isActive
+                  ? 'visible hint'
+                  : ''
+            }`}
+            style={{
+              top: offsetY,
+              height: displayH,
+              left: offsetX + contentRect.x * scale,
+            }}
+          />
+          <div
+            className={`padding-guide-line padding-guide-line--vertical ${
+              contentGuideStatus?.right
+                ? 'visible snapped'
+                : isActive
+                  ? 'visible hint'
+                  : ''
+            }`}
+            style={{
+              top: offsetY,
+              height: displayH,
+              left: offsetX + (contentRect.x + contentRect.w) * scale,
+            }}
+          />
+          <div
+            className={`padding-guide-line padding-guide-line--horizontal ${
+              contentGuideStatus?.top
+                ? 'visible snapped'
+                : isActive
+                  ? 'visible hint'
+                  : ''
+            }`}
+            style={{
+              left: offsetX,
+              width: displayW,
+              top: offsetY + contentRect.y * scale,
+            }}
+          />
+          <div
+            className={`padding-guide-line padding-guide-line--horizontal ${
+              contentGuideStatus?.bottom
+                ? 'visible snapped'
+                : isActive
+                  ? 'visible hint'
+                  : ''
+            }`}
+            style={{
+              left: offsetX,
+              width: displayW,
+              top: offsetY + (contentRect.y + contentRect.h) * scale,
+            }}
+          />
+        </>
+      )}
 
       {/* Crop selection box */}
       <div

@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Upload, Trash2 } from 'lucide-react';
-import DesignSlider from '../../common/DesignSlider';
+import { Upload, Trash2, RefreshCw } from 'lucide-react';
 import SegmentedControl from '../../common/SegmentedControl';
 import { ACCEPTED_IMAGE_TYPES } from '../../../utils/directoryPicker';
 import type { PaddingFillType } from '../../../types/app';
+import { RotateComponent } from './RotateComponent';
 
 const DEFAULT_SOLID = '#ffffff';
 const DEFAULT_GRADIENT_START = '#ffffff';
@@ -29,9 +30,9 @@ const FILL_TYPE_OPTIONS: Array<{
   label: string;
   title: string;
 }> = [
-  { type: 'empty', label: 'Empty', title: 'Neutral fill' },
-  { type: 'color', label: 'Color', title: 'Color fill' },
-  { type: 'image', label: 'Image', title: 'Image fill' },
+  { type: 'empty', label: 'Transparent', title: 'Transparent background' },
+  { type: 'color', label: 'Color', title: 'Color or gradient background' },
+  { type: 'image', label: 'Image', title: 'Image background' },
 ];
 let colorCanvasContext: CanvasRenderingContext2D | null = null;
 
@@ -297,33 +298,37 @@ const stepValueAtCursor = (
 };
 
 type PaddingSectionProps = {
-  paddingInput: string;
+  paddingPx: number;
+  paddingMaxPx: number;
   cornerRadiusInput: string;
   paddingFillType: PaddingFillType;
   paddingFillValue: string;
-  paddingImageUrl: string;
-  handlePaddingInputChange: (value: string) => void;
+  paddingImageUrl: string | null;
+  handlePaddingPxChange: (value: number) => void;
   handlePaddingInputBlur: () => void;
   handleCornerRadiusInputChange: (value: string) => void;
   handleCornerRadiusInputBlur: () => void;
   handlePaddingFillTypeChange: (type: PaddingFillType) => void;
   handlePaddingFillValueChange: (value: string) => void;
   handlePaddingImageFileChange: (file: File | null) => void;
+  handleResetTweaks: () => void;
 };
 
 const PaddingSection = ({
-  paddingInput,
+  paddingPx,
+  paddingMaxPx,
   cornerRadiusInput,
   paddingFillType,
   paddingFillValue,
   paddingImageUrl,
-  handlePaddingInputChange,
+  handlePaddingPxChange,
   handlePaddingInputBlur,
   handleCornerRadiusInputChange,
   handleCornerRadiusInputBlur,
   handlePaddingFillTypeChange,
   handlePaddingFillValueChange,
   handlePaddingImageFileChange,
+  handleResetTweaks,
 }: PaddingSectionProps) => {
   const [colorMode, setColorMode] = useState('solid');
   const [solidColor, setSolidColor] = useState(DEFAULT_SOLID);
@@ -333,7 +338,13 @@ const PaddingSection = ({
   const [showColorEditor, setShowColorEditor] = useState(false);
   const [activePickerKey, setActivePickerKey] = useState<string | null>(null);
   const [pickerHexInput, setPickerHexInput] = useState(DEFAULT_SOLID);
-  const pickerPopoverRef = useRef<HTMLSpanElement | null>(null);
+  const pickerAnchorRef = useRef<HTMLElement | null>(null);
+  const pickerPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
+  const lastNumericStepAtRef = useRef(0);
+  const paddingDragRemainderRef = useRef(0);
+  const paddingPxRef = useRef(paddingPx);
+  paddingPxRef.current = paddingPx;
 
   const gradientPreview = useMemo(
     () => buildLinearGradient(gradientStart, gradientEnd, gradientAngle),
@@ -365,8 +376,9 @@ const PaddingSection = ({
     if (!activePickerKey) return undefined;
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!pickerPopoverRef.current) return;
-      if (pickerPopoverRef.current.contains(event.target as Node)) return;
+      const target = event.target as Node;
+      if (pickerAnchorRef.current?.contains(target)) return;
+      if (pickerPopoverRef.current?.contains(target)) return;
       setActivePickerKey(null);
     };
 
@@ -384,6 +396,24 @@ const PaddingSection = ({
     };
   }, [activePickerKey]);
 
+  useEffect(() => {
+    if (!activePickerKey) return undefined;
+
+    const updateRect = () => {
+      const el = pickerAnchorRef.current;
+      if (!el) return;
+      setPickerAnchorRect(el.getBoundingClientRect());
+    };
+
+    updateRect();
+    window.addEventListener('resize', updateRect);
+    window.addEventListener('scroll', updateRect, true);
+    return () => {
+      window.removeEventListener('resize', updateRect);
+      window.removeEventListener('scroll', updateRect, true);
+    };
+  }, [activePickerKey]);
+
   const onImageFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     handlePaddingImageFileChange(file || null);
@@ -396,12 +426,19 @@ const PaddingSection = ({
   ) => {
     const { key } = event;
     if (key !== 'ArrowUp' && key !== 'ArrowDown') {
-      event.stopPropagation();
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
+
+    // Avoid event-queue backlog on long key repeats, which can look like the value
+    // keeps changing after the user releases the key.
+    const now = (typeof performance !== 'undefined' && performance.now)
+      ? performance.now()
+      : Date.now();
+    if (now - lastNumericStepAtRef.current < 28) return;
+    lastNumericStepAtRef.current = now;
 
     const inputEl = event.currentTarget;
     const { value, selectionStart, selectionEnd } = inputEl;
@@ -477,10 +514,7 @@ const PaddingSection = ({
       <label className="padding-color-field">
         <span className="padding-color-field-label">{label}</span>
         <span className="padding-color-field-control">
-          <span
-            className="padding-color-picker-wrap"
-            ref={isPickerOpen ? pickerPopoverRef : null}
-          >
+          <span className="padding-color-picker-wrap">
             <button
               type="button"
               className="padding-color-swatch"
@@ -488,6 +522,8 @@ const PaddingSection = ({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                pickerAnchorRef.current = event.currentTarget;
+                setPickerAnchorRect(event.currentTarget.getBoundingClientRect());
                 openColorPicker(pickerKey, color);
               }}
               aria-label={`Choose ${label.toLowerCase()} color`}
@@ -495,71 +531,95 @@ const PaddingSection = ({
             />
             <span className="padding-color-code">{color}</span>
 
-            {isPickerOpen && (
-              <div className="padding-color-popover">
+            {isPickerOpen &&
+              typeof document !== 'undefined' &&
+              pickerAnchorRect &&
+              createPortal(
                 <div
-                  className="padding-color-popover-preview"
-                  style={{ '--padding-color-chip': color } as React.CSSProperties}
-                />
-                <div className="padding-color-preset-grid">
-                  {COLOR_PRESETS.map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      className={`padding-color-preset ${preset === color ? 'active' : ''}`}
-                      style={{ '--padding-color-chip': preset } as React.CSSProperties}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        applyPickerColor(preset, color, onColorChange);
-                      }}
-                      aria-label={`Use color ${preset}`}
-                    />
-                  ))}
-                </div>
-                <input
-                  type="text"
-                  className="padding-color-hex-input"
-                  value={pickerHexInput}
-                  onChange={(event) => {
-                    const nextRaw = event.target.value;
-                    setPickerHexInput(nextRaw);
-                    const parsed = tryNormalizePickerColor(nextRaw);
-                    if (parsed) {
-                      onColorChange(parsed);
-                    }
+                  ref={pickerPopoverRef}
+                  className="padding-color-popover"
+                  style={{
+                    left: Math.max(
+                      12,
+                      Math.min(
+                        pickerAnchorRect.left,
+                        window.innerWidth - 206,
+                      ),
+                    ),
+                    top:
+                      pickerAnchorRect.top > 240
+                        ? pickerAnchorRect.top - 10
+                        : pickerAnchorRect.bottom + 10,
+                    transform:
+                      pickerAnchorRect.top > 240
+                        ? 'translateY(-100%)'
+                        : 'none',
                   }}
-                  onBlur={() => {
-                    const parsed = tryNormalizePickerColor(pickerHexInput);
-                    if (parsed) {
-                      applyPickerColor(parsed, color, onColorChange);
-                      return;
-                    }
-                    setPickerHexInput(color);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
+                >
+                  <div
+                    className="padding-color-popover-preview"
+                    style={{ '--padding-color-chip': color } as React.CSSProperties}
+                  />
+                  <div className="padding-color-preset-grid">
+                    {COLOR_PRESETS.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        className={`padding-color-preset ${preset === color ? 'active' : ''}`}
+                        style={{ '--padding-color-chip': preset } as React.CSSProperties}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          applyPickerColor(preset, color, onColorChange);
+                        }}
+                        aria-label={`Use color ${preset}`}
+                      />
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    className="padding-color-hex-input"
+                    value={pickerHexInput}
+                    onChange={(event) => {
+                      const nextRaw = event.target.value;
+                      setPickerHexInput(nextRaw);
+                      const parsed = tryNormalizePickerColor(nextRaw);
+                      if (parsed) {
+                        onColorChange(parsed);
+                      }
+                    }}
+                    onBlur={() => {
                       const parsed = tryNormalizePickerColor(pickerHexInput);
                       if (parsed) {
                         applyPickerColor(parsed, color, onColorChange);
-                      } else {
-                        setPickerHexInput(color);
+                        return;
                       }
-                      setActivePickerKey(null);
-                    }
-                    if (event.key === 'Escape') {
-                      event.preventDefault();
-                      setActivePickerKey(null);
-                    }
-                  }}
-                  placeholder="#fff / rgb() / rgba()"
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                />
-              </div>
-            )}
+                      setPickerHexInput(color);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        const parsed = tryNormalizePickerColor(pickerHexInput);
+                        if (parsed) {
+                          applyPickerColor(parsed, color, onColorChange);
+                        } else {
+                          setPickerHexInput(color);
+                        }
+                        setActivePickerKey(null);
+                      }
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        setActivePickerKey(null);
+                      }
+                    }}
+                    placeholder="#fff / rgb() / rgba()"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                  />
+                </div>,
+                document.body,
+              )}
           </span>
         </span>
       </label>
@@ -575,20 +635,45 @@ const PaddingSection = ({
 
   return (
     <section className="control-section padding-section">
-      <h3 className="section-label">Tweaks (Top, Right, Bottom, Left)</h3>
+      <div className="section-header">
+        <h3 className="section-label">Tweaks</h3>
+        <div className="section-header-tools">
+          <button
+            type="button"
+            className="btn-icon-subtle"
+            onClick={handleResetTweaks}
+            title="Reset tweaks"
+          >
+            <RefreshCw size={12} />
+          </button>
+        </div>
+      </div>
 
       <div className="padding-input-row">
         <div className="padding-input-group">
           <label>Padding</label>
-          <input
-            type="text"
-            value={paddingInput}
-            placeholder="0 0 0 0"
-            onChange={(e) => handlePaddingInputChange(e.target.value)}
-            onBlur={handlePaddingInputBlur}
-            onKeyDown={(e) =>
-              handleSteppedNumericKeyDown(e, handlePaddingInputChange)
-            }
+          <RotateComponent
+            from={0}
+            to={Math.max(0, Math.round(Number(paddingMaxPx) || 0))}
+            value={Math.max(0, Math.round(Number(paddingPx) || 0))}
+            step={1}
+            density={6}
+            onChange={(delta) => {
+              // RotateComponent emits fractional deltas; padding is integer-only.
+              // Accumulate until we have whole pixels so the slider feels responsive.
+              paddingDragRemainderRef.current += Number(delta) || 0;
+              const remainder = paddingDragRemainderRef.current;
+              const whole = remainder >= 0 ? Math.floor(remainder) : Math.ceil(remainder);
+              if (whole === 0) return;
+              paddingDragRemainderRef.current -= whole;
+              handlePaddingPxChange(paddingPxRef.current + whole);
+            }}
+            onBlur={() => {
+              paddingDragRemainderRef.current = 0;
+              handlePaddingInputBlur();
+            }}
+            valuePrecision={0}
+            valueSuffix="px"
           />
         </div>
 
@@ -610,7 +695,7 @@ const PaddingSection = ({
       <SegmentedControl<PaddingFillType>
         value={paddingFillType}
         onChange={handlePaddingFillTypeChange}
-        ariaLabel="Padding fill type"
+        ariaLabel="Background fill"
         className="padding-fill-segmented"
         equalWidth
         options={FILL_TYPE_OPTIONS.map((option) => ({

@@ -22,7 +22,7 @@
 .card-preview {
   position: relative;
   width: 100%;
-  background: var(--bg-base);
+  background-color: var(--bg-base);
   overflow: hidden;
   border-radius: var(--radius-ui);
   display: flex;
@@ -34,10 +34,6 @@
   position: absolute;
   inset: 0;
   box-sizing: border-box;
-}
-
-.preview-padding-shell.has-padding {
-  background: var(--bg-elevated);
 }
 
 .preview-padding-content {

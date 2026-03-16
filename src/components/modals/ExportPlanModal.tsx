@@ -1202,7 +1202,7 @@ const ExportPlanModal = ({
         const analyzed = analyzedById.get(row.imageId);
         if (!analyzed) continue;
 
-        const sourcePath = normalizePath(analyzed.image.absolutePath || '');
+        let sourcePath = normalizePath(analyzed.image.absolutePath || '');
         let sourceDataBase64: string | undefined;
         if (!sourcePath) {
           const fileSize = Number(analyzed.image.file?.size || 0);
@@ -1218,6 +1218,33 @@ const ExportPlanModal = ({
         }
 
         const cropEntry = analyzed.cropEntry ? { ...analyzed.cropEntry } : null;
+
+        // If the image has an active source edit (rembg/watermark removal), export that edited
+        // version instead of reading from disk. This keeps export consistent with the Inspector preview.
+        const editHistory = Array.isArray(cropEntry?.sourceEditHistory)
+          ? (cropEntry?.sourceEditHistory as string[])
+          : [];
+        const editIndexRaw = Number(cropEntry?.sourceEditHistoryIndex ?? -1);
+        const editIndex = Number.isFinite(editIndexRaw) ? Math.trunc(editIndexRaw) : -1;
+        const activeEditedSource =
+          editIndex >= 0 && editIndex < editHistory.length ? editHistory[editIndex] : '';
+        if (activeEditedSource) {
+          sourcePath = '';
+          if (activeEditedSource.startsWith('data:')) {
+            sourceDataBase64 = activeEditedSource;
+          } else if (activeEditedSource.startsWith('blob:')) {
+            const response = await fetch(activeEditedSource);
+            if (!response.ok) {
+              throw new Error(
+                `Failed to read edited source image (${response.status}).`,
+              );
+            }
+            sourceDataBase64 = await blobToBase64(await response.blob());
+          } else {
+            // Raw base64 payload (backend accepts both raw base64 and data URLs).
+            sourceDataBase64 = activeEditedSource;
+          }
+        }
         const paddingImageUrl =
           typeof cropEntry?.paddingImageUrl === 'string'
             ? cropEntry.paddingImageUrl.trim()

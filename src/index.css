@@ -35,6 +35,12 @@
   --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
   --shadow-glow: 0 0 20px rgba(129, 140, 248, 0.15);
 
+  /* Subtle transparency grid (preview only; never exported). */
+  --checker-size: 14px;
+  /* Transparency checker (keep subtle, but visible on dark UI). */
+  --checker-a: rgba(255, 255, 255, 0.14);
+  --checker-b: rgba(255, 255, 255, 0.07);
+
   --font: 'Inter', system-ui, -apple-system, sans-serif;
   --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -58,6 +64,15 @@ body {
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.transparency-grid {
+  background-color: var(--checker-b);
+  background-image:
+    linear-gradient(45deg, var(--checker-a) 25%, transparent 25%, transparent 75%, var(--checker-a) 75%, var(--checker-a)),
+    linear-gradient(45deg, var(--checker-a) 25%, transparent 25%, transparent 75%, var(--checker-a) 75%, var(--checker-a));
+  background-size: var(--checker-size) var(--checker-size);
+  background-position: 0 0, calc(var(--checker-size) / 2) calc(var(--checker-size) / 2);
 }
 
 /* Custom Scrollbar */

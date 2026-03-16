@@ -10,6 +10,8 @@ import {
   toEditorCropCoordinates,
   toStoredCoordinates,
 } from '../../../utils/cropCoordinates';
+import { clampPaddingToReference } from '../../../utils/boxValues';
+import { computePaddedContentRect } from '../../../utils/paddedContentRect';
 import type {
   CropEntry,
   EditorCropCoordinates,
@@ -18,7 +20,9 @@ import type {
 
 const FIT_PADDING_PX = 16;
 const MIN_CROP_SIZE = 10;
-const SNAP_THRESHOLD = 3;
+const SNAP_THRESHOLD_MIN = 3;
+// Target snap zone in screen pixels. Converted to editor coordinates using the fit scale.
+const SNAP_THRESHOLD_SCREEN_PX = 14;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const WHEEL_ZOOM_SPEED = 0.0016;
@@ -33,6 +37,7 @@ type UseImageEditorArgs = {
   naturalHeight: number;
   initialState?: CropEntry;
   onChange?: (state: CropEntry) => void;
+  paddingPx?: number;
 };
 
 const normalizeRotation = (rotation: unknown): number => {
@@ -67,8 +72,9 @@ const getRotatedBounds = (
   const sin = Math.abs(Math.sin(radians));
 
   return {
-    width: safeWidth * cos + safeHeight * sin,
-    height: safeWidth * sin + safeHeight * cos,
+    // Ceil avoids clipping for non-right-angle rotations and keeps editor coordinates pixel-based.
+    width: Math.max(1, Math.ceil(safeWidth * cos + safeHeight * sin)),
+    height: Math.max(1, Math.ceil(safeWidth * sin + safeHeight * cos)),
   };
 };
 
@@ -123,6 +129,23 @@ const clampCropToBounds = (
   y = Math.max(0, Math.min(y, maxHeight - h));
 
   return { x, y, w, h };
+};
+
+const roundCropXY = (crop: EditorCropRect): EditorCropRect => {
+  return {
+    ...crop,
+    x: Math.round(crop.x),
+    y: Math.round(crop.y),
+  };
+};
+
+const roundCropAll = (crop: EditorCropRect): EditorCropRect => {
+  return {
+    x: Math.round(crop.x),
+    y: Math.round(crop.y),
+    w: Math.round(crop.w),
+    h: Math.round(crop.h),
+  };
 };
 
 const remapCropToBounds = (
@@ -335,6 +358,7 @@ export function useImageEditor({
   naturalHeight,
   initialState,
   onChange,
+  paddingPx = 0,
 }: UseImageEditorArgs) {
   const initialRotation = normalizeRotation(
     initialState?.transforms?.rotate || 0,
@@ -395,6 +419,174 @@ export function useImageEditor({
   );
   const effectiveWidth = effectiveBounds.width;
   const effectiveHeight = effectiveBounds.height;
+
+  // Snap threshold in editor coordinates, tuned to feel consistent at different preview scales.
+  const snapThreshold = useMemo(() => {
+    const cw = containerSize.width;
+    const ch = containerSize.height;
+    if (cw <= 0 || ch <= 0 || effectiveWidth <= 0 || effectiveHeight <= 0) {
+      return SNAP_THRESHOLD_MIN;
+    }
+
+    const availableWidth = cw - FIT_PADDING_PX * 2;
+    const availableHeight = ch - FIT_PADDING_PX * 2;
+    if (availableWidth <= 0 || availableHeight <= 0) return SNAP_THRESHOLD_MIN;
+
+    const scale = Math.min(availableWidth / effectiveWidth, availableHeight / effectiveHeight);
+    if (!Number.isFinite(scale) || scale <= 0.000001) return SNAP_THRESHOLD_MIN;
+
+    return Math.max(SNAP_THRESHOLD_MIN, SNAP_THRESHOLD_SCREEN_PX / scale);
+  }, [containerSize.width, containerSize.height, effectiveWidth, effectiveHeight]);
+
+  const snapContentRect = useMemo(() => {
+    const evenPadding = Math.max(0, Math.round(Number(paddingPx) || 0));
+    if (evenPadding <= 0) return null;
+    const paddingValues = clampPaddingToReference(
+      String(evenPadding),
+      effectiveWidth,
+      effectiveHeight,
+    );
+    return computePaddedContentRect(
+      effectiveWidth,
+      effectiveHeight,
+      paddingValues,
+    );
+  }, [effectiveWidth, effectiveHeight, paddingPx]);
+
+  const applyMoveSnapping = useCallback(
+    (nextRaw: EditorCropRect, bounds: Bounds): EditorCropRect => {
+      const threshold = snapThreshold;
+
+      const candidatesX: number[] = [];
+      const candidatesY: number[] = [];
+
+      const centerX = nextRaw.x + nextRaw.w / 2;
+      const centerY = nextRaw.y + nextRaw.h / 2;
+      const imageCenterX = bounds.width / 2;
+      const imageCenterY = bounds.height / 2;
+
+      const centerDx = imageCenterX - centerX;
+      const centerDy = imageCenterY - centerY;
+      if (Math.abs(centerDx) < threshold) candidatesX.push(centerDx);
+      if (Math.abs(centerDy) < threshold) candidatesY.push(centerDy);
+
+      // Always allow snapping to outer canvas bounds.
+      const leftDx = 0 - nextRaw.x;
+      const rightDx = bounds.width - (nextRaw.x + nextRaw.w);
+      if (Math.abs(leftDx) < threshold) candidatesX.push(leftDx);
+      if (Math.abs(rightDx) < threshold) candidatesX.push(rightDx);
+
+      const topDy = 0 - nextRaw.y;
+      const bottomDy = bounds.height - (nextRaw.y + nextRaw.h);
+      if (Math.abs(topDy) < threshold) candidatesY.push(topDy);
+      if (Math.abs(bottomDy) < threshold) candidatesY.push(bottomDy);
+
+      // Snap to padded content boundary (so users can crop padding cleanly).
+      if (snapContentRect) {
+        const contentLeftDx = snapContentRect.x - nextRaw.x;
+        const contentRightDx =
+          snapContentRect.x + snapContentRect.width - (nextRaw.x + nextRaw.w);
+        if (Math.abs(contentLeftDx) < threshold) candidatesX.push(contentLeftDx);
+        if (Math.abs(contentRightDx) < threshold) candidatesX.push(contentRightDx);
+
+        const contentTopDy = snapContentRect.y - nextRaw.y;
+        const contentBottomDy =
+          snapContentRect.y + snapContentRect.height - (nextRaw.y + nextRaw.h);
+        if (Math.abs(contentTopDy) < threshold) candidatesY.push(contentTopDy);
+        if (Math.abs(contentBottomDy) < threshold) candidatesY.push(contentBottomDy);
+      }
+
+      const pickBest = (values: number[]) => {
+        let best = 0;
+        let bestAbs = Number.POSITIVE_INFINITY;
+        for (const value of values) {
+          const abs = Math.abs(value);
+          if (abs < bestAbs) {
+            bestAbs = abs;
+            best = value;
+          }
+        }
+        return bestAbs !== Number.POSITIVE_INFINITY ? best : 0;
+      };
+
+      const dx = pickBest(candidatesX);
+      const dy = pickBest(candidatesY);
+      if (dx === 0 && dy === 0) return nextRaw;
+
+      return {
+        ...nextRaw,
+        x: nextRaw.x + dx,
+        y: nextRaw.y + dy,
+      };
+    },
+    [snapContentRect, snapThreshold],
+  );
+
+  const applyResizeSnapping = useCallback(
+    (nextRaw: EditorCropRect, handleId: string, bounds: Bounds): EditorCropRect => {
+      const threshold = snapThreshold;
+      let { x, y, w, h } = nextRaw;
+
+      const targetsX = [0, bounds.width];
+      const targetsY = [0, bounds.height];
+      if (snapContentRect) {
+        targetsX.push(snapContentRect.x);
+        targetsX.push(snapContentRect.x + snapContentRect.width);
+        targetsY.push(snapContentRect.y);
+        targetsY.push(snapContentRect.y + snapContentRect.height);
+      }
+
+      const bestDelta = (deltas: number[]) => {
+        let best: number | null = null;
+        for (const delta of deltas) {
+          if (Math.abs(delta) >= threshold) continue;
+          if (best === null || Math.abs(delta) < Math.abs(best)) best = delta;
+        }
+        return best ?? 0;
+      };
+
+      if (handleId.includes('r')) {
+        const right = x + w;
+        const delta = bestDelta(targetsX.map((t) => t - right));
+        const nextW = w + delta;
+        if (nextW >= MIN_CROP_SIZE) w = nextW;
+      }
+
+      if (handleId.includes('l')) {
+        const delta = bestDelta(targetsX.map((t) => t - x));
+        if (delta !== 0) {
+          const nextX = x + delta;
+          const nextW = w - delta;
+          if (nextW >= MIN_CROP_SIZE) {
+            x = nextX;
+            w = nextW;
+          }
+        }
+      }
+
+      if (handleId.includes('b')) {
+        const bottom = y + h;
+        const delta = bestDelta(targetsY.map((t) => t - bottom));
+        const nextH = h + delta;
+        if (nextH >= MIN_CROP_SIZE) h = nextH;
+      }
+
+      if (handleId.includes('t')) {
+        const delta = bestDelta(targetsY.map((t) => t - y));
+        if (delta !== 0) {
+          const nextY = y + delta;
+          const nextH = h - delta;
+          if (nextH >= MIN_CROP_SIZE) {
+            y = nextY;
+            h = nextH;
+          }
+        }
+      }
+
+      return { x, y, w, h };
+    },
+    [snapContentRect, snapThreshold],
+  );
 
   // ── Crop state ──────────────────────────────────────────
   const [crop, setCropRaw] = useState(() => {
@@ -768,9 +960,11 @@ export function useImageEditor({
     const imageCenterX = effectiveWidth / 2;
     const imageCenterY = effectiveHeight / 2;
 
+    // "Snapped" should mean actually aligned (pixel-level), not just "near".
+    const EPS = 0.0001;
     return {
-      horizontal: Math.abs(centerX - imageCenterX) < SNAP_THRESHOLD,
-      vertical: Math.abs(centerY - imageCenterY) < SNAP_THRESHOLD,
+      horizontal: Math.abs(centerX - imageCenterX) < EPS,
+      vertical: Math.abs(centerY - imageCenterY) < EPS,
     };
   }, [crop, effectiveWidth, effectiveHeight]);
 
@@ -779,20 +973,25 @@ export function useImageEditor({
     (dx: number, dy: number) => {
       const bounds = getBoundsForRotation(rotationRef.current);
       setCropRaw((previous) => {
-        const next = clampCropToBounds(
+        const unclamped = {
+          ...previous,
+          x: previous.x + dx,
+          y: previous.y + dy,
+        };
+        const clamped = clampCropToBounds(
           {
-            ...previous,
-            x: previous.x + dx,
-            y: previous.y + dy,
+            ...unclamped,
           },
           bounds,
         );
+        const snapped = clampCropToBounds(applyMoveSnapping(clamped, bounds), bounds);
+        const next = clampCropToBounds(roundCropXY(snapped), bounds);
         cropRef.current = next;
         return next;
       });
       notifyChange();
     },
-    [getBoundsForRotation, notifyChange],
+    [applyMoveSnapping, getBoundsForRotation, notifyChange],
   );
 
   const resizeCrop = useCallback(
@@ -848,12 +1047,17 @@ export function useImageEditor({
       }
 
       const bounds = getBoundsForRotation(rotationRef.current);
-      const next = clampCropToBounds({ x, y, w, h }, bounds);
+      const clamped = clampCropToBounds({ x, y, w, h }, bounds);
+      const snapped = clampCropToBounds(
+        applyResizeSnapping(clamped, handleId, bounds),
+        bounds,
+      );
+      const next = clampCropToBounds(roundCropAll(snapped), bounds);
       cropRef.current = next;
       setCropRaw(next);
       notifyChange();
     },
-    [getBoundsForRotation, notifyChange],
+    [applyResizeSnapping, getBoundsForRotation, notifyChange],
   );
 
   const setCropDimensions = useCallback(
@@ -1410,6 +1614,7 @@ export function useImageEditor({
 
     // Center snap
     centerStatus,
+    snapThreshold,
 
     // Drag
     onDragStart,

@@ -193,6 +193,11 @@ const InspectorEditSession = ({
             isProcessing={logic.isProcessing}
             imageObjectUrl={logic.activeImageObjectUrl || image.objectUrl}
             editor={logic.editor}
+            paddingPx={logic.paddingPx}
+            cornerRadius={logic.cornerRadiusInput}
+            paddingFillType={logic.paddingFillType}
+            paddingFillValue={logic.paddingFillValue}
+            paddingImageUrl={logic.paddingImageUrl}
           />
 
           <InspectorStats
@@ -257,12 +262,13 @@ const InspectorEditSession = ({
 
           <section className="settings-section-card settings-section-card--tweaks">
             <PaddingSection
-              paddingInput={logic.paddingInput}
+              paddingPx={logic.paddingPx}
+              paddingMaxPx={logic.paddingMaxPx}
               cornerRadiusInput={logic.cornerRadiusInput}
               paddingFillType={logic.paddingFillType}
               paddingFillValue={logic.paddingFillValue}
               paddingImageUrl={logic.paddingImageUrl}
-              handlePaddingInputChange={logic.handlePaddingInputChange}
+              handlePaddingPxChange={logic.handlePaddingPxChange}
               handlePaddingInputBlur={logic.handlePaddingInputBlur}
               handleCornerRadiusInputChange={
                 logic.handleCornerRadiusInputChange
@@ -271,6 +277,7 @@ const InspectorEditSession = ({
               handlePaddingFillTypeChange={logic.handlePaddingFillTypeChange}
               handlePaddingFillValueChange={logic.handlePaddingFillValueChange}
               handlePaddingImageFileChange={logic.handlePaddingImageFileChange}
+              handleResetTweaks={logic.handleResetTweaks}
             />
           </section>
 

@@ -6,6 +6,7 @@ import {
   clampCornerRadiusToReference,
   clampPaddingToReference,
 } from '../utils/boxValues';
+import { computePaddedContentRect } from '../utils/paddedContentRect';
 import type { GalleryImage } from '../types/app';
 import './ImageCard.css';
 const EMPTY_PADDING = Object.freeze({
@@ -108,30 +109,15 @@ export const ImageCard = memo(
 
     const previewPadding = clampPaddingToReference(
       cropState?.padding || EMPTY_PADDING,
-      cropW,
-      cropH,
+      boxW,
+      boxH,
     );
-    const hasPreviewPadding =
-      previewPadding.top > 0 ||
-      previewPadding.right > 0 ||
-      previewPadding.bottom > 0 ||
-      previewPadding.left > 0;
+    const contentRect = computePaddedContentRect(boxW, boxH, previewPadding);
     const previewScale = Math.max(1, Number(rowHeight) || 1) / Math.max(1, cropH);
-    const scaledPreviewPadding = {
-      top: previewPadding.top * previewScale,
-      right: previewPadding.right * previewScale,
-      bottom: previewPadding.bottom * previewScale,
-      left: previewPadding.left * previewScale,
-    };
-    const previewPaddingCss = `${formatPreviewPx(scaledPreviewPadding.top)} ${formatPreviewPx(
-      scaledPreviewPadding.right,
-    )} ${formatPreviewPx(scaledPreviewPadding.bottom)} ${formatPreviewPx(
-      scaledPreviewPadding.left,
-    )}`;
     const previewCornerRadius = clampCornerRadiusToReference(
       cropState?.cornerRadius || EMPTY_CORNER_RADIUS,
-      cropW,
-      cropH,
+      contentRect.width,
+      contentRect.height,
     );
     const scaledPreviewCornerRadius = {
       topLeft: previewCornerRadius.topLeft * previewScale,
@@ -161,10 +147,6 @@ export const ImageCard = memo(
         ? 'empty'
         : previewPaddingFillType;
     const previewPaddingBackgroundStyle = useMemo(() => {
-      if (!hasPreviewPadding) {
-        return undefined;
-      }
-
       if (effectivePreviewPaddingFillType === 'color') {
         return {
           background: previewPaddingFillValue,
@@ -180,11 +162,8 @@ export const ImageCard = memo(
         };
       }
 
-      return {
-        background: 'var(--bg-elevated)',
-      };
+      return { background: 'transparent' };
     }, [
-      hasPreviewPadding,
       effectivePreviewPaddingFillType,
       previewPaddingFillValue,
       previewPaddingImageUrl,
@@ -210,11 +189,28 @@ export const ImageCard = memo(
     const flipX = transforms.flip.horizontal ? -1 : 1;
     const flipY = transforms.flip.vertical ? -1 : 1;
     const previewImageSrc = useMemo(() => {
+      const history = Array.isArray(cropState?.sourceEditHistory)
+        ? (cropState?.sourceEditHistory as string[])
+        : [];
+      const historyIndexRaw = Number(cropState?.sourceEditHistoryIndex ?? -1);
+      const historyIndex = Number.isFinite(historyIndexRaw)
+        ? Math.trunc(historyIndexRaw)
+        : -1;
+      const activeEdited =
+        historyIndex >= 0 && historyIndex < history.length ? history[historyIndex] : '';
+      if (activeEdited) return activeEdited;
+
       if (!image.thumbnailUrl) return image.objectUrl;
       const safeThumbSize = Math.max(96, Math.round(Number(thumbnailSize || 320)));
       const separator = image.thumbnailUrl.includes('?') ? '&' : '?';
       return `${image.thumbnailUrl}${separator}thumbSize=${safeThumbSize}`;
-    }, [image.objectUrl, image.thumbnailUrl, thumbnailSize]);
+    }, [
+      cropState?.sourceEditHistory,
+      cropState?.sourceEditHistoryIndex,
+      image.objectUrl,
+      image.thumbnailUrl,
+      thumbnailSize,
+    ]);
 
 
     return (
@@ -224,7 +220,7 @@ export const ImageCard = memo(
         aria-disabled={excluded}
       >
         <div
-          className="card-preview"
+          className="card-preview transparency-grid"
           style={{
             height: rowHeight,
             position: 'relative',
@@ -232,23 +228,19 @@ export const ImageCard = memo(
           }}
         >
           <div
-            className={`preview-padding-shell ${hasPreviewPadding ? 'has-padding' : ''}`}
-            style={{
-              padding: previewPaddingCss,
-              ...(previewPaddingBackgroundStyle || {}),
-            }}
+            className="preview-padding-shell"
           >
             <div
               className="preview-padding-content"
-              style={{ 
-                 borderRadius: previewCornerRadiusCss,
-                 position: 'relative',
-                 width: '100%',
-                 height: '100%',
-                 overflow: 'hidden'
+              style={{
+                position: 'relative',
+                width: '100%',
+                height: '100%',
+                overflow: 'hidden',
               }}
             >
               <div
+                className="preview-rotated-wrapper"
                 style={{
                   position: 'absolute',
                   width: `${wrapperW}%`,
@@ -258,32 +250,61 @@ export const ImageCard = memo(
                   transformOrigin: '0 0',
                   transition: dynamicTransition,
                   willChange: selected ? 'width, height, left, top' : undefined,
-                  pointerEvents: 'none' // allow clicks to pass through
+                  pointerEvents: 'none', // allow clicks to pass through
+                  ...(previewPaddingBackgroundStyle || {}),
                 }}
               >
-                <img
-                  src={previewImageSrc}
-                  alt={image.name}
-                  loading="lazy"
-                  decoding="async"
-                  {...({
-                    fetchpriority: selected ? 'high' : 'low',
-                  } as Record<string, string>)}
-                  draggable={false}
+                <div
+                  className="preview-content-clip"
                   style={{
                     position: 'absolute',
-                    width: `${imgW}%`,
-                    height: `${imgH}%`,
-                    left: `${imgLeft}%`,
-                    top: `${imgTop}%`,
-                    transform: `rotate(${previewRotate}deg) scaleX(${flipX}) scaleY(${flipY})`,
-                    transformOrigin: 'center center',
-                    objectFit: 'fill',
-                    transition: dynamicTransition,
-                    willChange: selected ? 'width, height, left, top, transform' : undefined,
-                    pointerEvents: 'none'
+                    left: `${(contentRect.x / boxW) * 100}%`,
+                    top: `${(contentRect.y / boxH) * 100}%`,
+                    width: `${(contentRect.width / boxW) * 100}%`,
+                    height: `${(contentRect.height / boxH) * 100}%`,
+                    borderRadius: previewCornerRadiusCss,
+                    overflow: 'hidden',
                   }}
-                />
+                >
+                  <div
+                    className="preview-content-stage"
+                    style={{
+                      position: 'absolute',
+                      left: '50%',
+                      top: '50%',
+                      width: `${100 / Math.max(0.0001, contentRect.scale)}%`,
+                      height: `${100 / Math.max(0.0001, contentRect.scale)}%`,
+                      transform: `translate(-50%, -50%) scale(${contentRect.scale})`,
+                      transformOrigin: 'center',
+                    }}
+                  >
+                    <img
+                      src={previewImageSrc}
+                      alt={image.name}
+                      loading="lazy"
+                      decoding="async"
+                      {...({
+                        fetchpriority: selected ? 'high' : 'low',
+                      } as Record<string, string>)}
+                      draggable={false}
+                      style={{
+                        position: 'absolute',
+                        width: `${imgW}%`,
+                        height: `${imgH}%`,
+                        left: `${imgLeft}%`,
+                        top: `${imgTop}%`,
+                        transform: `rotate(${previewRotate}deg) scaleX(${flipX}) scaleY(${flipY})`,
+                        transformOrigin: 'center center',
+                        objectFit: 'fill',
+                        transition: dynamicTransition,
+                        willChange: selected
+                          ? 'width, height, left, top, transform'
+                          : undefined,
+                        pointerEvents: 'none',
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>

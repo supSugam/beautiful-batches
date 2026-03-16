@@ -92,6 +92,27 @@ export const clampPaddingToReference = (
   };
 };
 
+export const getEvenPaddingCap = (
+  referenceWidth: number,
+  referenceHeight: number,
+  {
+    sideRatio = INNER_PADDING_SIDE_RATIO,
+    maxPaddingPx = MAX_PADDING_PX,
+  }: { sideRatio?: number; maxPaddingPx?: number } = {},
+): number => {
+  const safeWidth = Math.max(1, Number(referenceWidth) || 1);
+  const safeHeight = Math.max(1, Number(referenceHeight) || 1);
+  const horizontalCap = Math.max(
+    0,
+    Math.min(maxPaddingPx, Math.round(safeWidth * sideRatio)),
+  );
+  const verticalCap = Math.max(
+    0,
+    Math.min(maxPaddingPx, Math.round(safeHeight * sideRatio)),
+  );
+  return Math.min(horizontalCap, verticalCap);
+};
+
 export const normalizeCornerRadiusInput = (
   radius: Partial<CornerRadiusValues> | string | null | undefined,
   maxCornerRadiusPx = MAX_CORNER_RADIUS_PX,

@@ -6,6 +6,7 @@ import type {
 } from '../../../types/app';
 import { invoke } from '@tauri-apps/api/core';
 import useStore from '../../../store/useStore';
+import { getEvenPaddingCap, normalizePaddingInput } from '../../../utils/boxValues';
 
 type InspectorLogicImage = {
   id: string;
@@ -42,6 +43,32 @@ const getRotationAnchor = (signedRotation: number) => {
 const getFineRotation = (rotation: number) => {
   const signed = normalizeToSignedRotation(rotation);
   return signed - getRotationAnchor(signed);
+};
+
+const parseEvenPaddingPx = (value: unknown): number => {
+  if (typeof value === 'string') {
+    const match = value.match(/-?\d+(?:\.\d+)?/);
+    if (match?.[0]) {
+      const numeric = Number.parseFloat(match[0]);
+      return Number.isFinite(numeric) ? Math.max(0, Math.round(numeric)) : 0;
+    }
+    return 0;
+  }
+
+  if (value && typeof value === 'object') {
+    const normalized = normalizePaddingInput(value as never);
+    const even = Math.max(
+      normalized.top,
+      normalized.right,
+      normalized.bottom,
+      normalized.left,
+    );
+    return Math.max(0, Math.round(Number(even) || 0));
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.round(numeric));
 };
 
 /**
@@ -81,12 +108,18 @@ export function useInspectorLogic({
     };
   }, [cropState, imageId]);
 
+  // Padding is now a single even value (all sides). We must initialize it before passing it into useImageEditor.
+  const [paddingPx, setPaddingPx] = useState(() =>
+    parseEvenPaddingPx(cropState?.padding),
+  );
+
   // ── Editor engine ───────────────────────────────────────
   const editor = useImageEditor({
     imageId,
     naturalWidth,
     naturalHeight,
     initialState,
+    paddingPx,
     onChange: useCallback(
       (state) => {
         if (!imageId) return;
@@ -334,6 +367,11 @@ export function useInspectorLogic({
     editor.resetAll();
     setManualW('');
     setManualH('');
+    setPaddingPx(0);
+    setCornerRadiusInput('');
+    setPaddingFillType('empty');
+    setPaddingFillValue('');
+    setPaddingImageUrl(null);
     // Reset non-editor crop state fields
     if (imageId) {
       onCropChange?.(imageId, {
@@ -341,10 +379,11 @@ export function useInspectorLogic({
         transforms: { rotate: 0, flip: { horizontal: false, vertical: false } },
         aspect: null,
         outputWidth: null,
-        padding: '',
+        padding: '0',
         cornerRadius: '',
         paddingFillType: 'empty',
         paddingFillValue: '',
+        paddingImageUrl: null,
       });
     }
   }, [editor, imageId, onCropChange]);
@@ -393,11 +432,7 @@ export function useInspectorLogic({
   }, []);
 
   // ── Padding & Corner Radius (string format: "T R B L") ──
-  // PaddingSection expects plain strings like "0 0 0 0" or "10", not objects
-
-  const [paddingInput, setPaddingInput] = useState(() =>
-    typeof cropState?.padding === 'string' ? cropState.padding : '',
-  );
+  // Padding is now a single even value (all sides); corner radius stays per-corner.
   const [cornerRadiusInput, setCornerRadiusInput] = useState(() =>
     typeof cropState?.cornerRadius === 'string' ? cropState.cornerRadius : '',
   );
@@ -412,9 +447,7 @@ export function useInspectorLogic({
   );
 
   useEffect(() => {
-    setPaddingInput(
-      typeof cropState?.padding === 'string' ? cropState.padding : '',
-    );
+    setPaddingPx(parseEvenPaddingPx(cropState?.padding));
     setCornerRadiusInput(
       typeof cropState?.cornerRadius === 'string' ? cropState.cornerRadius : '',
     );
@@ -432,7 +465,7 @@ export function useInspectorLogic({
     imageId,
   ]);
 
-  const syncToStore = useCallback(
+  const syncToStoreImmediate = useCallback(
     (partialUpdate: Partial<CropEntry>) => {
       if (!imageId) return;
       onCropChange?.(imageId, {
@@ -443,57 +476,118 @@ export function useInspectorLogic({
     [imageId, onCropChange],
   );
 
-  // PaddingSection calls handlePaddingInputChange(string) — single string value
-  const handlePaddingInputChange = useCallback(
-    (value: string) => {
-      setPaddingInput(value);
-      syncToStore({ padding: value });
+  // Coalesce rapid UI tweaks updates (arrow keys / slider drags) into 1 store write per frame.
+  const pendingUiUpdateRef = useRef<Partial<CropEntry> | null>(null);
+  const pendingUiUpdateRafRef = useRef<number | null>(null);
+
+  const flushPendingUiUpdate = useCallback(() => {
+    if (pendingUiUpdateRafRef.current) {
+      window.cancelAnimationFrame(pendingUiUpdateRafRef.current);
+      pendingUiUpdateRafRef.current = null;
+    }
+    const pending = pendingUiUpdateRef.current;
+    pendingUiUpdateRef.current = null;
+    if (!pending) return;
+    syncToStoreImmediate(pending);
+  }, [syncToStoreImmediate]);
+
+  const handleResetTweaks = useCallback(() => {
+    setPaddingPx(0);
+    setCornerRadiusInput('');
+    setPaddingFillType('empty');
+    setPaddingFillValue('');
+    setPaddingImageUrl(null);
+    flushPendingUiUpdate();
+    syncToStoreImmediate({
+      padding: '0',
+      cornerRadius: '',
+      paddingFillType: 'empty',
+      paddingFillValue: '',
+      paddingImageUrl: null,
+    });
+  }, [flushPendingUiUpdate, syncToStoreImmediate]);
+
+  const scheduleUiUpdate = useCallback(
+    (partialUpdate: Partial<CropEntry>) => {
+      if (!imageId) return;
+      pendingUiUpdateRef.current = {
+        ...(pendingUiUpdateRef.current || {}),
+        ...partialUpdate,
+      };
+      if (pendingUiUpdateRafRef.current) return;
+      pendingUiUpdateRafRef.current = window.requestAnimationFrame(() => {
+        pendingUiUpdateRafRef.current = null;
+        flushPendingUiUpdate();
+      });
     },
-    [syncToStore],
+    [flushPendingUiUpdate, imageId],
   );
 
-  const handlePaddingInputBlur = useCallback(() => {}, []);
+  useEffect(() => {
+    return () => {
+      flushPendingUiUpdate();
+    };
+  }, [flushPendingUiUpdate]);
 
-  // cornerRadiusInput is also a string
+  const paddingMaxPx = useMemo(() => {
+    return getEvenPaddingCap(editor.effectiveWidth, editor.effectiveHeight);
+  }, [editor.effectiveWidth, editor.effectiveHeight]);
+
+  const handlePaddingPxChange = useCallback(
+    (value: number) => {
+      const safe = Math.max(0, Math.min(paddingMaxPx, Math.round(Number(value) || 0)));
+      setPaddingPx(safe);
+      scheduleUiUpdate({ padding: String(safe) });
+    },
+    [paddingMaxPx, scheduleUiUpdate],
+  );
+
+  const handlePaddingInputBlur = useCallback(() => {
+    flushPendingUiUpdate();
+  }, [flushPendingUiUpdate]);
+
+  // cornerRadiusInput is a string
   const handleCornerRadiusInputChange = useCallback(
     (value: string) => {
       setCornerRadiusInput(value);
-      syncToStore({ cornerRadius: value });
+      scheduleUiUpdate({ cornerRadius: value });
     },
-    [syncToStore],
+    [scheduleUiUpdate],
   );
 
-  const handleCornerRadiusInputBlur = useCallback(() => {}, []);
+  const handleCornerRadiusInputBlur = useCallback(() => {
+    flushPendingUiUpdate();
+  }, [flushPendingUiUpdate]);
 
   const handlePaddingFillTypeChange = useCallback(
     (type: PaddingFillType) => {
       setPaddingFillType(type);
-      syncToStore({ paddingFillType: type });
+      syncToStoreImmediate({ paddingFillType: type });
     },
-    [syncToStore],
+    [syncToStoreImmediate],
   );
 
   const handlePaddingFillValueChange = useCallback(
     (value: string) => {
       setPaddingFillValue(value);
-      syncToStore({ paddingFillValue: value });
+      syncToStoreImmediate({ paddingFillValue: value });
     },
-    [syncToStore],
+    [syncToStoreImmediate],
   );
 
   const handlePaddingImageFileChange = useCallback(
     (file: File | null) => {
       if (!file) {
         setPaddingImageUrl(null);
-        syncToStore({ paddingImageUrl: null });
+        syncToStoreImmediate({ paddingImageUrl: null });
         return;
       }
       const url = URL.createObjectURL(file);
       setPaddingImageUrl(url);
       setPaddingFillType('image');
-      syncToStore({ paddingFillType: 'image', paddingImageUrl: url });
+      syncToStoreImmediate({ paddingFillType: 'image', paddingImageUrl: url });
     },
-    [syncToStore],
+    [syncToStoreImmediate],
   );
 
   // ── Navigation ──────────────────────────────────────────
@@ -547,18 +641,20 @@ export function useInspectorLogic({
     handleResetTransforms,
 
     // Padding
-    paddingInput,
+    paddingPx,
+    paddingMaxPx,
     cornerRadiusInput,
     paddingFillType,
     paddingFillValue,
     paddingImageUrl,
-    handlePaddingInputChange,
+    handlePaddingPxChange,
     handlePaddingInputBlur,
     handleCornerRadiusInputChange,
     handleCornerRadiusInputBlur,
     handlePaddingFillTypeChange,
     handlePaddingFillValueChange,
     handlePaddingImageFileChange,
+    handleResetTweaks,
 
     // Output width
     outputWidth,

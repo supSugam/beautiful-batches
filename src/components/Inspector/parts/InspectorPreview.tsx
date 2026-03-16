@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import EditorCanvas from './EditorCanvas';
 import CropOverlay from './CropOverlay';
 import type { ImageEditorApi } from '../hooks/useImageEditor';
+import type { PaddingFillType } from '../../../types/app';
+import { clampPaddingToReference } from '../../../utils/boxValues';
+import { computePaddedContentRect } from '../../../utils/paddedContentRect';
 
 /**
  * InspectorPreview — the editor zone that hosts canvas + crop overlay.
@@ -17,9 +20,23 @@ type InspectorPreviewProps = {
   isProcessing: boolean;
   imageObjectUrl: string;
   editor: ImageEditorApi;
+  paddingPx: number;
+  cornerRadius: unknown;
+  paddingFillType: PaddingFillType;
+  paddingFillValue: string;
+  paddingImageUrl: string | null;
 };
 
-const InspectorPreview = ({ isProcessing, imageObjectUrl, editor }: InspectorPreviewProps) => {
+const InspectorPreview = ({
+  isProcessing,
+  imageObjectUrl,
+  editor,
+  paddingPx,
+  cornerRadius,
+  paddingFillType,
+  paddingFillValue,
+  paddingImageUrl,
+}: InspectorPreviewProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<ImageEditorApi>(editor);
   editorRef.current = editor;
@@ -142,6 +159,31 @@ const InspectorPreview = ({ isProcessing, imageObjectUrl, editor }: InspectorPre
     };
   }, []);
 
+  const paddingValues = clampPaddingToReference(
+    String(Math.max(0, Math.round(Number(paddingPx) || 0))),
+    editor.effectiveWidth,
+    editor.effectiveHeight,
+  );
+  const contentRect = computePaddedContentRect(
+    editor.effectiveWidth,
+    editor.effectiveHeight,
+    paddingValues,
+  );
+  const EPS = 0.0001;
+  const contentGuideStatus = {
+    left: Math.abs(editor.crop.x - contentRect.x) < EPS,
+    right:
+      Math.abs(
+        editor.crop.x + editor.crop.w - (contentRect.x + contentRect.width),
+      ) < EPS,
+    top: Math.abs(editor.crop.y - contentRect.y) < EPS,
+    bottom:
+      Math.abs(
+        editor.crop.y + editor.crop.h - (contentRect.y + contentRect.height),
+      ) < EPS,
+  };
+  const shouldShowContentGuides = Math.max(0, Math.round(Number(paddingPx) || 0)) > 0;
+
   return (
     <div
       className="inspector-crop-container"
@@ -166,6 +208,11 @@ const InspectorPreview = ({ isProcessing, imageObjectUrl, editor }: InspectorPre
         fitLayout={editor.fitLayout}
         containerWidth={containerSize.width}
         containerHeight={containerSize.height}
+        paddingPx={paddingPx}
+        cornerRadius={cornerRadius}
+        paddingFillType={paddingFillType}
+        paddingFillValue={paddingFillValue}
+        paddingImageUrl={paddingImageUrl}
       />
 
       <CropOverlay
@@ -179,6 +226,17 @@ const InspectorPreview = ({ isProcessing, imageObjectUrl, editor }: InspectorPre
         onDragEnd={editor.onDragEnd}
         isPinching={isPinching}
         centerStatus={editor.centerStatus}
+        contentRect={
+          shouldShowContentGuides
+            ? {
+                x: contentRect.x,
+                y: contentRect.y,
+                w: contentRect.width,
+                h: contentRect.height,
+              }
+            : null
+        }
+        contentGuideStatus={shouldShowContentGuides ? contentGuideStatus : undefined}
       />
     </div>
   );

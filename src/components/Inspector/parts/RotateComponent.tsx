@@ -47,6 +47,9 @@ type RotateComponentProps = {
   highlightedBarClassName?: string;
   zeroBarClassName?: string;
   density?: number;
+  valuePrecision?: number;
+  valueSuffix?: string;
+  valueFormatter?: (value: number) => string;
 };
 
 export const RotateComponent = forwardRef<RotateComponentRef, RotateComponentProps>(
@@ -66,6 +69,9 @@ export const RotateComponent = forwardRef<RotateComponentRef, RotateComponentPro
       highlightedBarClassName = '',
       zeroBarClassName = '',
       density = 10,
+      valuePrecision = 1,
+      valueSuffix = '°',
+      valueFormatter,
     },
     ref,
   ) => {
@@ -78,20 +84,12 @@ export const RotateComponent = forwardRef<RotateComponentRef, RotateComponentPro
       const width = barsRef.current.clientWidth;
       if (width <= 0) return;
       const count = Math.max(1, width / density);
-      const neededLeftBarsCount = Math.max(
-        0,
-        Math.floor(count / 2) - Math.round((value - from) / step),
-      );
-      const neededRightBarsCount = Math.max(
-        0,
-        Math.floor(count / 2) - Math.round((to - value) / step),
-      );
+      const half = Math.max(1, Math.ceil(count / 2));
+      const buffer = 2;
+      const windowFrom = Math.max(from, value - (half + buffer) * step);
+      const windowTo = Math.min(to, value + (half + buffer) * step);
 
-      const values = [
-        ...range(from - neededLeftBarsCount * step, from, step),
-        ...range(from, to + step, step),
-        ...range(to + step, to + step + neededRightBarsCount * step, step),
-      ];
+      const values = range(windowFrom, windowTo + step, step);
 
       const radius = Math.abs(Math.ceil(count / 2) * step);
 
@@ -220,7 +218,9 @@ export const RotateComponent = forwardRef<RotateComponentRef, RotateComponentPro
             className={`telegram-rotate-component__value ${valueBarClassName}`}
           >
             <div className="telegram-rotate-component__value-number">
-              {value.toFixed(1)}°
+              {valueFormatter
+                ? valueFormatter(value)
+                : `${value.toFixed(valuePrecision)}${valueSuffix}`}
             </div>
           </div>
         </div>

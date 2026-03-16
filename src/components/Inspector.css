@@ -631,14 +631,7 @@
 
 .inspector-crop-container {
   width: 100%;
-  background: #09090b;
-  background-image: 
-    linear-gradient(45deg, #111 25%, transparent 25%), 
-    linear-gradient(-45deg, #111 25%, transparent 25%), 
-    linear-gradient(45deg, transparent 75%, #111 75%), 
-    linear-gradient(-45deg, transparent 75%, #111 75%);
-  background-size: 20px 20px;
-  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+  background: var(--bg-base);
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border);
@@ -722,6 +715,74 @@
   left: 0;
   right: 0;
   top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.padding-guide-line {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 7;
+}
+
+.padding-guide-line.visible {
+  opacity: 1;
+}
+
+.padding-guide-line.hint.padding-guide-line--vertical {
+  width: 1px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.32) 0px,
+    rgba(255, 255, 255, 0.32) 5px,
+    transparent 5px,
+    transparent 10px
+  );
+}
+
+.padding-guide-line.hint.padding-guide-line--horizontal {
+  height: 1px;
+  background: repeating-linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.32) 0px,
+    rgba(255, 255, 255, 0.32) 5px,
+    transparent 5px,
+    transparent 10px
+  );
+}
+
+.padding-guide-line.snapped.padding-guide-line--vertical {
+  width: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.8) 0px,
+    rgba(255, 255, 255, 0.8) 7px,
+    transparent 7px,
+    transparent 12px
+  );
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 12px rgba(255, 255, 255, 0.22);
+}
+
+.padding-guide-line.snapped.padding-guide-line--horizontal {
+  height: 2px;
+  background: repeating-linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.8) 0px,
+    rgba(255, 255, 255, 0.8) 7px,
+    transparent 7px,
+    transparent 12px
+  );
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 12px rgba(255, 255, 255, 0.22);
+}
+
+.padding-guide-line--vertical {
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.padding-guide-line--horizontal {
   height: 1px;
   transform: translateY(-50%);
 }
@@ -1454,11 +1515,9 @@
 }
 
 .padding-color-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  position: fixed;
   width: 194px;
-  z-index: 320;
+  z-index: 9999;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-hover);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent), #111113;
@@ -2101,4 +2160,3 @@
     gap: 3px;
   }
 }
-

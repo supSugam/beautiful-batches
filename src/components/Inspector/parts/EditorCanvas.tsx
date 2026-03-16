@@ -5,6 +5,12 @@ import {
   useMotionTemplate,
   animate,
 } from 'framer-motion';
+import type { PaddingFillType } from '../../../types/app';
+import {
+  clampCornerRadiusToReference,
+  clampPaddingToReference,
+} from '../../../utils/boxValues';
+import { computePaddedContentRect } from '../../../utils/paddedContentRect';
 
 /**
  * EditorCanvas — renders the image with rotation, flip, and zoom
@@ -42,6 +48,11 @@ type EditorCanvasProps = {
   fitLayout: EditorCanvasFitLayout | null;
   containerWidth: number;
   containerHeight: number;
+  paddingPx?: number;
+  cornerRadius?: unknown;
+  paddingFillType?: PaddingFillType;
+  paddingFillValue?: string;
+  paddingImageUrl?: string | null;
 };
 
 type EditorCanvasRef = {
@@ -61,6 +72,11 @@ const EditorCanvas = forwardRef<EditorCanvasRef, EditorCanvasProps>(function Edi
     fitLayout,
     containerWidth,
     containerHeight,
+    paddingPx = 0,
+    cornerRadius,
+    paddingFillType = 'empty',
+    paddingFillValue = '',
+    paddingImageUrl = null,
   },
   ref,
 ) {
@@ -135,8 +151,62 @@ const EditorCanvas = forwardRef<EditorCanvasRef, EditorCanvasProps>(function Edi
   const imgW = naturalWidth * scale;
   const imgH = naturalHeight * scale;
 
+  const outerWidth = Math.max(1, displayW / Math.max(0.0001, scale));
+  const outerHeight = Math.max(1, displayH / Math.max(0.0001, scale));
+  const paddingValues = clampPaddingToReference(
+    String(Math.max(0, Math.round(Number(paddingPx) || 0))),
+    outerWidth,
+    outerHeight,
+  );
+  const contentRect = computePaddedContentRect(
+    outerWidth,
+    outerHeight,
+    paddingValues,
+  );
+
+  const contentLeft = contentRect.x * scale;
+  const contentTop = contentRect.y * scale;
+  const contentW = contentRect.width * scale;
+  const contentH = contentRect.height * scale;
+
+  const clampedCornerRadius = clampCornerRadiusToReference(
+    cornerRadius as any,
+    contentRect.width,
+    contentRect.height,
+  );
+  const cornerRadiusCss = `${Math.max(0, clampedCornerRadius.topLeft) * scale}px ${
+    Math.max(0, clampedCornerRadius.topRight) * scale
+  }px ${Math.max(0, clampedCornerRadius.bottomRight) * scale}px ${
+    Math.max(0, clampedCornerRadius.bottomLeft) * scale
+  }px`;
+
+  const effectiveFillType: PaddingFillType =
+    paddingFillType === 'image' && !String(paddingImageUrl || '').trim()
+      ? 'empty'
+      : paddingFillType;
+  const effectiveFillValue =
+    typeof paddingFillValue === 'string' && paddingFillValue.trim()
+      ? paddingFillValue.trim()
+      : '#ffffff';
+
+  const fillStyle: React.CSSProperties = (() => {
+    if (effectiveFillType === 'color') {
+      return { background: effectiveFillValue };
+    }
+    if (effectiveFillType === 'image' && paddingImageUrl) {
+      return {
+        backgroundImage: `url(${paddingImageUrl})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+      };
+    }
+    return { background: 'transparent' };
+  })();
+
   return (
     <motion.div
+      className="editor-canvas-stage transparency-grid"
       style={{
         position: 'absolute',
         left: offsetX,
@@ -149,25 +219,62 @@ const EditorCanvas = forwardRef<EditorCanvasRef, EditorCanvasProps>(function Edi
         willChange: 'transform',
       }}
     >
-      <motion.img
-        src={imageUrl}
-        className="editor-canvas-img"
-        draggable={false}
+      <div
+        className="editor-canvas-fill"
         style={{
           position: 'absolute',
-          left: displayW / 2 - imgW / 2,
-          top: displayH / 2 - imgH / 2,
-          width: imgW,
-          height: imgH,
-          pointerEvents: 'none',
-          objectFit: 'fill',
-          rotateZ: animatedRotation,
-          scaleX: animatedScaleX,
-          scaleY: animatedScaleY,
-          willChange: 'transform',
+          inset: 0,
+          ...fillStyle,
         }}
-        alt=""
       />
+
+      <div
+        className="editor-canvas-content-clip"
+        style={{
+          position: 'absolute',
+          left: contentLeft,
+          top: contentTop,
+          width: contentW,
+          height: contentH,
+          borderRadius: cornerRadiusCss,
+          overflow: 'hidden',
+          pointerEvents: 'none',
+        }}
+      >
+        <div
+          className="editor-canvas-content-stage"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: '50%',
+            width: displayW,
+            height: displayH,
+            transform: `translate(-50%, -50%) scale(${contentRect.scale})`,
+            transformOrigin: 'center',
+            willChange: 'transform',
+          }}
+        >
+          <motion.img
+            src={imageUrl}
+            className="editor-canvas-img"
+            draggable={false}
+            style={{
+              position: 'absolute',
+              left: displayW / 2 - imgW / 2,
+              top: displayH / 2 - imgH / 2,
+              width: imgW,
+              height: imgH,
+              pointerEvents: 'none',
+              objectFit: 'fill',
+              rotateZ: animatedRotation,
+              scaleX: animatedScaleX,
+              scaleY: animatedScaleY,
+              willChange: 'transform',
+            }}
+            alt=""
+          />
+        </div>
+      </div>
     </motion.div>
   );
 });
