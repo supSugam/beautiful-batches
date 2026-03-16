@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { invoke } from '@tauri-apps/api/core';
 import {
   normalizeStoredCoordinates,
   toStoredCoordinates,
@@ -346,13 +347,24 @@ const hasMeaningfulImageChange = (
 
   if (entry?.aspect !== null && entry?.aspect !== undefined) return true;
 
-  const outputWidth = Number(entry?.outputWidth ?? 0);
-  if (Number.isFinite(outputWidth) && outputWidth > 0) return true;
+	  const outputWidth = Number(entry?.outputWidth ?? 0);
+	  if (Number.isFinite(outputWidth) && outputWidth > 0) return true;
 
-  if (entry?.clearImageMetadata) return true;
+	  if (entry?.clearImageMetadata) return true;
 
-  const normalizedPadding = normalizePaddingInput(entry?.padding);
-  if (hasAnyPadding(normalizedPadding)) return true;
+	  const sourceEditIndex = Number(entry?.sourceEditHistoryIndex ?? -1);
+	  const sourceEditHistoryLen = Array.isArray(entry?.sourceEditHistory)
+	    ? entry?.sourceEditHistory.length
+	    : 0;
+	  if (
+	    (Number.isFinite(sourceEditIndex) && sourceEditIndex >= 0) ||
+	    sourceEditHistoryLen > 0
+	  ) {
+	    return true;
+	  }
+
+	  const normalizedPadding = normalizePaddingInput(entry?.padding);
+	  if (hasAnyPadding(normalizedPadding)) return true;
 
   const normalizedCornerRadius = normalizeCornerRadiusInput(entry?.cornerRadius);
   if (hasAnyCornerRadius(normalizedCornerRadius)) return true;
@@ -436,6 +448,8 @@ type ApplyCropToImagesOptions = {
   includeTransforms?: boolean;
   includeCropState?: boolean;
   includeUiTweaks?: boolean;
+  includeWatermarkRemoval?: boolean;
+  includeBackgroundRemoval?: boolean;
 };
 
 export interface UseStoreState {
@@ -1142,6 +1156,8 @@ const useStore = create<UseStoreState>((set, get) => {
         const normalizedCoords = normalizeCropEntryForImage(coords, image);
         nextCropData.set(id, normalizedCoords);
 
+        const isInteracting = Boolean(normalizedCoords.isInteracting);
+
         const isMeaningfulChange = hasMeaningfulImageChange(
           normalizedCoords,
           image,
@@ -1150,7 +1166,9 @@ const useStore = create<UseStoreState>((set, get) => {
         const previousModifiedAt = state.sessionModifiedAt.get(id) || 0;
         let nextSessionModifiedAt = state.sessionModifiedAt;
 
-        if (isMeaningfulChange) {
+        // Avoid thrashing global UI (grid/layout) while actively dragging in the editor.
+        // We'll commit a final non-interacting state on drag end.
+        if (!isInteracting && isMeaningfulChange) {
           if (
             previousModifiedAt === 0 ||
             now - previousModifiedAt >= SESSION_MODIFIED_THROTTLE_MS
@@ -1160,7 +1178,7 @@ const useStore = create<UseStoreState>((set, get) => {
             );
             nextSessionModifiedAt.set(id, now);
           }
-        } else if (previousModifiedAt > 0) {
+        } else if (!isInteracting && previousModifiedAt > 0) {
           if (!state.captionById.has(id)) {
             nextSessionModifiedAt = new Map<string, number>(
               state.sessionModifiedAt,
@@ -1179,20 +1197,34 @@ const useStore = create<UseStoreState>((set, get) => {
           cropData: nextCropData,
           sessionModifiedAt: nextSessionModifiedAt,
           cropLayoutVersion: shouldBumpLayoutVersion
-            ? state.cropLayoutVersion + 1
+            ? isInteracting
+              ? state.cropLayoutVersion
+              : state.cropLayoutVersion + 1
             : state.cropLayoutVersion,
         };
       });
     },
 
-    applyCropToImages: (sourceId, targetIds, options) => {
-      const { images, cropData } = get();
-      const sourceImg = images.find((img) => img.id === sourceId);
-      if (!sourceImg) return;
+	    applyCropToImages: (sourceId, targetIds, options) => {
+	      const { images, cropData } = get();
+	      const sourceImg = images.find((img) => img.id === sourceId);
+	      if (!sourceImg) return;
 
       const sourceRawData = cropData.get(sourceId);
       if (!sourceRawData) return;
-      const sourceData = normalizeCropEntryForImage(sourceRawData, sourceImg);
+	      const sourceData = normalizeCropEntryForImage(sourceRawData, sourceImg);
+	      const sourceOps = Array.isArray(sourceData?.sourceEditOps)
+	        ? (sourceData.sourceEditOps as Array<'watermark' | 'background'>)
+	        : [];
+	      const shouldIncludeWatermarkRemoval = Boolean(
+	        options?.includeWatermarkRemoval && sourceOps.includes('watermark'),
+	      );
+	      const shouldIncludeBackgroundRemoval = Boolean(
+	        options?.includeBackgroundRemoval && sourceOps.includes('background'),
+	      );
+	      const bulkSourceEditOpsToApply = sourceOps.filter((op) =>
+	        op === 'watermark' ? shouldIncludeWatermarkRemoval : shouldIncludeBackgroundRemoval,
+	      );
       const sourceCoordinates = normalizeStoredCoordinates(
         sourceData.coordinates,
       );
@@ -1252,9 +1284,9 @@ const useStore = create<UseStoreState>((set, get) => {
         const now = getNowTs();
         let shouldBumpLayoutVersion = false;
 
-        uniqueTargetIds.forEach((id) => {
-          const targetImg = imagesById.get(id);
-          if (!targetImg) return;
+	        uniqueTargetIds.forEach((id) => {
+	          const targetImg = imagesById.get(id);
+	          if (!targetImg) return;
 
           const targetBounds = getRotatedBounds(
             targetImg.naturalWidth,
@@ -1278,12 +1310,17 @@ const useStore = create<UseStoreState>((set, get) => {
                 flip: { horizontal: false, vertical: false },
               };
 
-          let mergedEntry: CropEntry = {
-            ...sourceData,
-            transforms: baseTransforms,
-            imageWidth: targetImg.naturalWidth,
-            imageHeight: targetImg.naturalHeight,
-          };
+	          let mergedEntry: CropEntry = {
+	            ...sourceData,
+	            transforms: baseTransforms,
+	            imageWidth: targetImg.naturalWidth,
+	            imageHeight: targetImg.naturalHeight,
+	          };
+	          // Never copy source-edited pixels across images. Keep the target's own edit history unless
+	          // a bulk edit is explicitly requested (handled asynchronously after this set()).
+	          mergedEntry.sourceEditHistory = previousEntry?.sourceEditHistory;
+	          mergedEntry.sourceEditHistoryIndex = previousEntry?.sourceEditHistoryIndex;
+	          mergedEntry.sourceEditOps = previousEntry?.sourceEditOps;
 
           // Override Crop/Aspect State
           if (!applyCropState) {
@@ -1350,8 +1387,68 @@ const useStore = create<UseStoreState>((set, get) => {
             ? state.cropLayoutVersion + 1
             : state.cropLayoutVersion,
         };
-      });
-    },
+	      });
+
+	      if (bulkSourceEditOpsToApply.length === 0) return;
+
+	      // Apply the selected heavy edits (watermark removal / background removal) to each target image.
+	      // Runs in the background; export will reflect results once completed.
+	      void (async () => {
+	        for (const id of uniqueTargetIds) {
+	          const img = get().images.find((entry) => entry.id === id);
+	          const absolutePath = String(img?.absolutePath || '').trim();
+	          if (!img || !absolutePath) continue;
+
+	          const history: string[] = [];
+	          const ops: Array<'watermark' | 'background'> = [];
+	          let lastDeviceUsed: string | undefined;
+
+	          for (const op of bulkSourceEditOpsToApply) {
+	            try {
+	              if (op === 'watermark') {
+	                const result = await invoke<{ imageBase64: string; deviceUsed?: string }>(
+	                  'remove_watermark_single',
+	                  { imagePath: absolutePath, maxBboxPercent: 10.0 },
+	                );
+	                history.push(result.imageBase64);
+	                ops.push('watermark');
+	                lastDeviceUsed = result.deviceUsed;
+	              } else {
+	                const result = await invoke<{ imageBase64: string; deviceUsed?: string }>(
+	                  'remove_background_single',
+	                  { imagePath: absolutePath },
+	                );
+	                history.push(result.imageBase64);
+	                ops.push('background');
+	                lastDeviceUsed = result.deviceUsed;
+	              }
+	            } catch (error) {
+	              console.error(`Bulk ${op} failed for image ${id}:`, error);
+	              break;
+	            }
+	            await yieldToMainThread();
+	          }
+
+	          if (lastDeviceUsed) {
+	            try {
+	              get().setLastUsedHardware(lastDeviceUsed);
+	            } catch {}
+	          }
+
+	          if (history.length === 0) continue;
+
+	          const previousEntry = get().cropData.get(id) || {};
+	          get().setCropChange(id, {
+	            ...previousEntry,
+	            sourceEditHistory: history,
+	            sourceEditHistoryIndex: history.length - 1,
+	            sourceEditOps: ops,
+	          });
+
+	          await yieldToMainThread();
+	        }
+	      })();
+	    },
 
     setCaptionForImage: (id, caption) => {
       set((state) => {

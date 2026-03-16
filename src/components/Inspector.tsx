@@ -38,7 +38,14 @@ const ASPECT_PRESETS = [
 ];
 
 type ApplyTargetType = 'all' | 'rest' | 'prev';
-type ApplyOptions = { includeCaption?: boolean };
+type ApplyOptions = {
+  includeCaption?: boolean;
+  includeTransforms?: boolean;
+  includeCropState?: boolean;
+  includeUiTweaks?: boolean;
+  includeWatermarkRemoval?: boolean;
+  includeBackgroundRemoval?: boolean;
+};
 
 type InspectorProps = {
   image: GalleryImage | null;
@@ -93,6 +100,20 @@ const InspectorEditSession = ({
   }, []);
 
   const cropState = useStore((state) => state.cropData.get(image.id));
+  const sourceEditOps = Array.isArray(cropState?.sourceEditOps)
+    ? cropState?.sourceEditOps
+    : [];
+  const hasLegacySourceEdits =
+    (cropState?.sourceEditHistoryIndex ?? -1) >= 0 ||
+    (Array.isArray(cropState?.sourceEditHistory)
+      ? cropState.sourceEditHistory.length > 0
+      : false);
+  const canIncludeWatermarkRemoval =
+    sourceEditOps.includes('watermark') ||
+    (hasLegacySourceEdits && sourceEditOps.length === 0);
+  const canIncludeBackgroundRemoval =
+    sourceEditOps.includes('background') ||
+    (hasLegacySourceEdits && sourceEditOps.length === 0);
   const normalizedImagePath = String(image?.absolutePath || '')
     .replace(/\\/g, '/')
     .trim();
@@ -308,6 +329,8 @@ const InspectorEditSession = ({
                 onApplyTo(target, options);
               }}
               showSectionLabel={false}
+              canIncludeWatermarkRemoval={canIncludeWatermarkRemoval}
+              canIncludeBackgroundRemoval={canIncludeBackgroundRemoval}
             />
           </section>
         </div>

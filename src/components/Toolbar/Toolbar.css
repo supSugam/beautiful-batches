@@ -54,15 +54,20 @@
   gap: 6px;
   font-size: 0.72rem;
   font-weight: 600;
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+  will-change: background-color, border-color, box-shadow;
   -webkit-app-region: no-drag;
 }
 
 .toolbar-export-btn:hover {
   color: var(--text-bright);
-  border-color: rgba(129, 140, 248, 0.45);
-  background: rgba(129, 140, 248, 0.12);
-  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.15) inset;
+  border-color: rgba(129, 140, 248, 0.38);
+  background: rgba(129, 140, 248, 0.1);
+  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.12) inset;
 }
 
 .toolbar-app-logo {

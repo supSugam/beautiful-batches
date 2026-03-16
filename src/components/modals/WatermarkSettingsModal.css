@@ -97,7 +97,7 @@
 /* ===== Body ===== */
 .wsm-body {
   flex: 1;
-  min-height: 0;
+  min-height: 560px;
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
@@ -106,6 +106,8 @@
 .wsm-loading {
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex: 1;
   gap: 10px;
   color: var(--text-secondary);
   font-size: 0.82rem;

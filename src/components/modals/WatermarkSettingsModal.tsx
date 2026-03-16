@@ -420,11 +420,18 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                   <p className="wsm-model-group-label">Detection</p>
                   <div className="wsm-models-list">
                     {status.detectionModels.map((model) => (
-                      <button
+                      <div
                         key={model.id}
-                        type="button"
                         className={`wsm-model-row ${selectedDetectionId === model.id ? 'is-selected' : ''}`}
                         onClick={() => setSelectedDetectionId(model.id)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelectedDetectionId(model.id);
+                          }
+                        }}
                       >
                         <span className="wsm-model-radio" />
                         <span className="wsm-model-info">
@@ -478,7 +485,7 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                             </span>
                           )}
                         </span>
-                      </button>
+                      </div>
                     ))}
                   </div>
 
@@ -486,11 +493,18 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                   <p className="wsm-model-group-label">Inpainting</p>
                   <div className="wsm-models-list">
                     {status.inpaintingModels.map((model) => (
-                      <button
+                      <div
                         key={model.id}
-                        type="button"
                         className={`wsm-model-row ${selectedInpaintingId === model.id ? 'is-selected' : ''}`}
                         onClick={() => setSelectedInpaintingId(model.id)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelectedInpaintingId(model.id);
+                          }
+                        }}
                       >
                         <span className="wsm-model-radio" />
                         <span className="wsm-model-info">
@@ -544,7 +558,7 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                             </span>
                           )}
                         </span>
-                      </button>
+                      </div>
                     ))}
                   </div>
 
@@ -552,11 +566,11 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                   <p className="wsm-model-group-label" style={{ marginTop: '12px' }}>BACKGROUND REMOVAL</p>
                   <div className="wsm-models-list">
                     {status.backgroundRemovalModels.map((model) => (
-                      <button
+                      <div
                         key={model.id}
-                        type="button"
                         className={`wsm-model-row ${model.id === 'rembg' ? 'is-selected' : ''}`}
                         style={{ cursor: 'default' }}
+                        role="group"
                       >
                         <span className="wsm-model-radio" />
                         <span className="wsm-model-info">
@@ -594,7 +608,7 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                             </span>
                           )}
                         </span>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 </section>

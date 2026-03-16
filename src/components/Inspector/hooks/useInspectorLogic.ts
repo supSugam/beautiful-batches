@@ -253,9 +253,21 @@ export function useInspectorLogic({
   const [historyIndex, setHistoryIndex] = useState(
     () => cropState?.sourceEditHistoryIndex ?? -1,
   );
+  const [processedOps, setProcessedOps] = useState<Array<'watermark' | 'background'>>(
+    () => (cropState?.sourceEditOps || []) as Array<'watermark' | 'background'>,
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRemovingWatermark, setIsRemovingWatermark] = useState(false);
   const [isRemovingBackground, setIsRemovingBackground] = useState(false);
+
+  // When switching images, hydrate local history state from the stored crop entry.
+  useEffect(() => {
+    setProcessedHistory(cropState?.sourceEditHistory || []);
+    setHistoryIndex(cropState?.sourceEditHistoryIndex ?? -1);
+    setProcessedOps(
+      (cropState?.sourceEditOps || []) as Array<'watermark' | 'background'>,
+    );
+  }, [imageId]);
 
   // Clean up Object URLs when component unmounts or image changes
   useEffect(() => {
@@ -271,17 +283,17 @@ export function useInspectorLogic({
     if (!imageId) return;
     if (
       cropStateRef.current?.sourceEditHistoryIndex !== historyIndex ||
-      cropStateRef.current?.sourceEditHistory !== processedHistory
+      cropStateRef.current?.sourceEditHistory !== processedHistory ||
+      cropStateRef.current?.sourceEditOps !== processedOps
     ) {
       onCropChange?.(imageId, {
         ...cropStateRef.current,
         sourceEditHistory: processedHistory,
         sourceEditHistoryIndex: historyIndex,
+        sourceEditOps: processedOps,
       });
-      // Force bumped last modified for draft persistence
-      useStore.getState().sessionModifiedAt.set(imageId, Date.now());
     }
-  }, [processedHistory, historyIndex, imageId, onCropChange]);
+  }, [processedHistory, processedOps, historyIndex, imageId, onCropChange]);
 
   const activeImageObjectUrl = useMemo(() => {
     if (historyIndex === -1) return image?.objectUrl;
@@ -306,6 +318,7 @@ export function useInspectorLogic({
       console.log('Background removal result received, updating history. Hardware used:', result.deviceUsed);
       if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);
       setProcessedHistory((prev) => [...prev, result.imageBase64]);
+      setProcessedOps((prev) => [...prev, 'background']);
       setHistoryIndex((prev) => prev + 1);
     } catch (error) {
       console.error('Background removal failed:', error);
@@ -331,6 +344,7 @@ export function useInspectorLogic({
     if (historyIndex > -1 || processedHistory.length > 0) {
       setHistoryIndex(-1);
       setProcessedHistory([]);
+      setProcessedOps([]);
     }
   }, [historyIndex, processedHistory]);
 
@@ -353,6 +367,7 @@ export function useInspectorLogic({
       if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);
       // Add to history
       setProcessedHistory((prev) => [...prev, result.imageBase64]);
+      setProcessedOps((prev) => [...prev, 'watermark']);
       setHistoryIndex((prev) => prev + 1);
     } catch (error) {
       console.error('Watermark removal failed:', error);

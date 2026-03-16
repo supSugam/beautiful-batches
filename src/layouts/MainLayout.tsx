@@ -12,7 +12,14 @@ import type {
 import './MainLayout.css';
 
 type ApplyTargetType = 'all' | 'rest' | 'prev';
-type ApplyOptions = { includeCaption?: boolean };
+type ApplyOptions = {
+  includeCaption?: boolean;
+  includeTransforms?: boolean;
+  includeCropState?: boolean;
+  includeUiTweaks?: boolean;
+  includeWatermarkRemoval?: boolean;
+  includeBackgroundRemoval?: boolean;
+};
 
 type MainLayoutProps = {
   images: GalleryImage[];

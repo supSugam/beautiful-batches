@@ -78,6 +78,7 @@ export interface CropEntry {
   clearImageMetadata?: boolean;
   sourceEditHistory?: string[];
   sourceEditHistoryIndex?: number;
+  sourceEditOps?: Array<'watermark' | 'background'>;
 }
 
 export interface RawUploadImage {
