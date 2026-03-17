@@ -153,7 +153,3 @@ src-tauri/src/
 - Read [CONTRIBUTING.md](./CONTRIBUTING.md)
 - Open issues with templates in [.github/ISSUE_TEMPLATE](./.github/ISSUE_TEMPLATE)
 - Use the PR checklist in [.github/pull_request_template.md](./.github/pull_request_template.md)
-
-## Maintainer
-
-@beautifulMention

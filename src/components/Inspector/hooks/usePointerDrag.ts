@@ -14,10 +14,14 @@ type DragMovePayload = {
   totalDeltaY: number;
   clientX: number;
   clientY: number;
+  shiftKey: boolean;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
 };
 
 type DragEndPayload = Omit<DragMovePayload, 'deltaX' | 'deltaY'>;
-type DragStartPayload = Pick<DragMovePayload, 'clientX' | 'clientY'>;
+type DragStartPayload = Pick<DragMovePayload, 'clientX' | 'clientY' | 'shiftKey' | 'altKey' | 'ctrlKey' | 'metaKey'>;
 
 type PointerDragState = {
   startX: number;
@@ -62,6 +66,10 @@ export function usePointerDrag({ onMove, onMoveStart, onMoveEnd }: UsePointerDra
       totalDeltaY: e.clientY - s.startY,
       clientX: e.clientX,
       clientY: e.clientY,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
     });
   }, []);
 
@@ -81,6 +89,10 @@ export function usePointerDrag({ onMove, onMoveStart, onMoveEnd }: UsePointerDra
       totalDeltaY: e.clientY - s.startY,
       clientX: e.clientX,
       clientY: e.clientY,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
     });
   }, []);
 
@@ -107,6 +119,10 @@ export function usePointerDrag({ onMove, onMoveStart, onMoveEnd }: UsePointerDra
     onMoveStartRef.current?.({
       clientX: e.clientX,
       clientY: e.clientY,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
     });
   }, []);
 

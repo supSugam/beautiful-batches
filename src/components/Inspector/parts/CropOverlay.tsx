@@ -30,12 +30,14 @@ type CropOverlayProps = {
   fitLayout: FitLayout | null;
   zoom?: number;
   onPanImage?: (dx: number, dy: number) => void;
-  onCropMove?: (dx: number, dy: number) => void;
+  onCropMove?: (totalDx: number, totalDy: number, startCrop: EditorCropCoordinates | null, bypassSnap: boolean, lockRatio: boolean) => void;
   onCropResize?: (
     handleId: string,
     totalDx: number,
     totalDy: number,
     startCrop: EditorCropCoordinates | null,
+    bypassSnap: boolean,
+    lockRatio: boolean,
   ) => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
@@ -95,19 +97,23 @@ const CropOverlay = ({
     onMoveStart: () => {
       if (isPinchingRef.current) return;
       setIsDragging(true);
+      startCropRef.current = { ...cropRef.current };
       onDragStartRef.current?.();
     },
-    onMove: ({ deltaX, deltaY }) => {
+    onMove: ({ deltaX, deltaY, totalDeltaX, totalDeltaY, altKey, ctrlKey, metaKey, shiftKey }) => {
       if (isPinchingRef.current) return;
       if (zoom > 1.0001) {
         onPanImageRef.current?.(deltaX, deltaY);
         return;
       }
       const s = displayScaleRef.current;
-      onCropMoveRef.current?.(deltaX / s, deltaY / s);
+      const bypassSnap = shiftKey;
+      const lockRatio = ctrlKey || metaKey;
+      onCropMoveRef.current?.(totalDeltaX / s, totalDeltaY / s, startCropRef.current, bypassSnap, lockRatio);
     },
     onMoveEnd: () => {
       setIsDragging(false);
+      startCropRef.current = null;
       onDragEndRef.current?.();
     },
   });
@@ -135,7 +141,9 @@ const CropOverlay = ({
           const s = displayScaleRef.current;
           const totalDx = (moveEvent.clientX - startX) / s;
           const totalDy = (moveEvent.clientY - startY) / s;
-          onCropResizeRef.current?.(handleId, totalDx, totalDy, startCropRef.current);
+          const bypassSnap = moveEvent.shiftKey;
+          const lockRatio = moveEvent.ctrlKey || moveEvent.metaKey;
+          onCropResizeRef.current?.(handleId, totalDx, totalDy, startCropRef.current, bypassSnap, lockRatio);
         };
 
         const handleUp = (upEvent: PointerEvent) => {

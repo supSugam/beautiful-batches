@@ -97,7 +97,6 @@
 /* ===== Body ===== */
 .wsm-body {
   flex: 1;
-  min-height: 560px;
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
@@ -634,4 +633,157 @@
 
 .is-confirming svg {
   animation: tickReveal 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* ===== Tabs Navigation ===== */
+.wsm-tabs {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.wsm-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 2px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  transition: color var(--transition-fast);
+}
+
+.wsm-tab:hover {
+  color: var(--text-bright);
+}
+
+.wsm-tab.is-active {
+  color: var(--accent);
+}
+
+.wsm-tab-active-indicator {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+}
+
+/* ===== Tab Content Area ===== */
+.wsm-tab-content-wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 560px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.wsm-tab-pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ===== Tips Tab ===== */
+.wsm-tips-container {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  overflow-y: auto;
+  align-content: start;
+  flex: 1;
+}
+
+.wsm-tip-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 24px 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  min-height: 160px;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.wsm-tip-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.wsm-tip-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.wsm-tip-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(129, 140, 248, 0.1);
+  color: var(--accent);
+  border: 1px solid rgba(129, 140, 248, 0.2);
+  margin-bottom: 2px;
+}
+
+.wsm-tip-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wsm-tip-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.wsm-tip-desc {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.wsm-key-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  color: var(--text-bright);
+  font-weight: 500;
+  font-size: 0.76rem;
+}
+
+.wsm-key-icon {
+  margin-right: 4px;
+  opacity: 0.8;
 }

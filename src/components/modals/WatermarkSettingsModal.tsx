@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -14,6 +14,10 @@ import {
   Database,
   MonitorCheck,
   Check,
+  Lightbulb,
+  MousePointer2,
+  Command,
+  ChevronUp,
 } from 'lucide-react';
 import type { WatermarkSidecarStatus } from '../../types/app';
 import useStore from '../../store/useStore';
@@ -137,6 +141,7 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
   const [selectedDetectionId, setSelectedDetectionId] = useState('florence-2-large');
   const [selectedInpaintingId, setSelectedInpaintingId] = useState('lama');
 
+  const [activeTab, setActiveTab] = useState<'engine' | 'tips'>('engine');
   const logsContainerRef = useRef<HTMLDivElement>(null);
   const wipeTimeoutRef = useRef<number | null>(null);
   const deleteTimeoutRef = useRef<Record<string, number>>({});
@@ -308,10 +313,13 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
             </div>
             <div>
               <h2>Settings</h2>
-              <p>Configure hardware acceleration and manage AI models for watermark removal.</p>
+              <p>
+                Configure hardware acceleration and manage AI models for
+                watermark removal.
+              </p>
             </div>
           </div>
-          
+
           <div className="wsm-header-right">
             {status && (
               <div className="wsm-storage-pill">
@@ -330,351 +338,699 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
           </div>
         </header>
 
-        {/* Body */}
-        <div className="wsm-body">
-          {!status ? (
-            <div className="wsm-loading">
-              <RefreshCcw size={22} className="spin" style={{ color: 'var(--accent)' }} />
-              <span>Scanning environment…</span>
-            </div>
-          ) : (
-            <>
-              <div className="wsm-health-indicator-row">
-                <HealthDot label="Hardware Detected" ok={true} />
-                <HealthDot label="Python" ok={status.pythonInstalled} error={!status.pythonInstalled} />
-                <HealthDot label="Git" ok={status.gitInstalled} />
-                <HealthDot label="uv Runtime" ok={status.uvInstalled} />
-                <HealthDot label="Repository" ok={status.repoCloned} />
-                <HealthDot label="Dependencies" ok={status.dependenciesInstalled} />
-                <HealthDot label="Bridge" ok={status.isBridgeActive} />
-              </div>
-              <div className="wsm-grid">
-                {/* Left column: Health */}
-                <div className="wsm-col">
-                  <section className="wsm-card is-hardware">
-                  <h3>Hardware Diagnostics</h3>
-                  <div className="wsm-diag-info">
-                    <div className="wsm-diag-row">
-                      <span>Physical Hardware</span>
-                      <HardwareBadge type={status.hardwareType || 'cpu'} />
+        {/* Tabs Bar */}
+        <nav className="wsm-tabs" aria-label="Settings Tabs">
+          <button
+            type="button"
+            className={`wsm-tab ${activeTab === 'engine' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('engine')}
+          >
+            <Cpu size={14} />
+            AI Engine
+            {activeTab === 'engine' && (
+              <motion.div
+                layoutId="wsm-tab-indicator"
+                className="wsm-tab-active-indicator"
+              />
+            )}
+          </button>
+
+          <button
+            type="button"
+            className={`wsm-tab ${activeTab === 'tips' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('tips')}
+          >
+            <Lightbulb size={14} />
+            Tips & Shortcuts
+            {activeTab === 'tips' && (
+              <motion.div
+                layoutId="wsm-tab-indicator"
+                className="wsm-tab-active-indicator"
+              />
+            )}
+          </button>
+        </nav>
+
+        <div className="wsm-tab-content-wrapper">
+          <AnimatePresence mode="wait">
+            {activeTab === 'engine' && (
+              <motion.div
+                key="engine"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
+                className="wsm-tab-pane"
+              >
+                {/* Body */}
+                <div className="wsm-body">
+                  {!status ? (
+                    <div className="wsm-loading">
+                      <RefreshCcw
+                        size={22}
+                        className="spin"
+                        style={{ color: 'var(--accent)' }}
+                      />
+                      <span>Scanning environment…</span>
                     </div>
-                    <div className="wsm-diag-row">
-                      <span>Active Engine</span>
-                      <div className="wsm-diag-val">
-                        {lastUsedHardware ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span className={
-                              lastUsedHardware.toLowerCase().includes('cpu') ? 'is-warning' : 'is-success'
-                            }>
-                              {lastUsedHardware.replace('ExecutionProvider', '')}
-                            </span>
-                            {lastUsedHardware.includes('OpenVINO') && (
-                              <span className="hw-badge is-turbo" title="OpenVINO CPU/iGPU Optimization Active">
-                                <RefreshCcw size={10} className="spin-slow" />
-                                TURBO
-                              </span>
-                            )}
-                            {(lastUsedHardware.includes('CUDA') || lastUsedHardware.includes('ROCM') || lastUsedHardware.includes('CoreML') || lastUsedHardware.includes('DirectML')) && (
-                              <span className="hw-badge is-accelerated" title="Hardware Acceleration Active">
-                                <MonitorCheck size={10} />
-                                ACCELERATED
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="is-dimmed">No process run yet</span>
-                        )}
+                  ) : (
+                    <>
+                      <div className="wsm-health-indicator-row">
+                        <HealthDot label="Hardware Detected" ok={true} />
+                        <HealthDot
+                          label="Python"
+                          ok={status.pythonInstalled}
+                          error={!status.pythonInstalled}
+                        />
+                        <HealthDot label="Git" ok={status.gitInstalled} />
+                        <HealthDot label="uv Runtime" ok={status.uvInstalled} />
+                        <HealthDot label="Repository" ok={status.repoCloned} />
+                        <HealthDot
+                          label="Dependencies"
+                          ok={status.dependenciesInstalled}
+                        />
+                        <HealthDot label="Bridge" ok={status.isBridgeActive} />
                       </div>
-                    </div>
-                  </div>
+                      <div className="wsm-grid">
+                        {/* Left column: Health */}
+                        <div className="wsm-col">
+                          <section className="wsm-card is-hardware">
+                            <h3>Hardware Diagnostics</h3>
+                            <div className="wsm-diag-info">
+                              <div className="wsm-diag-row">
+                                <span>Physical Hardware</span>
+                                <HardwareBadge
+                                  type={status.hardwareType || 'cpu'}
+                                />
+                              </div>
+                              <div className="wsm-diag-row">
+                                <span>Active Engine</span>
+                                <div className="wsm-diag-val">
+                                  {lastUsedHardware ? (
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                      }}
+                                    >
+                                      <span
+                                        className={
+                                          lastUsedHardware
+                                            .toLowerCase()
+                                            .includes('cpu')
+                                            ? 'is-warning'
+                                            : 'is-success'
+                                        }
+                                      >
+                                        {lastUsedHardware.replace(
+                                          'ExecutionProvider',
+                                          '',
+                                        )}
+                                      </span>
+                                      {lastUsedHardware.includes(
+                                        'OpenVINO',
+                                      ) && (
+                                        <span
+                                          className="hw-badge is-turbo"
+                                          title="OpenVINO CPU/iGPU Optimization Active"
+                                        >
+                                          <RefreshCcw
+                                            size={10}
+                                            className="spin-slow"
+                                          />
+                                          TURBO
+                                        </span>
+                                      )}
+                                      {(lastUsedHardware.includes('CUDA') ||
+                                        lastUsedHardware.includes('ROCM') ||
+                                        lastUsedHardware.includes('CoreML') ||
+                                        lastUsedHardware.includes(
+                                          'DirectML',
+                                        )) && (
+                                        <span
+                                          className="hw-badge is-accelerated"
+                                          title="Hardware Acceleration Active"
+                                        >
+                                          <MonitorCheck size={10} />
+                                          ACCELERATED
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="is-dimmed">
+                                      No process run yet
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
 
-                  {(status.hardwareType === 'amd' || status.hardwareType === 'nvidia') && 
-                   (!lastUsedHardware || lastUsedHardware.toLowerCase().includes('cpu')) && (
-                    <DriverInstructions 
-                      hw={status.hardwareType} 
-                      os={window.navigator.platform.toLowerCase().includes('win') ? 'windows' : 'linux'} 
-                    />
+                            {(status.hardwareType === 'amd' ||
+                              status.hardwareType === 'nvidia') &&
+                              (!lastUsedHardware ||
+                                lastUsedHardware
+                                  .toLowerCase()
+                                  .includes('cpu')) && (
+                                <DriverInstructions
+                                  hw={status.hardwareType}
+                                  os={
+                                    window.navigator.platform
+                                      .toLowerCase()
+                                      .includes('win')
+                                      ? 'windows'
+                                      : 'linux'
+                                  }
+                                />
+                              )}
+                          </section>
+                        </div>
+
+                        {/* Right column: Unified model list + Logs */}
+                        <div className="wsm-col">
+                          <section className="wsm-card is-models">
+                            <div className="wsm-models-header">
+                              <h3>Models</h3>
+                              <button
+                                type="button"
+                                className={`btn btn-sm ${status.isModelsLoaded ? 'btn-secondary' : 'btn-primary'}`}
+                                disabled={
+                                  !isFullySetup ||
+                                  isSetupRunning ||
+                                  isLoadingModels
+                                }
+                                onClick={handleLoadModels}
+                              >
+                                {isLoadingModels ? (
+                                  <RefreshCcw size={13} className="spin" />
+                                ) : (
+                                  <Cpu size={13} />
+                                )}
+                                {status.isModelsLoaded
+                                  ? 'Reload Engine'
+                                  : 'Initialize Engine'}
+                              </button>
+                            </div>
+
+                            {/* Detection group */}
+                            <p className="wsm-model-group-label">Detection</p>
+                            <div className="wsm-models-list">
+                              {status.detectionModels.map((model) => (
+                                <div
+                                  key={model.id}
+                                  className={`wsm-model-row ${selectedDetectionId === model.id ? 'is-selected' : ''}`}
+                                  onClick={() =>
+                                    setSelectedDetectionId(model.id)
+                                  }
+                                  role="button"
+                                  tabIndex={0}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      setSelectedDetectionId(model.id);
+                                    }
+                                  }}
+                                >
+                                  <span className="wsm-model-radio" />
+                                  <span className="wsm-model-info">
+                                    <span className="wsm-model-name">
+                                      {model.name}
+                                    </span>
+                                    <span className="wsm-model-desc">
+                                      {model.id.includes('large')
+                                        ? '~3GB'
+                                        : model.id.includes('base')
+                                          ? '~1GB'
+                                          : model.description}
+                                    </span>
+                                  </span>
+                                  <span className="wsm-model-action">
+                                    {model.downloaded ? (
+                                      <span className="wsm-model-ready">
+                                        <CheckCircle2 size={13} />
+                                        <span>
+                                          {formatBytes(model.sizeBytes)}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          className={`btn-icon wsm-model-delete ${confirmDeleteModelId === model.id ? 'is-confirming' : ''}`}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            void handleDeleteModel(model.id);
+                                          }}
+                                          aria-label="Delete model"
+                                          title={
+                                            confirmDeleteModelId === model.id
+                                              ? 'Confirm Delete'
+                                              : 'Delete model'
+                                          }
+                                        >
+                                          {confirmDeleteModelId === model.id ? (
+                                            <Check size={13} />
+                                          ) : (
+                                            <Trash2 size={13} />
+                                          )}
+                                        </button>
+                                      </span>
+                                    ) : model.sizeBytes > 0 ? (
+                                      <span className="wsm-model-ready wsm-model-error">
+                                        <AlertTriangle
+                                          size={13}
+                                          style={{ color: 'var(--danger)' }}
+                                        />
+                                        <span
+                                          style={{ color: 'var(--danger)' }}
+                                        >
+                                          Incomplete (
+                                          {formatBytes(model.sizeBytes)})
+                                        </span>
+                                        <span
+                                          role="button"
+                                          className="wsm-deploy-btn"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            void handleDownloadModel(model.id);
+                                          }}
+                                          aria-disabled={
+                                            !isFullySetup ||
+                                            isSetupRunning ||
+                                            !!downloadingModelId
+                                          }
+                                        >
+                                          {downloadingModelId === model.id ? (
+                                            <RefreshCcw
+                                              size={12}
+                                              className="spin"
+                                            />
+                                          ) : (
+                                            <Download size={12} />
+                                          )}
+                                          Redownload
+                                        </span>
+                                      </span>
+                                    ) : (
+                                      <span
+                                        role="button"
+                                        className="wsm-deploy-btn"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleDownloadModel(model.id);
+                                        }}
+                                        aria-disabled={
+                                          !isFullySetup ||
+                                          isSetupRunning ||
+                                          !!downloadingModelId
+                                        }
+                                      >
+                                        {downloadingModelId === model.id ? (
+                                          <RefreshCcw
+                                            size={12}
+                                            className="spin"
+                                          />
+                                        ) : (
+                                          <Download size={12} />
+                                        )}
+                                        Download
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Inpainting group */}
+                            <p className="wsm-model-group-label">Inpainting</p>
+                            <div className="wsm-models-list">
+                              {status.inpaintingModels.map((model) => (
+                                <div
+                                  key={model.id}
+                                  className={`wsm-model-row ${selectedInpaintingId === model.id ? 'is-selected' : ''}`}
+                                  onClick={() =>
+                                    setSelectedInpaintingId(model.id)
+                                  }
+                                  role="button"
+                                  tabIndex={0}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      setSelectedInpaintingId(model.id);
+                                    }
+                                  }}
+                                >
+                                  <span className="wsm-model-radio" />
+                                  <span className="wsm-model-info">
+                                    <span className="wsm-model-name">
+                                      {model.name}
+                                    </span>
+                                    <span className="wsm-model-desc">
+                                      {model.id === 'lama'
+                                        ? '~200MB'
+                                        : model.id === 'rembg'
+                                          ? '~200MB'
+                                          : model.description}
+                                    </span>
+                                  </span>
+                                  <span className="wsm-model-action">
+                                    {model.downloaded ? (
+                                      <span className="wsm-model-ready">
+                                        <CheckCircle2 size={13} />
+                                        <span>
+                                          {formatBytes(model.sizeBytes)}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          className={`btn-icon wsm-model-delete ${confirmDeleteModelId === model.id ? 'is-confirming' : ''}`}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            void handleDeleteModel(model.id);
+                                          }}
+                                          aria-label="Delete model"
+                                          title={
+                                            confirmDeleteModelId === model.id
+                                              ? 'Confirm Delete'
+                                              : 'Delete model'
+                                          }
+                                        >
+                                          {confirmDeleteModelId === model.id ? (
+                                            <Check size={13} />
+                                          ) : (
+                                            <Trash2 size={13} />
+                                          )}
+                                        </button>
+                                      </span>
+                                    ) : model.sizeBytes > 0 ? (
+                                      <span className="wsm-model-ready wsm-model-error">
+                                        <AlertTriangle
+                                          size={13}
+                                          style={{ color: 'var(--danger)' }}
+                                        />
+                                        <span
+                                          style={{ color: 'var(--danger)' }}
+                                        >
+                                          Incomplete (
+                                          {formatBytes(model.sizeBytes)})
+                                        </span>
+                                        <span
+                                          role="button"
+                                          className="wsm-deploy-btn"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            void handleDownloadModel(model.id);
+                                          }}
+                                          aria-disabled={
+                                            !isFullySetup ||
+                                            isSetupRunning ||
+                                            !!downloadingModelId
+                                          }
+                                        >
+                                          {downloadingModelId === model.id ? (
+                                            <RefreshCcw
+                                              size={12}
+                                              className="spin"
+                                            />
+                                          ) : (
+                                            <Download size={12} />
+                                          )}
+                                          Redownload
+                                        </span>
+                                      </span>
+                                    ) : (
+                                      <span
+                                        role="button"
+                                        className="wsm-deploy-btn"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleDownloadModel(model.id);
+                                        }}
+                                        aria-disabled={
+                                          !isFullySetup ||
+                                          isSetupRunning ||
+                                          !!downloadingModelId
+                                        }
+                                      >
+                                        {downloadingModelId === model.id ? (
+                                          <RefreshCcw
+                                            size={12}
+                                            className="spin"
+                                          />
+                                        ) : (
+                                          <Download size={12} />
+                                        )}
+                                        Download
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Background Removal group */}
+                            <p
+                              className="wsm-model-group-label"
+                              style={{ marginTop: '12px' }}
+                            >
+                              BACKGROUND REMOVAL
+                            </p>
+                            <div className="wsm-models-list">
+                              {status.backgroundRemovalModels.map((model) => (
+                                <div
+                                  key={model.id}
+                                  className={`wsm-model-row ${model.id === 'rembg' ? 'is-selected' : ''}`}
+                                  style={{ cursor: 'default' }}
+                                  role="group"
+                                >
+                                  <span className="wsm-model-radio" />
+                                  <span className="wsm-model-info">
+                                    <span className="wsm-model-name">
+                                      {model.name}
+                                    </span>
+                                    <span className="wsm-model-desc">
+                                      {model.id === 'rembg'
+                                        ? '~200MB'
+                                        : model.description}
+                                    </span>
+                                  </span>
+                                  <span className="wsm-model-action">
+                                    {model.downloaded ? (
+                                      <span className="wsm-model-ready">
+                                        <CheckCircle2 size={13} />
+                                        <span>
+                                          {formatBytes(model.sizeBytes)}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          className={`btn-icon wsm-model-delete ${confirmDeleteModelId === model.id ? 'is-confirming' : ''}`}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            void handleDeleteModel(model.id);
+                                          }}
+                                          aria-label="Delete model"
+                                          title={
+                                            confirmDeleteModelId === model.id
+                                              ? 'Confirm Delete'
+                                              : 'Delete model'
+                                          }
+                                        >
+                                          {confirmDeleteModelId === model.id ? (
+                                            <Check size={13} />
+                                          ) : (
+                                            <Trash2 size={13} />
+                                          )}
+                                        </button>
+                                      </span>
+                                    ) : (
+                                      <span
+                                        role="button"
+                                        className="wsm-deploy-btn"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleDownloadModel(model.id);
+                                        }}
+                                        aria-disabled={
+                                          !isFullySetup ||
+                                          isSetupRunning ||
+                                          !!downloadingModelId
+                                        }
+                                      >
+                                        {downloadingModelId === model.id ? (
+                                          <RefreshCcw
+                                            size={12}
+                                            className="spin"
+                                          />
+                                        ) : (
+                                          <Download size={12} />
+                                        )}
+                                        Download
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        </div>
+                      </div>
+
+                      <section className="wsm-card wsm-card-logs wsm-full-width-logs">
+                        <div className="wsm-logs-header">
+                          <span>
+                            <Terminal size={12} />
+                            Engine Streams
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => setLogs([])}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                        <div className="wsm-log-body" ref={logsContainerRef}>
+                          {logs.length === 0 ? (
+                            <p className="wsm-log-empty">
+                              Waiting for signals…
+                            </p>
+                          ) : (
+                            logs.map((log, i) => (
+                              <div
+                                key={`${log.timestamp}-${i}`}
+                                className={`wsm-log-entry ${log.isError ? 'is-error' : ''}`}
+                              >
+                                <span className="wsm-log-time">
+                                  [
+                                  {new Date(log.timestamp).toLocaleTimeString(
+                                    [],
+                                    {
+                                      hour12: false,
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      second: '2-digit',
+                                    },
+                                  )}
+                                  ]
+                                </span>
+                                <span className="wsm-log-msg">
+                                  {log.message}
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </section>
+                    </>
                   )}
-                </section>
-              </div>
+                </div>
 
-              {/* Right column: Unified model list + Logs */}
-              <div className="wsm-col">
-                <section className="wsm-card is-models">
-                  <div className="wsm-models-header">
-                    <h3>Models</h3>
+                {/* Footer */}
+                <footer className="wsm-footer">
+                  <div className="wsm-footer-left">
                     <button
                       type="button"
-                      className={`btn btn-sm ${status.isModelsLoaded ? 'btn-secondary' : 'btn-primary'}`}
-                      disabled={!isFullySetup || isSetupRunning || isLoadingModels}
-                      onClick={handleLoadModels}
+                      className={`btn btn-sm btn-ghost btn-danger-ghost wsm-wipe-btn ${showWipeConfirm ? 'is-confirming' : ''}`}
+                      onClick={handleReset}
                     >
-                      {isLoadingModels
-                        ? <RefreshCcw size={13} className="spin" />
-                        : <Cpu size={13} />}
-                      {status.isModelsLoaded ? 'Reload Engine' : 'Initialize Engine'}
+                      {showWipeConfirm ? (
+                        <Check size={13} />
+                      ) : (
+                        <Trash2 size={13} />
+                      )}
+                      Wipe Engine
                     </button>
                   </div>
 
-                  {/* Detection group */}
-                  <p className="wsm-model-group-label">Detection</p>
-                  <div className="wsm-models-list">
-                    {status.detectionModels.map((model) => (
-                      <div
-                        key={model.id}
-                        className={`wsm-model-row ${selectedDetectionId === model.id ? 'is-selected' : ''}`}
-                        onClick={() => setSelectedDetectionId(model.id)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            setSelectedDetectionId(model.id);
-                          }
-                        }}
-                      >
-                        <span className="wsm-model-radio" />
-                        <span className="wsm-model-info">
-                          <span className="wsm-model-name">{model.name}</span>
-                          <span className="wsm-model-desc">
-                            {model.id.includes('large') ? '~3GB' : model.id.includes('base') ? '~1GB' : model.description}
-                          </span>
-                        </span>
-                        <span className="wsm-model-action">
-                          {model.downloaded ? (
-                            <span className="wsm-model-ready">
-                              <CheckCircle2 size={13} />
-                              <span>{formatBytes(model.sizeBytes)}</span>
-                              <button
-                                type="button"
-                                className={`btn-icon wsm-model-delete ${confirmDeleteModelId === model.id ? 'is-confirming' : ''}`}
-                                onClick={(e) => { e.stopPropagation(); void handleDeleteModel(model.id); }}
-                                aria-label="Delete model"
-                                title={confirmDeleteModelId === model.id ? "Confirm Delete" : "Delete model"}
-                              >
-                                {confirmDeleteModelId === model.id ? <Check size={13} /> : <Trash2 size={13} />}
-                              </button>
-                            </span>
-                          ) : model.sizeBytes > 0 ? (
-                            <span className="wsm-model-ready wsm-model-error">
-                              <AlertTriangle size={13} style={{ color: 'var(--danger)' }} />
-                              <span style={{ color: 'var(--danger)' }}>Incomplete ({formatBytes(model.sizeBytes)})</span>
-                              <span
-                                role="button"
-                                className="wsm-deploy-btn"
-                                onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
-                                aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
-                              >
-                                {downloadingModelId === model.id
-                                  ? <RefreshCcw size={12} className="spin" />
-                                  : <Download size={12} />}
-                                Redownload
-                              </span>
-                            </span>
-                          ) : (
-                            <span
-                              role="button"
-                              className="wsm-deploy-btn"
-                              onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
-                              aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
-                            >
-                              {downloadingModelId === model.id
-                                ? <RefreshCcw size={12} className="spin" />
-                                : <Download size={12} />}
-                              Download
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Inpainting group */}
-                  <p className="wsm-model-group-label">Inpainting</p>
-                  <div className="wsm-models-list">
-                    {status.inpaintingModels.map((model) => (
-                      <div
-                        key={model.id}
-                        className={`wsm-model-row ${selectedInpaintingId === model.id ? 'is-selected' : ''}`}
-                        onClick={() => setSelectedInpaintingId(model.id)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            setSelectedInpaintingId(model.id);
-                          }
-                        }}
-                      >
-                        <span className="wsm-model-radio" />
-                        <span className="wsm-model-info">
-                          <span className="wsm-model-name">{model.name}</span>
-                          <span className="wsm-model-desc">
-                            {model.id === 'lama' ? '~200MB' : model.id === 'rembg' ? '~200MB' : model.description}
-                          </span>
-                        </span>
-                        <span className="wsm-model-action">
-                          {model.downloaded ? (
-                            <span className="wsm-model-ready">
-                              <CheckCircle2 size={13} />
-                              <span>{formatBytes(model.sizeBytes)}</span>
-                              <button
-                                type="button"
-                                className={`btn-icon wsm-model-delete ${confirmDeleteModelId === model.id ? 'is-confirming' : ''}`}
-                                onClick={(e) => { e.stopPropagation(); void handleDeleteModel(model.id); }}
-                                aria-label="Delete model"
-                                title={confirmDeleteModelId === model.id ? "Confirm Delete" : "Delete model"}
-                              >
-                                {confirmDeleteModelId === model.id ? <Check size={13} /> : <Trash2 size={13} />}
-                              </button>
-                            </span>
-                          ) : model.sizeBytes > 0 ? (
-                            <span className="wsm-model-ready wsm-model-error">
-                              <AlertTriangle size={13} style={{ color: 'var(--danger)' }} />
-                              <span style={{ color: 'var(--danger)' }}>Incomplete ({formatBytes(model.sizeBytes)})</span>
-                              <span
-                                role="button"
-                                className="wsm-deploy-btn"
-                                onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
-                                aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
-                              >
-                                {downloadingModelId === model.id
-                                  ? <RefreshCcw size={12} className="spin" />
-                                  : <Download size={12} />}
-                                Redownload
-                              </span>
-                            </span>
-                          ) : (
-                            <span
-                              role="button"
-                              className="wsm-deploy-btn"
-                              onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
-                              aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
-                            >
-                              {downloadingModelId === model.id
-                                ? <RefreshCcw size={12} className="spin" />
-                                : <Download size={12} />}
-                              Download
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Background Removal group */}
-                  <p className="wsm-model-group-label" style={{ marginTop: '12px' }}>BACKGROUND REMOVAL</p>
-                  <div className="wsm-models-list">
-                    {status.backgroundRemovalModels.map((model) => (
-                      <div
-                        key={model.id}
-                        className={`wsm-model-row ${model.id === 'rembg' ? 'is-selected' : ''}`}
-                        style={{ cursor: 'default' }}
-                        role="group"
-                      >
-                        <span className="wsm-model-radio" />
-                        <span className="wsm-model-info">
-                          <span className="wsm-model-name">{model.name}</span>
-                          <span className="wsm-model-desc">
-                            {model.id === 'rembg' ? '~200MB' : model.description}
-                          </span>
-                        </span>
-                        <span className="wsm-model-action">
-                          {model.downloaded ? (
-                            <span className="wsm-model-ready">
-                              <CheckCircle2 size={13} />
-                              <span>{formatBytes(model.sizeBytes)}</span>
-                              <button
-                                type="button"
-                                className={`btn-icon wsm-model-delete ${confirmDeleteModelId === model.id ? 'is-confirming' : ''}`}
-                                onClick={(e) => { e.stopPropagation(); void handleDeleteModel(model.id); }}
-                                aria-label="Delete model"
-                                title={confirmDeleteModelId === model.id ? "Confirm Delete" : "Delete model"}
-                              >
-                                {confirmDeleteModelId === model.id ? <Check size={13} /> : <Trash2 size={13} />}
-                              </button>
-                            </span>
-                          ) : (
-                            <span
-                              role="button"
-                              className="wsm-deploy-btn"
-                              onClick={(e) => { e.stopPropagation(); void handleDownloadModel(model.id); }}
-                              aria-disabled={!isFullySetup || isSetupRunning || !!downloadingModelId}
-                            >
-                              {downloadingModelId === model.id
-                                ? <RefreshCcw size={12} className="spin" />
-                                : <Download size={12} />}
-                              Download
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              </div>
-            </div>
-            
-            <section className="wsm-card wsm-card-logs wsm-full-width-logs">
-              <div className="wsm-logs-header">
-                <span><Terminal size={12} />Engine Streams</span>
-                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setLogs([])}>
-                  Clear
-                </button>
-              </div>
-              <div className="wsm-log-body" ref={logsContainerRef}>
-                {logs.length === 0 ? (
-                  <p className="wsm-log-empty">Waiting for signals…</p>
-                ) : (
-                  logs.map((log, i) => (
-                    <div key={`${log.timestamp}-${i}`} className={`wsm-log-entry ${log.isError ? 'is-error' : ''}`}>
-                      <span className="wsm-log-time">
-                        [{new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]
+                  <div className="wsm-footer-status">
+                    {!status || isFullySetup ? null : (
+                      <span className="wsm-status-warn">
+                        <AlertTriangle size={13} />
+                        Setup Required
                       </span>
-                      <span className="wsm-log-msg">{log.message}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-          </>
-        )}
-      </div>
+                    )}
+                  </div>
 
-        {/* Footer */}
-        <footer className="wsm-footer">
-          <div className="wsm-footer-left">
-            <button
-              type="button"
-              className={`btn btn-sm btn-ghost btn-danger-ghost wsm-wipe-btn ${showWipeConfirm ? 'is-confirming' : ''}`}
-              onClick={handleReset}
-            >
-              {showWipeConfirm ? <Check size={13} /> : <Trash2 size={13} />}
-              Wipe Engine
-            </button>
-          </div>
-          
-          <div className="wsm-footer-status">
-            {!status || isFullySetup ? null : (
-              <span className="wsm-status-warn">
-                <AlertTriangle size={13} />
-                Setup Required
-              </span>
+                  <div className="wsm-footer-actions">
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${isFullySetup ? 'btn-secondary' : 'btn-primary'}`}
+                      onClick={() => handleRunSetup()}
+                      disabled={
+                        isSetupRunning ||
+                        !status?.pythonInstalled ||
+                        !status?.gitInstalled
+                      }
+                    >
+                      <RefreshCcw
+                        size={13}
+                        className={isSetupRunning ? 'spin' : ''}
+                      />
+                      {isSetupRunning
+                        ? 'Rebuilding…'
+                        : status?.repoCloned
+                          ? 'Update System'
+                          : 'Install Engine'}
+                    </button>
+                  </div>
+                </footer>
+              </motion.div>
             )}
-          </div>
 
-          <div className="wsm-footer-actions">
-            <button
-              type="button"
-              className={`btn btn-sm ${isFullySetup ? 'btn-secondary' : 'btn-primary'}`}
-              onClick={() => handleRunSetup()}
-              disabled={isSetupRunning || !status?.pythonInstalled || !status?.gitInstalled}
-            >
-              <RefreshCcw size={13} className={isSetupRunning ? 'spin' : ''} />
-              {isSetupRunning ? 'Rebuilding…' : status?.repoCloned ? 'Update System' : 'Install Engine'}
-            </button>
-          </div>
-        </footer>
+            {activeTab === 'tips' && (
+              <motion.div
+                key="tips"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
+                className="wsm-tab-pane wsm-tips-container"
+              >
+                <div className="wsm-tip-card">
+                  <div className="wsm-tip-header">
+                    <div className="wsm-tip-icon-wrap">
+                      <MousePointer2 size={18} />
+                    </div>
+                    <h4 className="wsm-tip-title">Snapping Bypass</h4>
+                  </div>
+                  <div className="wsm-tip-content">
+                    <p className="wsm-tip-desc">
+                      Hold <span className="wsm-key-hint"><ChevronUp size={12} className="wsm-key-icon" /> Shift</span> while dragging
+                      to temporarily disable all magnetic snapping and guides.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="wsm-tip-card">
+                  <div className="wsm-tip-header">
+                    <div className="wsm-tip-icon-wrap">
+                      <Command size={18} />
+                    </div>
+                    <h4 className="wsm-tip-title">Ratio Locking</h4>
+                  </div>
+                  <div className="wsm-tip-content">
+                    <p className="wsm-tip-desc">
+                      Hold <span className="wsm-key-hint">Ctrl</span> or{' '}
+                      <span className="wsm-key-hint"><Command size={11} className="wsm-key-icon" /> Cmd</span> while resizing to
+                      lock the current aspect ratio.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="wsm-tip-card">
+                  <div className="wsm-tip-header">
+                    <div className="wsm-tip-icon-wrap">
+                      <CheckCircle2 size={18} />
+                    </div>
+                    <h4 className="wsm-tip-title">Bulk Apply</h4>
+                  </div>
+                  <div className="wsm-tip-content">
+                    <p className="wsm-tip-desc">
+                      Apply your tweaks instantly to all generated images using the
+                      "Bulk Apply" menu in the toolbar.
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </motion.section>
     </div>
   );

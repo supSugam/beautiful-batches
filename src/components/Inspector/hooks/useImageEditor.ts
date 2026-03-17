@@ -20,9 +20,9 @@ import type {
 
 const FIT_PADDING_PX = 16;
 const MIN_CROP_SIZE = 10;
-const SNAP_THRESHOLD_MIN = 3;
+const SNAP_THRESHOLD_MIN = 2;
 // Target snap zone in screen pixels. Converted to editor coordinates using the fit scale.
-const SNAP_THRESHOLD_SCREEN_PX = 14;
+const SNAP_THRESHOLD_SCREEN_PX = 6;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const WHEEL_ZOOM_SPEED = 0.0016;
@@ -214,25 +214,13 @@ const clampCropWithAspect = (
   const maxWidth = Math.max(1, Number(bounds?.width) || 1);
   const maxHeight = Math.max(1, Number(bounds?.height) || 1);
 
-  const scalarMax = Math.min(maxHeight, maxWidth / safeRatio);
-  const scalarMin = Math.min(
-    scalarMax,
-    Math.max(MIN_CROP_SIZE, MIN_CROP_SIZE / safeRatio),
-  );
-  const requestedScalar = Math.max(
-    0,
-    Number(crop?.h) || (Number(crop?.w) || MIN_CROP_SIZE) / safeRatio,
-  );
-  const scalar = Math.max(scalarMin, Math.min(requestedScalar, scalarMax));
-  const w = scalar * safeRatio;
-  const h = scalar;
-
   const source = startCrop || crop;
   const startX = Number(source?.x) || 0;
   const startY = Number(source?.y) || 0;
-  const startW = Number(source?.w) || w;
-  const startH = Number(source?.h) || h;
+  const startW = Number(source?.w) || MIN_CROP_SIZE * safeRatio;
+  const startH = Number(source?.h) || MIN_CROP_SIZE;
 
+  // Determine fixed anchor point based on handle being dragged
   const anchorX = handleId.includes('l')
     ? startX + startW
     : handleId.includes('r')
@@ -243,6 +231,36 @@ const clampCropWithAspect = (
     : handleId.includes('b')
       ? startY
       : startY + startH / 2;
+
+  // Determine max scalar based on fixed anchor and image bounds
+  let maxScalarByBound = Math.min(maxHeight, maxWidth / safeRatio);
+
+  if (handleId.includes('t')) {
+    maxScalarByBound = Math.min(maxScalarByBound, anchorY);
+  } else if (handleId.includes('b')) {
+    maxScalarByBound = Math.min(maxScalarByBound, maxHeight - anchorY);
+  } else {
+    maxScalarByBound = Math.min(maxScalarByBound, 2 * anchorY, 2 * (maxHeight - anchorY));
+  }
+
+  if (handleId.includes('l')) {
+    maxScalarByBound = Math.min(maxScalarByBound, anchorX / safeRatio);
+  } else if (handleId.includes('r')) {
+    maxScalarByBound = Math.min(maxScalarByBound, (maxWidth - anchorX) / safeRatio);
+  } else {
+    maxScalarByBound = Math.min(maxScalarByBound, (2 * anchorX) / safeRatio, (2 * (maxWidth - anchorX)) / safeRatio);
+  }
+
+  const requestedScalar = Math.max(
+    0,
+    Number(crop?.h) || (Number(crop?.w) || MIN_CROP_SIZE) / safeRatio,
+  );
+  const scalarMin = Math.max(MIN_CROP_SIZE, MIN_CROP_SIZE / safeRatio);
+  const finalScalarMax = Math.max(maxScalarByBound, scalarMin);
+  const scalar = Math.max(scalarMin, Math.min(requestedScalar, finalScalarMax));
+  
+  let w = scalar * safeRatio;
+  let h = scalar;
 
   let x = handleId.includes('l')
     ? anchorX - w
@@ -977,27 +995,29 @@ export function useImageEditor({
   // ── Crop operations ─────────────────────────────────────
   // Pointer move events can fire extremely frequently; updating React state on every event
   // makes the whole app feel laggy. Coalesce crop updates to 1 per animation frame.
-  const pendingMoveDeltaRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+  const pendingMoveDeltaRef = useRef<{ totalDx: number; totalDy: number; startCrop: EditorCropRect | null; bypassSnap: boolean; lockRatio: boolean }>({ totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false });
   const pendingMoveRafRef = useRef<number | null>(null);
   const pendingResizeRef = useRef<{
     handleId: string;
     totalDx: number;
     totalDy: number;
     startCrop: EditorCropRect | null;
+    bypassSnap: boolean;
+    lockRatio: boolean;
   } | null>(null);
   const pendingResizeRafRef = useRef<number | null>(null);
 
   const applyMoveNow = useCallback(
-    (dx: number, dy: number) => {
+    (totalDx: number, totalDy: number, startCrop: EditorCropRect | null, bypassSnap: boolean, _lockRatio: boolean) => {
+      if (!startCrop) return;
       const bounds = getBoundsForRotation(rotationRef.current);
-      const previous = cropRef.current;
       const unclamped = {
-        ...previous,
-        x: previous.x + dx,
-        y: previous.y + dy,
+        ...startCrop,
+        x: startCrop.x + totalDx,
+        y: startCrop.y + totalDy,
       };
       const clamped = clampCropToBounds(unclamped, bounds);
-      const snapped = clampCropToBounds(applyMoveSnapping(clamped, bounds), bounds);
+      const snapped = bypassSnap ? clamped : clampCropToBounds(applyMoveSnapping(clamped, bounds), bounds);
       const next = clampCropToBounds(roundCropXY(snapped), bounds);
       cropRef.current = next;
       setCropRaw(next);
@@ -1011,10 +1031,13 @@ export function useImageEditor({
       totalDx: number,
       totalDy: number,
       startCrop: EditorCropRect | null,
+      bypassSnap: boolean,
+      lockRatio: boolean
     ) => {
       if (!startCrop) return;
 
       let { x, y, w, h } = startCrop;
+      const bounds = getBoundsForRotation(rotationRef.current);
 
       if (handleId.includes('r')) w += totalDx;
       if (handleId.includes('l')) {
@@ -1027,23 +1050,49 @@ export function useImageEditor({
         h -= totalDy;
       }
 
-      if (w < MIN_CROP_SIZE) {
-        if (handleId.includes('l')) x -= MIN_CROP_SIZE - w;
-        w = MIN_CROP_SIZE;
+      const startRight = startCrop.x + startCrop.w;
+      const startBottom = startCrop.y + startCrop.h;
+
+      if (handleId.includes('r')) {
+          const maxRight = bounds.width;
+          const currentRight = x + w;
+          if (currentRight > maxRight) w = maxRight - x;
+          if (w < MIN_CROP_SIZE) w = MIN_CROP_SIZE;
       }
-      if (h < MIN_CROP_SIZE) {
-        if (handleId.includes('t')) y -= MIN_CROP_SIZE - h;
-        h = MIN_CROP_SIZE;
+      if (handleId.includes('l')) {
+          const maxLeft = startRight - MIN_CROP_SIZE;
+          if (x > maxLeft) { x = maxLeft; w = MIN_CROP_SIZE; }
+          if (x < 0) {
+              const diff = 0 - x;
+              x = 0;
+              w -= diff;
+          }
+      }
+      if (handleId.includes('b')) {
+          const maxBottom = bounds.height;
+          const currentBottom = y + h;
+          if (currentBottom > maxBottom) h = maxBottom - y;
+          if (h < MIN_CROP_SIZE) h = MIN_CROP_SIZE;
+      }
+      if (handleId.includes('t')) {
+          const maxTop = startBottom - MIN_CROP_SIZE;
+          if (y > maxTop) { y = maxTop; h = MIN_CROP_SIZE; }
+          if (y < 0) {
+              const diff = 0 - y;
+              y = 0;
+              h -= diff;
+          }
       }
 
-      if (aspectRef.current) {
-        const ratio = aspectRef.current;
+      const effectiveRatio = aspectRef.current || (lockRatio && startCrop.w > 0 && startCrop.h > 0 ? startCrop.w / startCrop.h : null);
+      
+      if (effectiveRatio) {
+        const ratio = effectiveRatio;
         if (handleId.includes('r') || handleId.includes('l')) {
           h = w / ratio;
         } else {
           w = h * ratio;
         }
-        const bounds = getBoundsForRotation(rotationRef.current);
         const next = clampCropWithAspect(
           { x, y, w, h },
           bounds,
@@ -1056,9 +1105,8 @@ export function useImageEditor({
         return;
       }
 
-      const bounds = getBoundsForRotation(rotationRef.current);
       const clamped = clampCropToBounds({ x, y, w, h }, bounds);
-      const snapped = clampCropToBounds(
+      const snapped = bypassSnap ? clamped : clampCropToBounds(
         applyResizeSnapping(clamped, handleId, bounds),
         bounds,
       );
@@ -1075,10 +1123,10 @@ export function useImageEditor({
     if (pendingMoveRafRef.current !== null) {
       window.cancelAnimationFrame(pendingMoveRafRef.current);
       pendingMoveRafRef.current = null;
-      const { dx, dy } = pendingMoveDeltaRef.current;
-      pendingMoveDeltaRef.current = { dx: 0, dy: 0 };
-      if (Math.abs(dx) > 0.000001 || Math.abs(dy) > 0.000001) {
-        applyMoveNow(dx, dy);
+      const pending = pendingMoveDeltaRef.current;
+      pendingMoveDeltaRef.current = { totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false };
+      if (pending.startCrop) {
+        applyMoveNow(pending.totalDx, pending.totalDy, pending.startCrop, pending.bypassSnap, pending.lockRatio);
         didFlush = true;
       }
     }
@@ -1088,8 +1136,8 @@ export function useImageEditor({
       pendingResizeRafRef.current = null;
       const pending = pendingResizeRef.current;
       pendingResizeRef.current = null;
-      if (pending) {
-        applyResizeNow(pending.handleId, pending.totalDx, pending.totalDy, pending.startCrop);
+      if (pending && pending.startCrop) {
+        applyResizeNow(pending.handleId, pending.totalDx, pending.totalDy, pending.startCrop, pending.bypassSnap, pending.lockRatio);
         didFlush = true;
       }
     }
@@ -1099,7 +1147,7 @@ export function useImageEditor({
 
   useLayoutEffect(() => {
     // Reset any in-flight drag frames when the image changes.
-    pendingMoveDeltaRef.current = { dx: 0, dy: 0 };
+    pendingMoveDeltaRef.current = { totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false };
     if (pendingMoveRafRef.current !== null) {
       window.cancelAnimationFrame(pendingMoveRafRef.current);
       pendingMoveRafRef.current = null;
@@ -1114,7 +1162,7 @@ export function useImageEditor({
   useEffect(() => {
     return () => {
       // Ensure we don't leave rAF callbacks scheduled after unmount.
-      pendingMoveDeltaRef.current = { dx: 0, dy: 0 };
+      pendingMoveDeltaRef.current = { totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false };
       if (pendingMoveRafRef.current !== null) {
         window.cancelAnimationFrame(pendingMoveRafRef.current);
         pendingMoveRafRef.current = null;
@@ -1128,16 +1176,21 @@ export function useImageEditor({
   }, []);
 
   const moveCrop = useCallback(
-    (dx: number, dy: number) => {
-      pendingMoveDeltaRef.current.dx += Number(dx) || 0;
-      pendingMoveDeltaRef.current.dy += Number(dy) || 0;
+    (totalDx: number, totalDy: number, startCrop: EditorCropRect | null, bypassSnap = false, lockRatio = false) => {
+      pendingMoveDeltaRef.current = {
+        totalDx: Number(totalDx) || 0,
+        totalDy: Number(totalDy) || 0,
+        startCrop,
+        bypassSnap,
+        lockRatio
+      };
       if (pendingMoveRafRef.current !== null) return;
       pendingMoveRafRef.current = window.requestAnimationFrame(() => {
         pendingMoveRafRef.current = null;
-        const { dx: pendingDx, dy: pendingDy } = pendingMoveDeltaRef.current;
-        pendingMoveDeltaRef.current = { dx: 0, dy: 0 };
-        if (Math.abs(pendingDx) < 0.000001 && Math.abs(pendingDy) < 0.000001) return;
-        applyMoveNow(pendingDx, pendingDy);
+        const pending = pendingMoveDeltaRef.current;
+        pendingMoveDeltaRef.current = { totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false };
+        if (!pending.startCrop) return;
+        applyMoveNow(pending.totalDx, pending.totalDy, pending.startCrop, pending.bypassSnap, pending.lockRatio);
         notifyChange();
       });
     },
@@ -1150,12 +1203,16 @@ export function useImageEditor({
       totalDx: number,
       totalDy: number,
       startCrop: EditorCropRect | null,
+      bypassSnap = false,
+      lockRatio = false
     ) => {
       pendingResizeRef.current = {
         handleId,
         totalDx: Number(totalDx) || 0,
         totalDy: Number(totalDy) || 0,
         startCrop,
+        bypassSnap,
+        lockRatio
       };
       if (pendingResizeRafRef.current !== null) return;
       pendingResizeRafRef.current = window.requestAnimationFrame(() => {
@@ -1163,7 +1220,7 @@ export function useImageEditor({
         const pending = pendingResizeRef.current;
         pendingResizeRef.current = null;
         if (!pending) return;
-        applyResizeNow(pending.handleId, pending.totalDx, pending.totalDy, pending.startCrop);
+        applyResizeNow(pending.handleId, pending.totalDx, pending.totalDy, pending.startCrop, pending.bypassSnap, pending.lockRatio);
         notifyChange();
       });
     },
