@@ -1368,30 +1368,45 @@ fn apply_inner_padding_and_corner(
 
     let scale_w = (available_width as f64) / (safe_width as f64);
     let scale_h = (available_height as f64) / (safe_height as f64);
-    let scale = scale_w.min(scale_h).min(1.0).max(0.0);
+    let scale = scale_w.max(scale_h).max(0.0);
 
     let content_width = ((safe_width as f64) * scale).round().max(1.0) as u32;
     let content_height = ((safe_height as f64) * scale).round().max(1.0) as u32;
 
-    let leftover_width = available_width.saturating_sub(content_width);
-    let leftover_height = available_height.saturating_sub(content_height);
-    let content_x = padding.left.saturating_add(leftover_width / 2).min(safe_width.saturating_sub(1));
-    let content_y = padding.top.saturating_add(leftover_height / 2).min(safe_height.saturating_sub(1));
+    let mut content_rgba = image
+        .resize_exact(content_width, content_height, FilterType::Lanczos3)
+        .to_rgba8();
+
+    // To implement "cover" with even padding, we center-crop the scaled image
+    // back to the available (padded) area before overlaying.
+    // Pixel-level precision: Integer division ensures we stay on the pixel grid. 
+    // Symmetry is guaranteed to within 1 pixel (the smallest possible unit) 
+    // if dimensions have differing parities.
+    let crop_x = (content_width.saturating_sub(available_width)) / 2;
+    let crop_y = (content_height.saturating_sub(available_height)) / 2;
+    content_rgba = imageops::crop_imm(
+        &content_rgba,
+        crop_x,
+        crop_y,
+        available_width,
+        available_height,
+    )
+    .to_image();
 
     let fill = parse_padding_fill(crop);
     let has_fill = !matches!(fill, PaddingFillKind::Empty);
     let has_padding_area = has_padding(padding);
 
-    // Corner radius applies to the actual content only (not the padding/background).
+    // Corner radius applies to the visible content area.
     let corner = clamp_corner_radius_to_reference(
         parse_corner_radius_values(crop),
-        content_width,
-        content_height,
+        available_width,
+        available_height,
     );
     let has_corner = has_corner_radius(corner);
 
     if !has_padding_area && !has_corner && !has_fill {
-        return Ok(image);
+        return Ok(DynamicImage::ImageRgba8(content_rgba));
     }
 
     let mut composed = render_padding_background(
@@ -1402,19 +1417,16 @@ fn apply_inner_padding_and_corner(
         decoded_assets,
     )?;
 
-    let mut content_rgba = if content_width == safe_width && content_height == safe_height {
-        image.to_rgba8()
-    } else {
-        image
-            .resize_exact(content_width, content_height, FilterType::Lanczos3)
-            .to_rgba8()
-    };
-
     if has_corner {
         apply_corner_mask(&mut content_rgba, corner);
     }
 
-    overlay(&mut composed, &content_rgba, content_x as i64, content_y as i64);
+    overlay(
+        &mut composed,
+        &content_rgba,
+        padding.left as i64,
+        padding.top as i64,
+    );
     Ok(DynamicImage::ImageRgba8(composed))
 }
 

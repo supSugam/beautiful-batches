@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Upload, Trash2, RefreshCw } from 'lucide-react';
 import SegmentedControl from '../../common/SegmentedControl';
+import DesignSlider from '../../common/DesignSlider';
 import { ACCEPTED_IMAGE_TYPES } from '../../../utils/directoryPicker';
 import type { PaddingFillType } from '../../../types/app';
 import { RotateComponent } from './RotateComponent';

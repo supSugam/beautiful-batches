@@ -37,21 +37,20 @@ export const computePaddedContentRect = (
   const availableWidth = Math.max(1, w - left - right);
   const availableHeight = Math.max(1, h - top - bottom);
 
-  const scale = Math.min(1, availableWidth / w, availableHeight / h);
-  const contentWidth = Math.max(1, Math.round(w * scale));
-  const contentHeight = Math.max(1, Math.round(h * scale));
-
-  const leftoverWidth = Math.max(0, availableWidth - contentWidth);
-  const leftoverHeight = Math.max(0, availableHeight - contentHeight);
-
-  const x = left + Math.floor(leftoverWidth / 2);
-  const y = top + Math.floor(leftoverHeight / 2);
+  /**
+   * For "strict even padding", we ensure the visible content area is exactly the
+   * "available area" (canvas minus padding). We use "cover" semantics so the
+   * content is scaled to fill this area completely, then centered/cropped.
+   * This guarantees that the padding distance measured from the canvas edge is 
+   * exactly the requested pixel value on all sides.
+   */
+  const scale = Math.max(availableWidth / w, availableHeight / h);
 
   return {
-    x,
-    y,
-    width: contentWidth,
-    height: contentHeight,
+    x: left,
+    y: top,
+    width: availableWidth,
+    height: availableHeight,
     scale,
   };
 };
