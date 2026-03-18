@@ -179,11 +179,34 @@
 }
 
 .section-label {
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
+  pointer-events: none; /* Let the header handle clicks */
+}
+
+/* Row Interactivity */
+.clickable-row,
+.metadata-toggle-row {
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+    border-radius: var(--radius-sm);
+    margin: 0 -4px;
+    padding: 4px;
+}
+
+.clickable-row:hover,
+.metadata-toggle-row:hover {
+    background: var(--bg-overlay);
+}
+
+.metadata-toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
 }
 
 /* Dimensions & Ratio Grid */

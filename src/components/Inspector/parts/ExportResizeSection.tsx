@@ -158,13 +158,17 @@ const ExportResizeSection = ({
 
   return (
     <section ref={sectionRef} className="control-section">
-      <div className="section-header">
+      <div 
+        className="section-header" 
+        onClick={handleResizeToggle}
+        style={{ cursor: 'pointer' }}
+      >
         {showSectionLabel ? (
           <h3 className="section-label">Export Resize</h3>
         ) : (
           <h4 className="subsection-label">Resize</h4>
         )}
-        <label className="metadata-checkbox-row">
+        <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
           <input
             type="checkbox"
             className="metadata-checkbox-input"

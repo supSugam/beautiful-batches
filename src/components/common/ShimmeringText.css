@@ -1,0 +1,31 @@
+.shimmering-text {
+  position: relative;
+  display: inline-block;
+  background-size: 250% 100%, auto;
+  background-repeat: no-repeat;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  
+  /* Default colors matches provided Tailwind classes */
+  --base-color: #71717a; /* muted-foreground approximation */
+  --shimmer-color: #09090b; /* foreground approximation */
+  
+  /* Shimmer gradient calculation */
+  --shimmer-bg: linear-gradient(
+    90deg,
+    transparent calc(50% - var(--spread)),
+    var(--shimmer-color),
+    transparent calc(50% + var(--spread))
+  );
+}
+
+/* Dark mode overrides if needed, but since we use passed props or vars, 
+   we can just define them as defaults or handle via props */
+@media (prefers-color-scheme: dark) {
+  .shimmering-text {
+    --base-color: #a1a1aa;
+    --shimmer-color: #fafafa;
+  }
+}

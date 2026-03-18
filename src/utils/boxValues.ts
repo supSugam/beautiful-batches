@@ -73,22 +73,16 @@ export const clampPaddingToReference = (
   }: { sideRatio?: number; maxPaddingPx?: number } = {},
 ): PaddingValues => {
   const normalized = normalizePaddingInput(padding, maxPaddingPx);
-  const safeWidth = Math.max(1, Number(referenceWidth) || 1);
-  const safeHeight = Math.max(1, Number(referenceHeight) || 1);
-  const horizontalCap = Math.max(
-    0,
-    Math.min(maxPaddingPx, Math.round(safeWidth * sideRatio)),
-  );
-  const verticalCap = Math.max(
-    0,
-    Math.min(maxPaddingPx, Math.round(safeHeight * sideRatio)),
-  );
+  const cap = getEvenPaddingCap(referenceWidth, referenceHeight, {
+    sideRatio,
+    maxPaddingPx,
+  });
 
   return {
-    top: Math.min(normalized.top, verticalCap),
-    right: Math.min(normalized.right, horizontalCap),
-    bottom: Math.min(normalized.bottom, verticalCap),
-    left: Math.min(normalized.left, horizontalCap),
+    top: Math.min(normalized.top, cap),
+    right: Math.min(normalized.right, cap),
+    bottom: Math.min(normalized.bottom, cap),
+    left: Math.min(normalized.left, cap),
   };
 };
 

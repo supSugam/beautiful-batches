@@ -150,8 +150,12 @@ fn main() {
             commands::download_watermark_model,
             commands::delete_watermark_model,
             commands::load_watermark_models,
+            commands::stop_watermark_models,
+            commands::restart_watermark_bridge,
             commands::remove_watermark_single,
             commands::remove_background_single,
+            commands::open_external_url,
+            commands::get_detailed_system_info,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

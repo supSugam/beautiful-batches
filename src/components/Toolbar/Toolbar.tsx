@@ -16,8 +16,10 @@ import {
   X,
   Minus,
   Square,
+  RefreshCw,
 } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import useStore from '../../store/useStore';
 import type { LucideIcon } from 'lucide-react';
 import type { InspectorMode, SortOption } from '../../types/app';
 import './Toolbar.css';
@@ -207,6 +209,9 @@ const Toolbar = ({
     };
   }, [isSortMenuOpen]);
 
+  const processingState = useStore((state) => state.processingState);
+  const setProcessingState = useStore((state) => state.setProcessingState);
+
   return (
     <header
       data-tauri-drag-region
@@ -330,6 +335,18 @@ const Toolbar = ({
       </div>
 
       <div className="toolbar-section toolbar-actions">
+        {processingState.isActive && (
+          <button
+            type="button"
+            className="toolbar-processing-indicator"
+            onClick={() => setProcessingState({ isMinimized: false })}
+            title="Show processing HUD"
+            aria-label="Show processing HUD"
+          >
+            <RefreshCw size={14} className="indicator-pulse" />
+          </button>
+        )}
+
         <button
           type="button"
           className={`toolbar-mode-icon-btn ${inspectorMode === 'view' ? 'is-active' : ''}`}

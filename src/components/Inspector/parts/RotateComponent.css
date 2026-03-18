@@ -1,19 +1,21 @@
 .telegram-rotate-component {
   width: 100%;
+  height: 38px;
+  display: flex;
+  align-items: center;
 }
 
 .telegram-rotate-component__bars {
   cursor: grab;
   width: 100%;
-  /* display: flex;  <-- Flex is actually not needed for absolute positioning children, but usually harmless. 
-     However, original had it. The children are absolute. */
   display: flex;
   min-width: 0;
   position: relative;
   height: 22px;
-  touch-action: none; /* Important for dragging on touch devices */
+  touch-action: none;
   overflow: visible;
 }
+
 
 .telegram-rotate-component__bars--dragging {
   cursor: grabbing !important;

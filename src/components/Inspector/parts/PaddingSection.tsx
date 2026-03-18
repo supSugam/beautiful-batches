@@ -1,31 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Upload, Trash2, RefreshCw } from 'lucide-react';
+import { Trash2, RefreshCw, Upload } from 'lucide-react';
+
+
+
 import SegmentedControl from '../../common/SegmentedControl';
 import DesignSlider from '../../common/DesignSlider';
+import AngleKnob from '../../common/AngleKnob';
 import { ACCEPTED_IMAGE_TYPES } from '../../../utils/directoryPicker';
+
 import type { PaddingFillType } from '../../../types/app';
 import { RotateComponent } from './RotateComponent';
+import { AdvancedColorPicker } from '../../common/AdvancedColorPicker';
+
 
 const DEFAULT_SOLID = '#ffffff';
 const DEFAULT_GRADIENT_START = '#ffffff';
 const DEFAULT_GRADIENT_END = '#0f172a';
 const DEFAULT_GRADIENT_ANGLE = 90;
 const COLOR_PRESETS = Object.freeze([
-  '#ffffff',
-  '#d4d4d8',
-  '#94a3b8',
-  '#0f172a',
-  '#ef4444',
-  '#f97316',
-  '#eab308',
-  '#22c55e',
-  '#06b6d4',
-  '#3b82f6',
-  '#818cf8',
-  '#ec4899',
+  '#0f172a', '#6366f1', '#7c3aed', '#2563eb', '#3b82f6', '#0d9488', '#fecaca',
+  '#f59e0b', '#ea580c', '#fb7185', '#be123c', '#ff006e', '#a3a3a3', '#737373',
+  '#d4d4d4', '#ffffff'
 ]);
+
 const FILL_TYPE_OPTIONS: Array<{
   type: PaddingFillType;
   label: string;
@@ -202,10 +201,19 @@ const parseCssColor = (value: unknown): string | null => {
 };
 
 const normalizeColor = (value: unknown, fallback = DEFAULT_SOLID): string => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$/.test(trimmed)) {
+      const withHash = `#${trimmed}`;
+      const parsed = parseHexOrRgbColor(withHash) || parseCssColor(withHash);
+      if (parsed) return parsed;
+    }
+  }
   const parsed = parseHexOrRgbColor(value) || parseCssColor(value);
   if (parsed) return parsed;
   return fallback;
 };
+
 
 const parseGradientValue = (value: unknown): ParsedGradient | null => {
   if (typeof value !== 'string') return null;
@@ -216,15 +224,33 @@ const parseGradientValue = (value: unknown): ParsedGradient | null => {
     );
   if (!match) return null;
 
+  const parsedAngle = Number.parseFloat(match[1]);
   return {
-    angle: Math.round(Number.parseFloat(match[1])) || DEFAULT_GRADIENT_ANGLE,
+    angle: isNaN(parsedAngle) ? DEFAULT_GRADIENT_ANGLE : Math.round(parsedAngle),
     start: normalizeColor(match[2], DEFAULT_GRADIENT_START),
     end: normalizeColor(match[3], DEFAULT_GRADIENT_END),
   };
 };
 
+
+const parseRadialGradient = (value: unknown): { start: string; end: string } | null => {
+  if (typeof value !== 'string') return null;
+  const match = /^radial-gradient\(\s*circle\s*,\s*(#(?:[0-9a-fA-F]{3,8})|rgba?\([^)]+\))\s*,\s*(#(?:[0-9a-fA-F]{3,8})|rgba?\([^)]+\))\s*\)$/.exec(
+    value.trim()
+  );
+  if (!match) return null;
+  return {
+    start: normalizeColor(match[1], DEFAULT_GRADIENT_START),
+    end: normalizeColor(match[2], DEFAULT_GRADIENT_END),
+  };
+};
+
 const buildLinearGradient = (start: string, end: string, angle: number): string =>
   `linear-gradient(${angle}deg, ${start}, ${end})`;
+
+const buildRadialGradient = (start: string, end: string): string =>
+  `radial-gradient(circle, ${start}, ${end})`;
+
 
 const NUMERIC_TOKEN_REGEX = /-?\d+(?:\.\d+)?/g;
 const REVEAL_SECTION_TRANSITION = {
@@ -331,13 +357,12 @@ const PaddingSection = ({
   handlePaddingImageFileChange,
   handleResetTweaks,
 }: PaddingSectionProps) => {
-  const [colorMode, setColorMode] = useState('solid');
-  const [solidColor, setSolidColor] = useState(DEFAULT_SOLID);
-  const [gradientStart, setGradientStart] = useState(DEFAULT_GRADIENT_START);
-  const [gradientEnd, setGradientEnd] = useState(DEFAULT_GRADIENT_END);
+  const [colors, setColors] = useState<string[]>([DEFAULT_SOLID]);
   const [gradientAngle, setGradientAngle] = useState(DEFAULT_GRADIENT_ANGLE);
-  const [showColorEditor, setShowColorEditor] = useState(false);
+  const [gradientType, setGradientType] = useState<'linear' | 'radial'>('linear');
   const [activePickerKey, setActivePickerKey] = useState<string | null>(null);
+
+
   const [pickerHexInput, setPickerHexInput] = useState(DEFAULT_SOLID);
   const pickerAnchorRef = useRef<HTMLElement | null>(null);
   const pickerPopoverRef = useRef<HTMLDivElement | null>(null);
@@ -347,31 +372,49 @@ const PaddingSection = ({
   const paddingPxRef = useRef(paddingPx);
   paddingPxRef.current = paddingPx;
 
-  const gradientPreview = useMemo(
-    () => buildLinearGradient(gradientStart, gradientEnd, gradientAngle),
-    [gradientStart, gradientEnd, gradientAngle],
-  );
 
   useEffect(() => {
+    if (paddingFillType !== 'color') return;
     const parsedGradient = parseGradientValue(paddingFillValue);
     if (parsedGradient) {
-      setColorMode('gradient');
-      setGradientStart(parsedGradient.start);
-      setGradientEnd(parsedGradient.end);
+      setColors([parsedGradient.start, parsedGradient.end]);
       setGradientAngle(parsedGradient.angle);
+      setGradientType('linear');
       return;
     }
+    const parsedRadial = parseRadialGradient(paddingFillValue);
+    if (parsedRadial) {
+      setColors([parsedRadial.start, parsedRadial.end]);
+      setGradientType('radial');
+      return;
+    }
+    setColors([normalizeColor(paddingFillValue, DEFAULT_SOLID)]);
+  }, [paddingFillValue, paddingFillType]);
 
-    setColorMode('solid');
-    setSolidColor(normalizeColor(paddingFillValue, DEFAULT_SOLID));
-  }, [paddingFillValue]);
+  useEffect(() => {
+    if (paddingFillType !== 'color') return;
+    if (colors.length === 2) {
+      const nextValue = gradientType === 'linear'
+        ? buildLinearGradient(colors[0], colors[1], gradientAngle)
+        : buildRadialGradient(colors[0], colors[1]);
+      if (paddingFillValue !== nextValue) {
+        handlePaddingFillValueChange(nextValue);
+      }
+    } else {
+      if (paddingFillValue !== colors[0]) {
+        handlePaddingFillValueChange(colors[0]);
+      }
+    }
+  }, [colors, gradientAngle, gradientType, paddingFillType, handlePaddingFillValueChange, paddingFillValue]);
+
+
 
   useEffect(() => {
     if (paddingFillType !== 'color') {
-      setShowColorEditor(false);
       setActivePickerKey(null);
     }
   }, [paddingFillType]);
+
 
   useEffect(() => {
     if (!activePickerKey) return undefined;
@@ -457,27 +500,34 @@ const PaddingSection = ({
     });
   };
 
-  const applySolidColor = (nextColor: string) => {
-    const normalized = normalizeColor(nextColor, DEFAULT_SOLID);
-    setColorMode('solid');
-    setSolidColor(normalized);
+  const updateFillValue = (nextColors: string[], nextAngle: number) => {
+    setColors(nextColors);
+    setGradientAngle(nextAngle);
     handlePaddingFillTypeChange('color');
-    handlePaddingFillValueChange(normalized);
+    if (nextColors.length === 2) {
+      handlePaddingFillValueChange(buildLinearGradient(nextColors[0], nextColors[1], nextAngle));
+    } else {
+      handlePaddingFillValueChange(nextColors[0]);
+    }
   };
 
-  const applyGradient = (nextStart: string, nextEnd: string, nextAngle: number) => {
-    const safeStart = normalizeColor(nextStart, DEFAULT_GRADIENT_START);
-    const safeEnd = normalizeColor(nextEnd, DEFAULT_GRADIENT_END);
-    const safeAngle = Math.max(-180, Math.min(180, Math.round(nextAngle)));
-    setColorMode('gradient');
-    setGradientStart(safeStart);
-    setGradientEnd(safeEnd);
-    setGradientAngle(safeAngle);
-    handlePaddingFillTypeChange('color');
-    handlePaddingFillValueChange(
-      buildLinearGradient(safeStart, safeEnd, safeAngle),
-    );
+  const addColorRow = () => {
+    if (colors.length >= 2) return;
+    updateFillValue([...colors, DEFAULT_GRADIENT_END], gradientAngle);
   };
+
+  const removeColorRow = (index: number) => {
+    if (colors.length <= 1) return;
+    const nextColors = colors.filter((_, i) => i !== index);
+    updateFillValue(nextColors, gradientAngle);
+  };
+
+  const handleColorChange = (index: number, nextColor: string) => {
+    const nextColors = [...colors];
+    nextColors[index] = normalizeColor(nextColor, nextColors[index]);
+    updateFillValue(nextColors, gradientAngle);
+  };
+
 
   const openColorPicker = (pickerKey: string, currentColor: string) => {
     setPickerHexInput(currentColor);
@@ -499,140 +549,181 @@ const PaddingSection = ({
     return parsed || null;
   };
 
-  const renderColorField = ({
-    label,
-    color,
-    pickerKey,
-    onColorChange,
-  }: {
-    label: string;
-    color: string;
-    pickerKey: string;
-    onColorChange: (value: string) => void;
-  }) => {
+  const renderColorRow = (color: string, index: number) => {
+    const pickerKey = `color-${index}`;
     const isPickerOpen = activePickerKey === pickerKey;
+    
     return (
-      <label className="padding-color-field">
-        <span className="padding-color-field-label">{label}</span>
-        <span className="padding-color-field-control">
-          <span className="padding-color-picker-wrap">
-            <button
-              type="button"
-              className="padding-color-swatch"
-              style={{ '--padding-color-chip': color } as React.CSSProperties}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                pickerAnchorRef.current = event.currentTarget;
-                setPickerAnchorRect(event.currentTarget.getBoundingClientRect());
-                openColorPicker(pickerKey, color);
-              }}
-              aria-label={`Choose ${label.toLowerCase()} color`}
-              aria-expanded={isPickerOpen}
-            />
-            <span className="padding-color-code">{color}</span>
-
-            {isPickerOpen &&
-              typeof document !== 'undefined' &&
-              pickerAnchorRect &&
-              createPortal(
-                <div
-                  ref={pickerPopoverRef}
-                  className="padding-color-popover"
-                  style={{
-                    left: Math.max(
-                      12,
-                      Math.min(
-                        pickerAnchorRect.left,
-                        window.innerWidth - 206,
-                      ),
+      <motion.div
+        key={pickerKey}
+        layout
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        className="padding-color-row"
+      >
+        <div className="padding-color-swatch-trigger">
+          <button
+            type="button"
+            className="padding-color-swatch-box"
+            style={{ backgroundColor: color }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              pickerAnchorRef.current = event.currentTarget;
+              setPickerAnchorRect(event.currentTarget.getBoundingClientRect());
+              setActivePickerKey(prev => prev === pickerKey ? null : pickerKey);
+            }}
+            aria-label={`Choose color ${index + 1}`}
+            aria-expanded={isPickerOpen}
+          />
+          {isPickerOpen &&
+            typeof document !== 'undefined' &&
+            pickerAnchorRect &&
+            createPortal(
+              <div
+                ref={pickerPopoverRef}
+                className="padding-color-popover-new"
+                style={{
+                  position: 'fixed',
+                  zIndex: 9999,
+                  left: Math.max(
+                    12,
+                    Math.min(
+                      pickerAnchorRect.left,
+                      window.innerWidth - 252,
                     ),
-                    top:
-                      pickerAnchorRect.top > 240
-                        ? pickerAnchorRect.top - 10
-                        : pickerAnchorRect.bottom + 10,
-                    transform:
-                      pickerAnchorRect.top > 240
-                        ? 'translateY(-100%)'
-                        : 'none',
-                  }}
+                  ),
+                  top:
+                    pickerAnchorRect.top > 400
+                      ? pickerAnchorRect.top - 10
+                      : pickerAnchorRect.bottom + 10,
+                  transform:
+                    pickerAnchorRect.top > 400
+                      ? 'translateY(-100%)'
+                      : 'none',
+                }}
+              >
+                <AdvancedColorPicker
+                  color={color}
+                  onChange={(nextColor) => handleColorChange(index, nextColor)}
+                  presets={[...COLOR_PRESETS]}
+                />
+              </div>,
+              document.body,
+            )}
+        </div>
+        
+        <div className="padding-color-hex-field">
+          <div className="padding-color-hex-main">
+            <span className="padding-color-hex-prefix">#</span>
+            <input
+              type="text"
+              className="padding-color-hex-text"
+              value={(color || '').replace('#', '').toUpperCase()}
+              onChange={(e) => handleColorChange(index, e.target.value)}
+              onBlur={() => handleColorChange(index, color)}
+              spellCheck={false}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+          </div>
+
+          <div className="padding-color-row-actions">
+            <AnimatePresence initial={false}>
+              {index === 0 && colors.length === 1 && (
+                <motion.button
+                  key="new-btn"
+                  initial={{ opacity: 0, x: 4 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 4 }}
+                  type="button"
+                  className="padding-color-new-btn"
+                  onClick={addColorRow}
                 >
-                  <div
-                    className="padding-color-popover-preview"
-                    style={{ '--padding-color-chip': color } as React.CSSProperties}
-                  />
-                  <div className="padding-color-preset-grid">
-                    {COLOR_PRESETS.map((preset) => (
-                      <button
-                        key={preset}
-                        type="button"
-                        className={`padding-color-preset ${preset === color ? 'active' : ''}`}
-                        style={{ '--padding-color-chip': preset } as React.CSSProperties}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          applyPickerColor(preset, color, onColorChange);
-                        }}
-                        aria-label={`Use color ${preset}`}
-                      />
-                    ))}
-                  </div>
-                  <input
-                    type="text"
-                    className="padding-color-hex-input"
-                    value={pickerHexInput}
-                    onChange={(event) => {
-                      const nextRaw = event.target.value;
-                      setPickerHexInput(nextRaw);
-                      const parsed = tryNormalizePickerColor(nextRaw);
-                      if (parsed) {
-                        onColorChange(parsed);
-                      }
-                    }}
-                    onBlur={() => {
-                      const parsed = tryNormalizePickerColor(pickerHexInput);
-                      if (parsed) {
-                        applyPickerColor(parsed, color, onColorChange);
-                        return;
-                      }
-                      setPickerHexInput(color);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        const parsed = tryNormalizePickerColor(pickerHexInput);
-                        if (parsed) {
-                          applyPickerColor(parsed, color, onColorChange);
-                        } else {
-                          setPickerHexInput(color);
-                        }
-                        setActivePickerKey(null);
-                      }
-                      if (event.key === 'Escape') {
-                        event.preventDefault();
-                        setActivePickerKey(null);
-                      }
-                    }}
-                    placeholder="#fff / rgb() / rgba()"
-                    spellCheck={false}
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                  />
-                </div>,
-                document.body,
+                  ADD
+                </motion.button>
               )}
-          </span>
-        </span>
-      </label>
+
+              {colors.length === 2 && (
+                <motion.button
+                  key="remove-btn"
+                  initial={{ opacity: 0, x: 4 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 4 }}
+                  type="button"
+                  className="padding-color-remove-btn"
+                  onClick={() => removeColorRow(index)}
+                  title="Remove color"
+                >
+                  <Trash2 size={15} />
+                </motion.button>
+              )}
+
+            </AnimatePresence>
+          </div>
+        </div>
+      </motion.div>
     );
   };
 
-  const colorPreview =
-    colorMode === 'solid' ? solidColor : gradientPreview;
-  const colorSummary =
-    colorMode === 'solid'
-      ? solidColor
-      : `${gradientAngle}deg • ${gradientStart} -> ${gradientEnd}`;
+
+
+
+
+
+  const renderGradientControls = () => {
+    if (colors.length < 2) return null;
+
+    return (
+      <div className="padding-gradient-controls-row">
+        <SegmentedControl<'linear' | 'radial'>
+          value={gradientType}
+          onChange={setGradientType}
+          ariaLabel="Gradient Type"
+          className="padding-gradient-type-toggle"
+          equalWidth
+          options={[
+            { value: 'linear', label: 'Linear' },
+            { value: 'radial', label: 'Radial' }
+          ]}
+        />
+
+        
+        <div className={`padding-gradient-angle-group ${gradientType === 'radial' ? 'is-disabled' : ''}`}>
+          <AngleKnob
+            value={gradientAngle}
+            onChange={setGradientAngle}
+            disabled={gradientType === 'radial'}
+            size={32}
+          />
+          <input
+            type="text"
+            className="padding-gradient-angle-input"
+            value={gradientAngle}
+            disabled={gradientType === 'radial'}
+            onChange={(e) => {
+              const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10);
+              if (!isNaN(val)) setGradientAngle(((val % 360) + 360) % 360);
+            }}
+            onKeyDown={(e) => handleSteppedNumericKeyDown(e, (v) => setGradientAngle(parseInt(v, 10)))}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const colorPreview = colors.length === 2 
+
+    ? (gradientType === 'linear' 
+        ? buildLinearGradient(colors[0], colors[1], gradientAngle)
+        : buildRadialGradient(colors[0], colors[1]))
+    : colors[0];
+  const colorSummary = colors.length === 2
+    ? `${gradientType === 'linear' ? `${gradientAngle}°` : 'Radial'} • ${colors[0]} -> ${colors[1]}`
+    : colors[0];
+
+
 
   return (
     <section className="control-section padding-section">
@@ -717,114 +808,20 @@ const PaddingSection = ({
             style={{ overflow: 'hidden' }}
           >
             <div className="padding-color-panel">
-              <div className="padding-color-header">
-                <div className="padding-color-summary">
-                  <div
-                    className="padding-color-preview"
-                    style={{ background: colorPreview }}
-                  />
-                  <div className="padding-color-summary-text">{colorSummary}</div>
-                </div>
-                <button
-                  type="button"
-                  className={`padding-editor-toggle ${showColorEditor ? 'active' : ''}`}
-                  onClick={() => setShowColorEditor((prev) => !prev)}
-                >
-                  {showColorEditor ? 'Hide' : 'Customize'}
-                </button>
+              <div className="padding-color-list">
+                <AnimatePresence initial={false} mode="popLayout">
+                  {colors.map((color, idx) => renderColorRow(color, idx))}
+                </AnimatePresence>
               </div>
-
-              <AnimatePresence initial={false}>
-                {showColorEditor && (
-                  <motion.div
-                    key="padding-color-editor"
-                    className="padding-color-editor"
-                    initial={{ opacity: 0, height: 0, y: -4 }}
-                    animate={{ opacity: 1, height: 'auto', y: 0 }}
-                    exit={{ opacity: 0, height: 0, y: -4 }}
-                    transition={REVEAL_SECTION_TRANSITION}
-                    style={{ overflow: 'hidden' }}
-                  >
-                    <div className="padding-color-editor-label">Style</div>
-                    <div className="padding-color-mode-grid">
-                      <button
-                        type="button"
-                        className={`padding-color-mode-btn ${colorMode === 'solid' ? 'active' : ''}`}
-                        onClick={() => applySolidColor(solidColor)}
-                      >
-                        Solid
-                      </button>
-                      <button
-                        type="button"
-                        className={`padding-color-mode-btn ${colorMode === 'gradient' ? 'active' : ''}`}
-                        onClick={() =>
-                          applyGradient(gradientStart, gradientEnd, gradientAngle)
-                        }
-                      >
-                        Gradient
-                      </button>
-                    </div>
-
-                    <div className="padding-color-fields">
-                      {colorMode === 'solid' ? (
-                        renderColorField({
-                          label: 'Color',
-                          color: solidColor,
-                          pickerKey: 'solid',
-                          onColorChange: applySolidColor,
-                        })
-                      ) : (
-                        <>
-                          {renderColorField({
-                            label: 'Start',
-                            color: gradientStart,
-                            pickerKey: 'gradient-start',
-                            onColorChange: (nextStart) =>
-                              applyGradient(nextStart, gradientEnd, gradientAngle),
-                          })}
-                          {renderColorField({
-                            label: 'End',
-                            color: gradientEnd,
-                            pickerKey: 'gradient-end',
-                            onColorChange: (nextEnd) =>
-                              applyGradient(gradientStart, nextEnd, gradientAngle),
-                          })}
-
-                          <div className="padding-gradient-panel">
-                            <div className="padding-angle-row">
-                              <label>Angle: {gradientAngle}°</label>
-                              <DesignSlider
-                                className="padding-angle-slider"
-                                min={-180}
-                                max={180}
-                                step={1}
-                                value={gradientAngle}
-                                ariaLabel="Gradient angle"
-                                onChange={(nextValue) =>
-                                  applyGradient(
-                                    gradientStart,
-                                    gradientEnd,
-                                    Math.round(nextValue),
-                                  )
-                                }
-                              />
-                            </div>
-                            <div
-                              className="padding-gradient-preview"
-                              style={{ background: gradientPreview }}
-                            />
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              {renderGradientControls()}
             </div>
           </motion.div>
+
         )}
 
+
         {paddingFillType === 'image' && (
+
           <motion.div
             key="padding-image-panel"
             initial={{ opacity: 0, height: 0, y: -6 }}

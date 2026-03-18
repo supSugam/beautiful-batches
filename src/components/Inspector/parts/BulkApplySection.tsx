@@ -185,7 +185,11 @@ const BulkApplySection = ({
 
   return (
     <section ref={sectionRef} className="control-section">
-      <div className="section-header">
+      <div 
+        className="section-header" 
+        onClick={() => setIsOpen(!isOpen)}
+        style={{ cursor: 'pointer' }}
+      >
         {showSectionLabel ? (
           <h3 className="section-label">Bulk Apply Current Settings</h3>
         ) : (
@@ -195,22 +199,9 @@ const BulkApplySection = ({
           <button
             type="button"
             className="btn-icon-subtle"
-            onClick={() => {
-              const nextOpen = !isOpen;
-              stopAutoScrollRef.current?.();
-              stopAutoScrollRef.current = null;
-              if (nextOpen) {
-                const el = sectionRef.current;
-                const scrollEl =
-                  findScrollParent(el) ||
-                  (el?.closest?.('.inspector-scroll') as HTMLElement | null);
-                // Export is the last section: jump to bottom immediately, then keep it pinned
-                // during the short reveal animation.
-                if (scrollEl) {
-                  scrollEl.scrollTop = scrollEl.scrollHeight - scrollEl.clientHeight;
-                }
-              }
-              setIsOpen(nextOpen);
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsOpen(!isOpen);
             }}
             aria-expanded={isOpen}
             title={isOpen ? 'Collapse bulk apply' : 'Expand bulk apply'}
@@ -269,11 +260,13 @@ const BulkApplySection = ({
               }}
             >
                 <div
-                  className="metadata-toggle-row bulk-caption-switch-row"
+                  className="metadata-toggle-row bulk-caption-switch-row clickable-row"
                   title="Apply Rotation and Flip"
+                  onClick={() => setIncludeTransforms(!includeTransforms)}
+                  style={{ cursor: 'pointer' }}
                 >
                   <span className="metadata-toggle-label">Include Transforms</span>
-                  <label className="metadata-checkbox-row">
+                  <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       className="metadata-checkbox-input"
@@ -301,11 +294,13 @@ const BulkApplySection = ({
                 </div>
 
                 <div
-                  className="metadata-toggle-row bulk-caption-switch-row"
+                  className="metadata-toggle-row bulk-caption-switch-row clickable-row"
                   title="Apply Aspect Ratio, Coordinates, and Viewport"
+                  onClick={() => setIncludeCropState(!includeCropState)}
+                  style={{ cursor: 'pointer' }}
                 >
                   <span className="metadata-toggle-label">Include Crop State</span>
-                  <label className="metadata-checkbox-row">
+                  <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       className="metadata-checkbox-input"
@@ -333,11 +328,13 @@ const BulkApplySection = ({
                 </div>
 
                 <div
-                  className="metadata-toggle-row bulk-caption-switch-row"
+                  className="metadata-toggle-row bulk-caption-switch-row clickable-row"
                   title="Apply Padding, Corner Radius, and Export Limits"
+                  onClick={() => setIncludeUiTweaks(!includeUiTweaks)}
+                  style={{ cursor: 'pointer' }}
                 >
                   <span className="metadata-toggle-label">Include UI Tweaks</span>
-                  <label className="metadata-checkbox-row">
+                  <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       className="metadata-checkbox-input"
@@ -366,13 +363,15 @@ const BulkApplySection = ({
 
                 {canIncludeWatermarkRemoval && (
                   <div
-                    className="metadata-toggle-row bulk-caption-switch-row"
+                    className="metadata-toggle-row bulk-caption-switch-row clickable-row"
                     title="Apply watermark removal to the selected images (runs the AI per image)"
+                    onClick={() => setIncludeWatermarkRemoval(!includeWatermarkRemoval)}
+                    style={{ cursor: 'pointer' }}
                   >
                     <span className="metadata-toggle-label">
                       Include Watermark Removal
                     </span>
-                    <label className="metadata-checkbox-row">
+                    <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         className="metadata-checkbox-input"
@@ -404,13 +403,15 @@ const BulkApplySection = ({
 
                 {canIncludeBackgroundRemoval && (
                   <div
-                    className="metadata-toggle-row bulk-caption-switch-row"
+                    className="metadata-toggle-row bulk-caption-switch-row clickable-row"
                     title="Apply background removal to the selected images (runs rembg per image)"
+                    onClick={() => setIncludeBackgroundRemoval(!includeBackgroundRemoval)}
+                    style={{ cursor: 'pointer' }}
                   >
                     <span className="metadata-toggle-label">
                       Include Background Removal
                     </span>
-                    <label className="metadata-checkbox-row">
+                    <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         className="metadata-checkbox-input"
@@ -441,11 +442,13 @@ const BulkApplySection = ({
                 )}
 
                 <div
-                  className="metadata-toggle-row bulk-caption-switch-row"
+                  className="metadata-toggle-row bulk-caption-switch-row clickable-row"
                   title="Apply Caption Override"
+                  onClick={() => setIncludeCaption(!includeCaption)}
+                  style={{ cursor: 'pointer' }}
                 >
                   <span className="metadata-toggle-label">Include Caption</span>
-                  <label className="metadata-checkbox-row">
+                  <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       className="metadata-checkbox-input"

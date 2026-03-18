@@ -314,6 +314,7 @@ export function useInspectorLogic({
       console.log('Invoking remove_background_single...');
       const result = await invoke<{ imageBase64: string; deviceUsed?: string }>('remove_background_single', {
         imagePath: image.absolutePath,
+        autoUnload: useStore.getState().autoUnload,
       });
       console.log('Background removal result received, updating history. Hardware used:', result.deviceUsed);
       if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);
@@ -362,6 +363,7 @@ export function useInspectorLogic({
       const result = await invoke<{ imageBase64: string; deviceUsed?: string }>('remove_watermark_single', {
         imagePath: image.absolutePath,
         maxBboxPercent: 10.0,
+        autoUnload: useStore.getState().autoUnload,
       });
       console.log('Result received, updating history. Hardware used:', result.deviceUsed);
       if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);
@@ -387,7 +389,13 @@ export function useInspectorLogic({
     setPaddingFillType('empty');
     setPaddingFillValue('');
     setPaddingImageUrl(null);
-    // Reset non-editor crop state fields
+    
+    // Reset AI processing local state
+    setProcessedHistory([]);
+    setProcessedOps([]);
+    setHistoryIndex(-1);
+
+    // Reset non-editor crop state fields in store
     if (imageId) {
       onCropChange?.(imageId, {
         coordinates: null,
@@ -399,6 +407,9 @@ export function useInspectorLogic({
         paddingFillType: 'empty',
         paddingFillValue: '',
         paddingImageUrl: null,
+        sourceEditHistory: [],
+        sourceEditOps: [],
+        sourceEditHistoryIndex: -1,
       });
     }
   }, [editor, imageId, onCropChange]);

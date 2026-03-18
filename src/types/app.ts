@@ -203,7 +203,12 @@ export type WatermarkSidecarStatus = {
   venvExists: boolean;
   dependenciesInstalled: boolean;
   isBridgeActive: boolean;
+  isBridgeBusy: boolean;
   isModelsLoaded: boolean;
+  isBgRemovalLoaded: boolean;
+  loadedDetectionModel: string | null;
+  loadedInpaintingModel: string | null;
+  loadedDevice: string | null;
   modelCachePath: string;
   repoPath: string;
   pythonPath: string;
@@ -216,6 +221,16 @@ export type WatermarkSidecarStatus = {
 
 export type WatermarkSidecarSettings = {
   useUv: boolean;
+  autoUnload: boolean;
   detectionModelId: string;
   inpaintingModelId: string;
+};
+
+export type ProcessingStatus = {
+  total: number;
+  current: number;
+  statusText: string;
+  isMinimized: boolean;
+  isActive: boolean;
+  estimatedTimeRemaining?: number; // In milliseconds
 };

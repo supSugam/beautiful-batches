@@ -5,6 +5,7 @@ import {
   toStoredCoordinates,
 } from '../utils/cropCoordinates';
 import { normalizeCornerRadiusInput, normalizePaddingInput } from '../utils/boxValues';
+import { truncateFilename } from '../utils/textUtils';
 import type {
   CornerRadiusValues,
   CropEntry,
@@ -13,6 +14,7 @@ import type {
   FolderNode,
   GalleryImage,
   PaddingValues,
+  ProcessingStatus,
   RawUploadImage,
   SortOption,
   StoredCoordinates,
@@ -504,6 +506,10 @@ export interface UseStoreState {
   setExpandedPaths: (paths: Set<string>) => void;
   lastUsedHardware: string | null;
   setLastUsedHardware: (hardware: string | null) => void;
+  autoUnload: boolean;
+  setAutoUnload: (autoUnload: boolean) => void;
+  processingState: ProcessingStatus;
+  setProcessingState: (state: Partial<ProcessingStatus>) => void;
 }
 
 const useStore = create<UseStoreState>((set, get) => {
@@ -712,10 +718,25 @@ const useStore = create<UseStoreState>((set, get) => {
     sortOption: 'last_modified',
     expandedPaths: new Set<string>(),
     lastUsedHardware: null,
+    autoUnload: true,
+    processingState: {
+      total: 0,
+      current: 0,
+      statusText: '',
+      isMinimized: false,
+      isActive: false,
+      estimatedTimeRemaining: undefined,
+    },
 
     // --- Actions ---
 
     setLastUsedHardware: (hardware) => set({ lastUsedHardware: hardware }),
+    setAutoUnload: (autoUnload) => set({ autoUnload }),
+
+    setProcessingState: (next: Partial<ProcessingStatus>) =>
+      set((state) => ({
+        processingState: { ...state.processingState, ...next },
+      })),
 
     // Images
     setImages: async (rawImages, rootNames) => {
@@ -1394,30 +1415,105 @@ const useStore = create<UseStoreState>((set, get) => {
 	      // Apply the selected heavy edits (watermark removal / background removal) to each target image.
 	      // Runs in the background; export will reflect results once completed.
 	      void (async () => {
+          const { setProcessingState } = get();
+          setProcessingState({
+            isActive: true,
+            total: uniqueTargetIds.length,
+            current: 0,
+            statusText: '',
+            estimatedTimeRemaining: undefined,
+          });
+
+          // Phase 1: Waking up the engine / loading models if needed
+          try {
+            const status = await invoke<WatermarkSidecarStatus>('get_watermark_sidecar_status');
+            if (!status.isBridgeActive) {
+              setProcessingState({ statusText: 'Waking up the AI engine...' });
+              await yieldToMainThread();
+            } else if (!status.isModelsLoaded || !status.isBgRemovalLoaded) {
+              setProcessingState({ statusText: 'Preparing AI models...' });
+              await yieldToMainThread();
+            }
+          } catch (e) {
+            console.error('Failed to check initial status:', e);
+          }
+
+          const startTime = Date.now();
+          let currentCount = 0;
 	        for (const id of uniqueTargetIds) {
 	          const img = get().images.find((entry) => entry.id === id);
 	          const absolutePath = String(img?.absolutePath || '').trim();
-	          if (!img || !absolutePath) continue;
+	          
+	          if (!img || !absolutePath) {
+              currentCount++;
+              setProcessingState({ current: currentCount });
+              continue;
+            }
 
-	          const history: string[] = [];
+            const currentName = img.name || 'image';
+            const history: string[] = [];
 	          const ops: Array<'watermark' | 'background'> = [];
 	          let lastDeviceUsed: string | undefined;
 
-	          for (const op of bulkSourceEditOpsToApply) {
+            const isLastImage = currentCount === uniqueTargetIds.length - 1;
+
+	          for (let opIdx = 0; opIdx < bulkSourceEditOpsToApply.length; opIdx++) {
+              const op = bulkSourceEditOpsToApply[opIdx];
+              const isLastOp = isLastImage && opIdx === bulkSourceEditOpsToApply.length - 1;
+              const shouldAutoUnload = get().autoUnload && isLastOp;
+
 	            try {
+                // Determine natural status message based on the operation
+                const filename = truncateFilename(currentName, 20);
+                const statusMsg = op === 'watermark' 
+                  ? `Finding watermarks in ${filename}...`
+                  : `Removing background from ${filename}...`;
+                
+                setProcessingState({ 
+                  current: currentCount, 
+                  statusText: statusMsg 
+                });
+                await yieldToMainThread();
+
 	              if (op === 'watermark') {
-	                const result = await invoke<{ imageBase64: string; deviceUsed?: string }>(
+                  // No need for a separate sub-status here, the main one is enough
+                  // and keeps the log less noisy.
+
+	                const result = await invoke<{ imageBase64: string; deviceUsed?: string; description?: string }>(
 	                  'remove_watermark_single',
-	                  { imagePath: absolutePath, maxBboxPercent: 10.0 },
+	                  { 
+                      imagePath: absolutePath, 
+                      maxBboxPercent: 10.0,
+                      autoUnload: shouldAutoUnload
+                    },
 	                );
+
+                  setProcessingState({
+                    current: currentCount,
+                    statusText: `Removed watermarks from ${truncateFilename(currentName, 20)}`,
+                  });
+                  await yieldToMainThread();
+
 	                history.push(result.imageBase64);
 	                ops.push('watermark');
 	                lastDeviceUsed = result.deviceUsed;
 	              } else {
-	                const result = await invoke<{ imageBase64: string; deviceUsed?: string }>(
+                  // No need for a separate sub-status here
+
+	                const result = await invoke<{ imageBase64: string; deviceUsed?: string; description?: string }>(
 	                  'remove_background_single',
-	                  { imagePath: absolutePath },
+	                  { 
+                      imagePath: absolutePath,
+                      autoUnload: shouldAutoUnload 
+                    },
 	                );
+
+                  setProcessingState({
+                    current: currentCount,
+                    statusText: `Removed background from ${truncateFilename(currentName, 20)}`,
+                  });
+                  await yieldToMainThread();
+
 	                history.push(result.imageBase64);
 	                ops.push('background');
 	                lastDeviceUsed = result.deviceUsed;
@@ -1435,22 +1531,47 @@ const useStore = create<UseStoreState>((set, get) => {
 	            } catch {}
 	          }
 
-	          if (history.length === 0) continue;
+	          if (history.length > 0) {
+	            const previousEntry = get().cropData.get(id) || {};
+	            get().setCropChange(id, {
+	              ...previousEntry,
+	              sourceEditHistory: history,
+	              sourceEditHistoryIndex: history.length - 1,
+	              sourceEditOps: ops,
+	            });
+	          }
 
-	          const previousEntry = get().cropData.get(id) || {};
-	          get().setCropChange(id, {
-	            ...previousEntry,
-	            sourceEditHistory: history,
-	            sourceEditHistoryIndex: history.length - 1,
-	            sourceEditOps: ops,
-	          });
+	          currentCount++;
+            
+            // ETA Calculation
+            const elapsed = Date.now() - startTime;
+            const avgTimePerImage = elapsed / currentCount;
+            const remainingImages = uniqueTargetIds.length - currentCount;
+            const eta = remainingImages * avgTimePerImage;
 
+	          setProcessingState({ 
+              current: currentCount,
+              estimatedTimeRemaining: eta
+            });
 	          await yieldToMainThread();
 	        }
+
+	        setProcessingState({
+	          statusText: 'All bulk operations completed',
+            estimatedTimeRemaining: 0,
+	        });
+
+	        // Auto-hide after a short delay if not minimized
+	        setTimeout(() => {
+	          const finalState = get().processingState;
+	          if (!finalState.isMinimized) {
+	            setProcessingState({ isActive: false });
+	          }
+	        }, 2000);
 	      })();
 	    },
 
-    setCaptionForImage: (id, caption) => {
+    setCaptionForImage: (id: string, caption: string) => {
       set((state) => {
         const nextCaption = String(caption ?? '');
         const hadCaptionOverride = state.captionById.has(id);

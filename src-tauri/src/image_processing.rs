@@ -767,16 +767,19 @@ fn parse_corner_radius_values(crop: &CropConfig) -> CornerRadiusValues {
 fn clamp_padding_to_reference(padding: PaddingValues, width: u32, height: u32) -> PaddingValues {
     let safe_width = width.max(1) as f64;
     let safe_height = height.max(1) as f64;
-    let horizontal_cap =
-        ((safe_width * INNER_PADDING_SIDE_RATIO).round() as u32).min(MAX_PADDING_PX);
-    let vertical_cap =
-        ((safe_height * INNER_PADDING_SIDE_RATIO).round() as u32).min(MAX_PADDING_PX);
+    
+    // To maintain perfectly even padding, we must use the more restrictive dimension's cap
+    // for all sides. Otherwise, a tall image would allow more top/bottom padding than
+    // left/right, causing visible imbalance.
+    let horizontal_cap = (safe_width * INNER_PADDING_SIDE_RATIO).round() as u32;
+    let vertical_cap = (safe_height * INNER_PADDING_SIDE_RATIO).round() as u32;
+    let global_cap = horizontal_cap.min(vertical_cap).min(MAX_PADDING_PX);
 
     PaddingValues {
-        top: padding.top.min(vertical_cap),
-        right: padding.right.min(horizontal_cap),
-        bottom: padding.bottom.min(vertical_cap),
-        left: padding.left.min(horizontal_cap),
+        top: padding.top.min(global_cap),
+        right: padding.right.min(global_cap),
+        bottom: padding.bottom.min(global_cap),
+        left: padding.left.min(global_cap),
     }
 }
 
@@ -1136,7 +1139,7 @@ fn apply_primary_edits(mut image: DynamicImage, crop: &CropConfig) -> DynamicIma
     image
 }
 
-fn apply_crop_and_resize(mut image: DynamicImage, crop: &CropConfig) -> DynamicImage {
+fn apply_crop_only(mut image: DynamicImage, crop: &CropConfig) -> DynamicImage {
     if let Some(coords) = crop.coordinates.as_ref() {
         let (img_width, img_height) = image.dimensions();
         if img_width > 0 && img_height > 0 {
@@ -1152,7 +1155,10 @@ fn apply_crop_and_resize(mut image: DynamicImage, crop: &CropConfig) -> DynamicI
             image = image.crop_imm(left, top, crop_width.max(1), crop_height.max(1));
         }
     }
+    image
+}
 
+fn apply_resize_only(mut image: DynamicImage, crop: &CropConfig) -> DynamicImage {
     if let Some(output_width_raw) = crop.output_width {
         if output_width_raw.is_finite() && output_width_raw > 0.0 {
             let target_width = output_width_raw.round().max(1.0) as u32;
@@ -1169,7 +1175,6 @@ fn apply_crop_and_resize(mut image: DynamicImage, crop: &CropConfig) -> DynamicI
             }
         }
     }
-
     image
 }
 
@@ -1576,14 +1581,15 @@ fn prepare_export_item(
         let image = image::load_from_memory(&source_bytes)
             .map_err(|error| format!("Failed to decode source image {}: {error}", item.image_id))?;
 
-        // Order matters:
-        // 1) Transforms (rotate/flip)
-        // 2) Background fill + inner padding + content-only corner radius
-        // 3) Crop (so users can crop padding off any side)
-        // 4) Output resize (scales everything uniformly)
+        // Order matters for correct padding & composition:
+        // 1) Primary edits (rotate/flip) on full source
+        // 2) Crop to requested region
+        // 3) Background fill + inner padding + content-only corner radius (applied TO cropped result)
+        // 4) Output resize (scales everything uniformly to final target width)
         let image = apply_primary_edits(image, &crop);
+        let image = apply_crop_only(image, &crop);
         let image = apply_inner_padding_and_corner(image, &crop, encoded_assets, decoded_assets)?;
-        let image = apply_crop_and_resize(image, &crop);
+        let image = apply_resize_only(image, &crop);
         encode_image_for_format(&image, desired_format, quality)?
     };
 

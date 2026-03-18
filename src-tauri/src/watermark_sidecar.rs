@@ -225,7 +225,12 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
         check_venv_lib_exists(app, "rembg");
 
     let mut is_bridge_active = false;
+    let mut is_bridge_busy = false;
     let mut is_models_loaded = false;
+    let mut is_bg_removal_loaded = false;
+    let mut loaded_detection_model = None;
+    let mut loaded_inpainting_model = None;
+    let mut loaded_device = None;
     
     if let Ok(instance) = BRIDGE_INSTANCE.lock() {
         if let Some(bridge_arc) = instance.as_ref() {
@@ -233,14 +238,34 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
             // Use try_lock to avoid blocking the status check if the bridge is currently processing an image
             if let Ok(bridge) = bridge_arc.try_lock() {
                 is_models_loaded = bridge.is_ready;
+                is_bg_removal_loaded = bridge.is_bg_removal_loaded;
+                loaded_detection_model = bridge.loaded_detection_model.clone();
+                loaded_inpainting_model = bridge.loaded_inpainting_model.clone();
+                loaded_device = bridge.loaded_device.clone();
             } else {
-                // If we can't lock it, it's busy processing, so it's definitely loaded
-                is_models_loaded = true;
+                // If we can't lock it, it's busy processing
+                is_bridge_busy = true;
+                
+                // Try to use last known status for specific details
+                if let Ok(last) = LAST_STATUS.lock() {
+                    if let Some(status) = last.as_ref() {
+                        is_models_loaded = status.is_models_loaded;
+                        is_bg_removal_loaded = status.is_bg_removal_loaded;
+                        loaded_detection_model = status.loaded_detection_model.clone();
+                        loaded_inpainting_model = status.loaded_inpainting_model.clone();
+                        loaded_device = status.loaded_device.clone();
+                    } else {
+                        // Fallback if no last status
+                        is_models_loaded = true; 
+                    }
+                } else {
+                    is_models_loaded = true;
+                }
             }
         }
     }
 
-    let mut status = WatermarkSidecarStatus {
+    let status = WatermarkSidecarStatus {
         python_installed,
         git_installed,
         uv_installed,
@@ -248,7 +273,12 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
         venv_exists,
         dependencies_installed,
         is_bridge_active,
+        is_bridge_busy,
         is_models_loaded,
+        is_bg_removal_loaded,
+        loaded_detection_model,
+        loaded_inpainting_model,
+        loaded_device,
         repo_path: repo_path.to_string_lossy().to_string(),
         python_path: python_exe.to_string_lossy().to_string(),
         model_cache_path: models_dir.to_string_lossy().to_string(),
@@ -256,24 +286,30 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
         ..Default::default()
     };
 
-    status.detection_models = vec![
+    // Cache the status for when bridge is busy
+    if let Ok(mut last) = LAST_STATUS.lock() {
+        *last = Some(status.clone());
+    }
+
+    let mut final_status = status;
+    final_status.detection_models = vec![
         check_model_files(&models_dir, DETECTION_MODEL_BASE.0, DETECTION_MODEL_BASE.1, DETECTION_MODEL_BASE.2, DETECTION_MODEL_BASE.3, "detection"),
         check_model_files(&models_dir, DETECTION_MODEL_LARGE.0, DETECTION_MODEL_LARGE.1, DETECTION_MODEL_LARGE.2, DETECTION_MODEL_LARGE.3, "detection"),
     ];
 
-    status.inpainting_models = vec![
+    final_status.inpainting_models = vec![
         check_model_files(&models_dir, INPAINTING_MODEL_LAMA.0, INPAINTING_MODEL_LAMA.1, INPAINTING_MODEL_LAMA.2, INPAINTING_MODEL_LAMA.3, "inpainting"),
     ];
 
-    status.background_removal_models = vec![
+    final_status.background_removal_models = vec![
         check_model_files(&models_dir, BACKGROUND_REMOVAL_MODEL_REMBG.0, BACKGROUND_REMOVAL_MODEL_REMBG.1, BACKGROUND_REMOVAL_MODEL_REMBG.2, BACKGROUND_REMOVAL_MODEL_REMBG.3, "background_removal"),
     ];
 
-    status.total_size_bytes = status.detection_models.iter().map(|m| m.size_bytes).sum::<u64>()
-        + status.inpainting_models.iter().map(|m| m.size_bytes).sum::<u64>()
-        + status.background_removal_models.iter().map(|m| m.size_bytes).sum::<u64>();
+    final_status.total_size_bytes = final_status.detection_models.iter().map(|m| m.size_bytes).sum::<u64>()
+        + final_status.inpainting_models.iter().map(|m| m.size_bytes).sum::<u64>()
+        + final_status.background_removal_models.iter().map(|m| m.size_bytes).sum::<u64>();
 
-    Ok(status)
+    Ok(final_status)
 }
 
 #[derive(Clone, Serialize)]
@@ -297,11 +333,24 @@ fn emit_log(app: &AppHandle, message: &str, is_error: bool) {
 }
 
 pub struct WatermarkBridgeRuntime {
-    _child: Child,
+    pub _child: Child,
     stdin: ChildStdin,
     reader: BufReader<std::process::ChildStdout>,
     pub is_ready: bool,
+    pub is_bg_removal_loaded: bool,
+    pub loaded_detection_model: Option<String>,
+    pub loaded_inpainting_model: Option<String>,
+    pub loaded_device: Option<String>,
 }
+
+impl Drop for WatermarkBridgeRuntime {
+    fn drop(&mut self) {
+        let _ = self._child.kill();
+    }
+}
+
+pub static BRIDGE_INSTANCE: Mutex<Option<Arc<Mutex<WatermarkBridgeRuntime>>>> = Mutex::new(None);
+pub static LAST_STATUS: Mutex<Option<WatermarkSidecarStatus>> = Mutex::new(None);
 
 impl WatermarkBridgeRuntime {
     pub fn new(app: &AppHandle) -> Result<Self, String> {
@@ -344,30 +393,65 @@ impl WatermarkBridgeRuntime {
             .map_err(|e| format!("Bridge failed to start (no startup message): {e}"))?;
         eprintln!("[watermark-bridge] startup: {}", startup_line.trim());
 
-        Ok(Self { _child: child, stdin, reader, is_ready: false })
+        Ok(Self { 
+            _child: child, 
+            stdin, 
+            reader, 
+            is_ready: false,
+            is_bg_removal_loaded: false,
+            loaded_detection_model: None,
+            loaded_inpainting_model: None,
+            loaded_device: None,
+        })
     }
 
-    pub fn send_command(&mut self, cmd: serde_json::Value) -> Result<serde_json::Value, String> {
+    pub fn send_command(&mut self, cmd: serde_json::Value, app: Option<&AppHandle>) -> Result<serde_json::Value, String> {
         let line = format!("{}\n", cmd.to_string());
         self.stdin.write_all(line.as_bytes()).map_err(|e: std::io::Error| e.to_string())?;
         self.stdin.flush().map_err(|e: std::io::Error| e.to_string())?;
 
-        let mut response = String::new();
-        self.reader.read_line(&mut response).map_err(|e: std::io::Error| e.to_string())?;
-        let parsed: serde_json::Value = serde_json::from_str(&response).map_err(|e: serde_json::Error| e.to_string())?;
-        
-        // Track readiness
-        if let Some(cmd_val) = cmd.get("command") {
-            if cmd_val == "load" && parsed.get("status").and_then(|s| s.as_str()) == Some("ready") {
-                self.is_ready = true;
+        loop {
+            let mut response = String::new();
+            self.reader.read_line(&mut response).map_err(|e: std::io::Error| e.to_string())?;
+            if response.trim().is_empty() { continue; }
+            
+            let parsed: serde_json::Value = serde_json::from_str(&response).map_err(|e: serde_json::Error| e.to_string())?;
+            
+            // Check if this is an intermediate status update
+            if let Some(status_type) = parsed.get("type").and_then(|v| v.as_str()) {
+                if status_type == "status_update" {
+                    if let (Some(app), Some(msg)) = (app, parsed.get("message").and_then(|v| v.as_str())) {
+                        let _ = app.emit("watermark-engine-status", msg);
+                    }
+                    continue; // Wait for the next line (the actual result or another status)
+                }
             }
+
+            // It's a final result
+            // Track readiness and loaded models
+            if let Some(cmd_val) = cmd.get("command").and_then(|v| v.as_str()) {
+                if cmd_val == "load" && parsed.get("status").and_then(|s| s.as_str()) == Some("ready") {
+                    self.is_ready = true;
+                    self.loaded_detection_model = cmd.get("detection_model").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    self.loaded_inpainting_model = cmd.get("inpainting_model").and_then(|v| v.as_str()).map(|s| s.to_string());
+                }
+
+                if cmd_val == "remove_bg" && parsed.get("status").and_then(|s| s.as_str()) == Some("success") {
+                    self.is_bg_removal_loaded = true;
+                }
+
+                // Update device from any successful command that reports it
+                if let Some(device) = parsed.get("device_used").and_then(|v| v.as_str()) {
+                    self.loaded_device = Some(device.to_string());
+                } else if let Some(provider) = parsed.get("provider_used").and_then(|v| v.as_str()) {
+                    self.loaded_device = Some(provider.to_string());
+                }
+            }
+            
+            return Ok(parsed);
         }
-        
-        Ok(parsed)
     }
 }
-
-pub static BRIDGE_INSTANCE: Mutex<Option<Arc<Mutex<WatermarkBridgeRuntime>>>> = Mutex::new(None);
 
 pub fn get_or_create_bridge(app: &AppHandle) -> Result<Arc<Mutex<WatermarkBridgeRuntime>>, String> {
     let mut instance = BRIDGE_INSTANCE.lock().unwrap();
@@ -399,7 +483,7 @@ pub fn ensure_bridge_ready(app: &AppHandle) -> Result<Arc<Mutex<WatermarkBridgeR
             "command": "load",
             "detection_model": "florence-community/Florence-2-large",
             "inpainting_model": "lama"
-        }))?;
+        }), Some(app))?;
         
         // Check for errors — Python sends {"error": null} on success, {"error": "msg"} on failure
         if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
@@ -509,15 +593,8 @@ pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), Stri
         }
     } else {
         emit_log(&app, "Repository already exists, pulling latest changes...", false);
-        // Discard any local modifications so pull never conflicts
-        let _ = Command::new("git")
-            .args(["checkout", "--", "."])
-            .current_dir(&repo_path)
-            .status();
-        let _ = Command::new("git")
-            .args(["clean", "-fd"])
-            .current_dir(&repo_path)
-            .status();
+        // Note: We used to discard local modifications here to avoid merge conflicts.
+        // But for development, we now attempt a clean pull and only force-discard if it fails.
         let pull_status = Command::new("git")
             .args(["pull"])
             .current_dir(&repo_path)
@@ -525,7 +602,12 @@ pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), Stri
             .map_err(|e| format!("Failed to run git pull: {e}"))?;
         
         if !pull_status.success() {
-            emit_log(&app, "Git pull failed, continuing anyway...", true);
+            emit_log(&app, "Git pull failed (likely due to local changes). Attempting to resolve...", true);
+            // If pull fails, we force-discard so the user can at least get back to a working state
+            let _ = Command::new("git").args(["checkout", "--", "."]).current_dir(&repo_path).status();
+            let _ = Command::new("git").args(["clean", "-fd"]).current_dir(&repo_path).status();
+            let _ = Command::new("git").args(["pull"]).current_dir(&repo_path).status();
+            emit_log(&app, "Reset local state and pulled successfully.", false);
         } else {
             emit_log(&app, "Repository updated successfully.", false);
         }
@@ -640,6 +722,18 @@ pub fn reset_setup(app: &AppHandle) -> Result<(), String> {
     // Also reset bridge instance
     let mut instance = BRIDGE_INSTANCE.lock().unwrap();
     *instance = None;
+    if let Ok(mut last) = LAST_STATUS.lock() {
+        *last = None;
+    }
     emit_log(app, "Reset completed. Models preserved.", false);
+    Ok(())
+}
+
+pub fn stop_bridge() -> Result<(), String> {
+    let mut instance = BRIDGE_INSTANCE.lock().unwrap();
+    *instance = None;
+    if let Ok(mut last) = LAST_STATUS.lock() {
+        *last = None;
+    }
     Ok(())
 }

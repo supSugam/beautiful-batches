@@ -1,0 +1,59 @@
+.hover-border-gradient-container {
+  position: relative;
+  display: flex;
+  border-radius: 9999px;
+  align-content: center;
+  align-items: center;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 2.5rem;
+  height: min-content;
+  justify-content: center;
+  overflow: visible;
+  padding: 1px;
+  text-decoration-line: none;
+  width: fit-content;
+  background-color: transparent; /* Changed to transparent */
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: background-color 0.5s;
+  cursor: pointer;
+}
+
+.hover-border-gradient-container:hover {
+  background-color: rgba(255, 255, 255, 0.03); /* Extremely subtle glass hint */
+}
+
+.hover-border-gradient-content {
+  width: auto;
+  color: #fff;
+  z-index: 10;
+  background-color: transparent; /* Changed to transparent */
+  padding: 0.5rem 1rem;
+  border-radius: inherit;
+}
+
+.hover-border-gradient-animation {
+  flex: none;
+  inset: 0;
+  overflow: hidden;
+  position: absolute;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.hover-border-gradient-mask {
+  background-color: transparent; /* Changed to transparent */
+  position: absolute;
+  z-index: 1;
+  flex: none;
+  inset: 2px;
+  border-radius: 100px;
+  pointer-events: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .hover-border-gradient-container {
+    background-color: transparent;
+  }
+}

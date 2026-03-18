@@ -626,6 +626,71 @@ pub async fn execute_export_plan(
     .map_err(|error| format!("Export plan task failed: {error}"))?
 }
 
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<(), String> {
+    let url_ref = url.as_str();
+    
+    #[cfg(target_os = "windows")]
+    {
+        return spawn_detached("cmd", &["/c", "start", "", url_ref])
+            .map_err(|error| format!("Failed to open URL: {error}"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return spawn_detached("open", &[url_ref])
+            .map_err(|error| format!("Failed to open URL: {error}"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        return spawn_detached("xdg-open", &[url_ref])
+            .map_err(|error| format!("Failed to open URL: {error}"));
+    }
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DetailedSystemInfo {
+    pub distro: Option<String>,
+    pub distro_version: Option<String>,
+    pub desktop_environment: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_detailed_system_info() -> Result<DetailedSystemInfo, String> {
+    let mut info = DetailedSystemInfo {
+        distro: None,
+        distro_version: None,
+        desktop_environment: None,
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Read /etc/os-release for distro info
+        if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+            for line in content.lines() {
+                if line.starts_with("PRETTY_NAME=") {
+                    info.distro = Some(line.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string());
+                } else if line.starts_with("VERSION_ID=") {
+                    info.distro_version = Some(line.trim_start_matches("VERSION_ID=").trim_matches('"').to_string());
+                } else if line.starts_with("NAME=") && info.distro.is_none() {
+                    info.distro = Some(line.trim_start_matches("NAME=").trim_matches('"').to_string());
+                }
+            }
+        }
+
+        // Detect Desktop Environment
+        if let Ok(de) = std::env::var("XDG_CURRENT_DESKTOP") {
+            info.desktop_environment = Some(de);
+        } else if let Ok(de) = std::env::var("DESKTOP_SESSION") {
+            info.desktop_environment = Some(de);
+        }
+    }
+
+    Ok(info)
+}
+
 // ── Watermark Sidecar ────────────────────────────────────────────────
 
 #[tauri::command]
@@ -671,7 +736,7 @@ pub async fn load_watermark_models(
         "command": "load",
         "detection_model": detection_model,
         "inpainting_model": inpainting_model
-    }))?;
+    }), Some(&app))?;
 
     if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
         return Err(err.to_string());
@@ -680,11 +745,25 @@ pub async fn load_watermark_models(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn stop_watermark_models(app: AppHandle) -> Result<(), String> {
+    watermark_sidecar::stop_bridge()
+}
+
+#[tauri::command]
+pub async fn restart_watermark_bridge(app: AppHandle) -> Result<(), String> {
+    let _ = watermark_sidecar::stop_bridge();
+    // Bridge will be auto-recreated on next use or can be triggered via load_watermark_models
+    Ok(())
+}
+
 #[derive(serde::Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoveResult {
     pub image_base64: String,
     pub device_used: Option<String>,
+    pub watermarks_found: Option<u32>,
+    pub description: Option<String>,
 }
 
 #[tauri::command]
@@ -693,6 +772,7 @@ pub async fn remove_watermark_single(
     image_path: String,
     prompt: Option<String>,
     max_bbox_percent: Option<f64>,
+    auto_unload: Option<bool>,
 ) -> Result<RemoveResult, String> {
     let bridge_arc = watermark_sidecar::ensure_bridge_ready(&app)?;
     let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
@@ -702,28 +782,47 @@ pub async fn remove_watermark_single(
         "path": image_path,
         "max_bbox_percent": max_bbox_percent.unwrap_or(10.0),
         "prompt": prompt.unwrap_or_else(|| "watermark".to_string())
-    }))?;
+    }), Some(&app))?;
 
     if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
         return Err(err.to_string());
     }
 
-    if response.get("status").and_then(|s| s.as_str()) == Some("success") {
+    let result = if response.get("status").and_then(|s| s.as_str()) == Some("success") {
         let base64 = response.get("image_base64").and_then(|s| s.as_str()).ok_or("No image data returned")?;
         let device = response.get("device_used").and_then(|s| s.as_str()).map(|s| s.to_string());
+        let watermarks_found = response.get("num_watermarks").and_then(|v| v.as_u64()).map(|v| v as u32);
+        
+        let description = match watermarks_found {
+            Some(0) => Some("No watermarks detected".to_string()),
+            Some(1) => Some("Removed 1 watermark".to_string()),
+            Some(n) => Some(format!("Removed {n} watermarks")),
+            None => None,
+        };
+
         Ok(RemoveResult {
             image_base64: format!("data:image/png;base64,{base64}"),
             device_used: device,
+            watermarks_found,
+            description,
         })
     } else {
         Err(response.get("message").and_then(|s| s.as_str()).unwrap_or("Skipped").to_string())
+    };
+
+    if auto_unload.unwrap_or(false) {
+        drop(bridge);
+        let _ = watermark_sidecar::stop_bridge();
     }
+
+    result
 }
 
 #[tauri::command]
 pub async fn remove_background_single(
     app: AppHandle,
     image_path: String,
+    auto_unload: Option<bool>,
 ) -> Result<RemoveResult, String> {
     let bridge_arc = watermark_sidecar::get_or_create_bridge(&app)?;
     let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
@@ -731,20 +830,29 @@ pub async fn remove_background_single(
     let response = bridge.send_command(json!({
         "command": "remove_bg",
         "path": image_path
-    }))?;
+    }), Some(&app))?;
 
     if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
         return Err(err.to_string());
     }
 
-    if response.get("status").and_then(|s| s.as_str()) == Some("success") {
+    let result = if response.get("status").and_then(|s| s.as_str()) == Some("success") {
         let base64 = response.get("image_base64").and_then(|s| s.as_str()).ok_or("No image data returned")?;
         let provider = response.get("provider_used").and_then(|s| s.as_str()).map(|s| s.to_string());
         Ok(RemoveResult {
             image_base64: format!("data:image/png;base64,{base64}"),
             device_used: provider,
+            watermarks_found: None,
+            description: Some("Background removed".to_string()),
         })
     } else {
         Err(response.get("message").and_then(|s| s.as_str()).unwrap_or("Background removal failed").to_string())
+    };
+
+    if auto_unload.unwrap_or(false) {
+        drop(bridge);
+        let _ = watermark_sidecar::stop_bridge();
     }
+
+    result
 }

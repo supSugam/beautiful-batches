@@ -1,0 +1,13 @@
+.flip-words-container {
+  display: inline-block;
+  position: relative;
+  min-width: 120px;
+}
+
+.flip-word {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  white-space: nowrap;
+}

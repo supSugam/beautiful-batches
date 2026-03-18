@@ -23,6 +23,7 @@ import Toolbar from './components/Toolbar/Toolbar';
 import MainLayout from './layouts/MainLayout';
 import ExportPlanModal from './components/modals/ExportPlanModal';
 import WatermarkSettingsModal from './components/modals/WatermarkSettingsModal';
+import ProcessingOverlay from './components/common/ProcessingOverlay';
 import useStore from './store/useStore';
 import {
   clearFolderDraft,
@@ -377,6 +378,23 @@ function App() {
     },
     [addImages, clearImages, setSelectedId],
   );
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    const setupListener = async () => {
+      try {
+        unlisten = await listen<string>('watermark-engine-status', (event) => {
+          if (useStore.getState().processingState.isActive) {
+            useStore.getState().setProcessingState({ statusText: event.payload });
+          }
+        });
+      } catch (e) {
+        console.error('Failed to setup engine status listener:', e);
+      }
+    };
+    void setupListener();
+    return () => { if (unlisten) unlisten(); };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1842,6 +1860,8 @@ function App() {
           onClose={() => setWatermarkSettingsOpen(false)}
         />
       )}
+
+      <ProcessingOverlay />
     </div>
   );
 }
