@@ -79,6 +79,7 @@ export interface CropEntry {
   sourceEditHistory?: string[];
   sourceEditHistoryIndex?: number;
   sourceEditOps?: Array<'watermark' | 'background'>;
+  detectionRegion?: WatermarkRegion | null;
 }
 
 export interface RawUploadImage {
@@ -219,11 +220,20 @@ export type WatermarkSidecarStatus = {
   hardwareType: string;
 };
 
+
+export interface WatermarkRegion {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
 export type WatermarkSidecarSettings = {
   useUv: boolean;
   autoUnload: boolean;
   detectionModelId: string;
   inpaintingModelId: string;
+  detectionRegion: WatermarkRegion | null;
 };
 
 export type ProcessingStatus = {
@@ -234,3 +244,65 @@ export type ProcessingStatus = {
   isActive: boolean;
   estimatedTimeRemaining?: number; // In milliseconds
 };
+
+export interface AiProviderSettings {
+  model: string;
+  apiKey: string;
+}
+
+export interface CaptioningSettings {
+  provider: 'google' | 'openai' | 'anthropic' | 'openrouter' | 'custom';
+  google: AiProviderSettings;
+  openai: AiProviderSettings;
+  anthropic: AiProviderSettings;
+  openrouter: AiProviderSettings;
+  custom: {
+    apiKey: string;
+    endpoint: string;
+    customBodyTemplate: string;
+    customHeaders: string;
+    responseField: string;
+    lastResponse: string;
+  };
+  systemPrompt: string;
+}
+
+export type ToastType = 'info' | 'success' | 'error' | 'warning';
+
+export interface Toast {
+  id: string;
+  message: string;
+  type: ToastType;
+  duration?: number;
+}
+
+export interface ApplyCropToImagesOptions {
+  includeCaption?: boolean;
+  captionMode?: 'copy' | 'ai';
+  includeTransforms?: boolean;
+  includeCropState?: boolean;
+  includeUiTweaks?: boolean;
+  includeWatermarkRemoval?: boolean;
+  includeBackgroundRemoval?: boolean;
+  includeDetectionRegion?: boolean;
+}
+
+export interface NativeScannedImage {
+  relative_path: string;
+  file_name: string;
+  absolute_path: string;
+  size: number;
+  accessed_at: number;
+  created_at: number;
+  last_modified: number;
+  width: number;
+  height: number;
+}
+
+export interface NativeRootScan {
+  root_path: string;
+  directory_name: string;
+  images: NativeScannedImage[];
+}
+
+export type AppMode = 'explorer' | 'single-edit' | 'virtual-batch';

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import {
   normalizeStoredCoordinates,
@@ -7,6 +8,7 @@ import {
 import { normalizeCornerRadiusInput, normalizePaddingInput } from '../utils/boxValues';
 import { truncateFilename } from '../utils/textUtils';
 import type {
+  ApplyCropToImagesOptions,
   CornerRadiusValues,
   CropEntry,
   EditorViewState,
@@ -18,6 +20,12 @@ import type {
   RawUploadImage,
   SortOption,
   StoredCoordinates,
+  AiProviderSettings,
+  CaptioningSettings,
+  WatermarkSidecarStatus,
+  WatermarkRegion,
+  Toast,
+  ToastType,
 } from '../types/app';
 
 const yieldToMainThread = () =>
@@ -167,7 +175,10 @@ const getGridRatioSignature = (
 };
 
 const normalizePath = (value: unknown): string =>
-  String(value || '').replace(/\\/g, '/');
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/+$/, '');
 
 const isImageInFolderSubtree = (
   relativePath: string,
@@ -176,6 +187,26 @@ const isImageInFolderSubtree = (
   const normalizedRelativePath = normalizePath(relativePath);
   const normalizedFolderPath = normalizePath(folderPath);
   if (!normalizedRelativePath || !normalizedFolderPath) return false;
+  return (
+    normalizedRelativePath === normalizedFolderPath ||
+    normalizedRelativePath.startsWith(`${normalizedFolderPath}/`)
+  );
+};
+
+const isImageDirectlyInFolder = (
+  relativePath: string,
+  folderPath: string,
+): boolean => {
+  const normalizedRelativePath = normalizePath(relativePath);
+  const normalizedFolderPath = normalizePath(folderPath);
+  if (!normalizedRelativePath || !normalizedFolderPath) return false;
+
+  const relParts = normalizedRelativePath.split('/').filter(Boolean);
+  const folderParts = normalizedFolderPath.split('/').filter(Boolean);
+
+  // For a direct match, the image must be in the folder, so one more part (the filename)
+  if (relParts.length !== folderParts.length + 1) return false;
+
   return normalizedRelativePath.startsWith(`${normalizedFolderPath}/`);
 };
 
@@ -445,14 +476,7 @@ type PersistedDraftPayload = {
   modifiedAtById?: Record<string, number>;
 };
 
-type ApplyCropToImagesOptions = {
-  includeCaption?: boolean;
-  includeTransforms?: boolean;
-  includeCropState?: boolean;
-  includeUiTweaks?: boolean;
-  includeWatermarkRemoval?: boolean;
-  includeBackgroundRemoval?: boolean;
-};
+// ApplyCropToImagesOptions is now imported from ../types/app
 
 export interface UseStoreState {
   images: GalleryImage[];
@@ -460,6 +484,7 @@ export interface UseStoreState {
   captionById: Map<string, string>;
   excludedById: Map<string, boolean>;
   sessionModifiedAt: Map<string, number>;
+  folderLastModified: Map<string, number>;
   cropLayoutVersion: number;
   folderNodes: FolderNode[];
   selectedId: string | null;
@@ -486,6 +511,7 @@ export interface UseStoreState {
   selectNext: () => void;
   selectPrev: () => void;
   setCropChange: (id: string, coords: CropEntry) => void;
+  updateCropEntry: (id: string, updates: Partial<CropEntry>) => void;
   applyCropToImages: (
     sourceId: string,
     targetIds: string[],
@@ -501,6 +527,11 @@ export interface UseStoreState {
   setInspectorWidth: (inspectorWidth: number) => void;
   setExplorerWidth: (explorerWidth: number) => void;
   setSortOption: (sortOption: SortOption) => void;
+  updateFolderLastModified: (path: string, lastModified: number) => void;
+  refreshImagesForFolder: (
+    folderPath: string,
+    newImages: RawUploadImage[],
+  ) => Promise<void>;
   expandedPaths: Set<string>;
   toggleExpandedPath: (path: string) => void;
   setExpandedPaths: (paths: Set<string>) => void;
@@ -510,9 +541,33 @@ export interface UseStoreState {
   setAutoUnload: (autoUnload: boolean) => void;
   processingState: ProcessingStatus;
   setProcessingState: (state: Partial<ProcessingStatus>) => void;
+  settingsModal: {
+    isOpen: boolean;
+    activeTab: SettingsTab;
+  };
+  openSettings: (tab?: SettingsTab) => void;
+  closeSettings: () => void;
+  captioningSettings: CaptioningSettings;
+  setCaptioningSettings: (settings: Partial<CaptioningSettings>) => void;
+  updateProviderSettings: (
+    provider: 'google' | 'openai' | 'anthropic' | 'openrouter' | 'custom',
+    settings: Partial<AiProviderSettings> | Partial<CaptioningSettings['custom']> | any,
+  ) => void;
+  toasts: Toast[];
+  addToast: (message: string, type: ToastType, duration?: number) => void;
+  removeToast: (id: string) => void;
+  isSingleEditMode: boolean;
+  isVirtualBatch: boolean;
+  virtualBatchName: string | null;
+  setSingleEditMode: (active: boolean) => void;
+  setVirtualBatchMode: (active: boolean, name?: string | null) => void;
 }
 
-const useStore = create<UseStoreState>((set, get) => {
+export type SettingsTab = 'engine' | 'captioning' | 'tips';
+
+const useStore = create<UseStoreState>()(
+  persist(
+    (set, get) => {
   const metadataQueue: string[] = [];
   const queuedMetadataIds = new Set<string>();
   const inFlightMetadataIds = new Set<string>();
@@ -698,15 +753,16 @@ const useStore = create<UseStoreState>((set, get) => {
 
   return {
     // --- Global State ---
-    images: [],
+    images: [] as GalleryImage[],
     cropData: new Map<string, CropEntry>(),
     captionById: new Map<string, string>(),
     excludedById: new Map<string, boolean>(),
     sessionModifiedAt: new Map<string, number>(),
+    folderLastModified: new Map<string, number>(),
     cropLayoutVersion: 0,
-    folderNodes: [],
-    rootNames: [],
-    selectedId: null,
+    folderNodes: [] as FolderNode[],
+    rootNames: [] as string[],
+    selectedId: null as string | null,
 
     // --- UI Settings ---
     rowHeight: 250,
@@ -717,7 +773,7 @@ const useStore = create<UseStoreState>((set, get) => {
     explorerWidth: getDefaultExplorerWidth(),
     sortOption: 'last_modified',
     expandedPaths: new Set<string>(),
-    lastUsedHardware: null,
+    lastUsedHardware: null as string | null,
     autoUnload: true,
     processingState: {
       total: 0,
@@ -725,13 +781,102 @@ const useStore = create<UseStoreState>((set, get) => {
       statusText: '',
       isMinimized: false,
       isActive: false,
-      estimatedTimeRemaining: undefined,
+      estimatedTimeRemaining: undefined as number | undefined,
     },
+
+    captioningSettings: {
+      provider: 'google',
+      google: {
+        model: 'gemini-2.0-flash',
+        apiKey: '',
+      },
+      openai: {
+        model: 'gpt-4o-mini',
+        apiKey: '',
+      },
+      anthropic: {
+        model: 'claude-3-5-sonnet-latest',
+        apiKey: '',
+      },
+      openrouter: {
+        model: 'meta-llama/llama-3.2-11b-vision-instruct:free',
+        apiKey: '',
+      },
+      custom: {
+        apiKey: '',
+        endpoint: '',
+        customBodyTemplate: JSON.stringify({
+          model: '{{model}}',
+          messages: [{ role: 'user', content: [
+            { type: 'text', text: '{{prompt}}' },
+            { type: 'image_url', image_url: { url: '{{image}}' } }
+          ]}]
+        }, null, 2),
+        customHeaders: '',
+        responseField: 'choices[0].message.content',
+        lastResponse: '',
+      },
+      systemPrompt:
+        'Generate a concise and accurate caption for this image. Focus on the main subject and key details.',
+    },
+
+    toasts: [] as Toast[],
+    isSingleEditMode: false,
+    isVirtualBatch: false,
+    virtualBatchName: null as string | null,
+
+    setSingleEditMode: (active: boolean) =>
+      set({
+        isSingleEditMode: active,
+        isVirtualBatch: false,
+        virtualBatchName: null,
+      }),
+
+    setVirtualBatchMode: (active: boolean, name: string | null = null) =>
+      set({
+        isVirtualBatch: active,
+        isSingleEditMode: false,
+        virtualBatchName: name,
+      }),
+
+    addToast: (message: string, type: ToastType, duration = 3500) => {
+      const id = Math.random().toString(36).substring(2, 9);
+      set((state) => ({
+        toasts: [...state.toasts, { id, message, type, duration }],
+      }));
+
+      if (duration > 0) {
+        setTimeout(() => {
+          const currentToasts = get().toasts;
+          if (currentToasts.some((t) => t.id === id)) {
+            get().removeToast(id);
+          }
+        }, duration);
+      }
+    },
+
+    removeToast: (id: string) =>
+      set((state) => ({
+        toasts: state.toasts.filter((t) => t.id !== id),
+      })),
 
     // --- Actions ---
 
     setLastUsedHardware: (hardware) => set({ lastUsedHardware: hardware }),
     setAutoUnload: (autoUnload) => set({ autoUnload }),
+
+    setCaptioningSettings: (next) =>
+      set((state) => ({
+        captioningSettings: { ...state.captioningSettings, ...next },
+      })),
+
+    updateProviderSettings: (provider, settings) =>
+      set((state) => ({
+        captioningSettings: {
+          ...state.captioningSettings,
+          [provider]: { ...(state.captioningSettings[provider] as any), ...(settings as any) },
+        },
+      })),
 
     setProcessingState: (next: Partial<ProcessingStatus>) =>
       set((state) => ({
@@ -772,6 +917,9 @@ const useStore = create<UseStoreState>((set, get) => {
           selectedId: nextImages.some((img) => img.id === state.selectedId)
             ? state.selectedId
             : null,
+          isSingleEditMode: false,
+          isVirtualBatch: false,
+          virtualBatchName: null,
         };
       });
 
@@ -795,6 +943,9 @@ const useStore = create<UseStoreState>((set, get) => {
             return {
               rootNames: nextRootNames,
               folderNodes: buildFolderNodes(state.images, nextRootNames),
+              isSingleEditMode: false,
+              isVirtualBatch: false,
+              virtualBatchName: null,
             };
           });
         }
@@ -838,6 +989,9 @@ const useStore = create<UseStoreState>((set, get) => {
             return {
               rootNames: nextRootNames,
               folderNodes: buildFolderNodes(state.images, nextRootNames),
+              isSingleEditMode: false,
+              isVirtualBatch: false,
+              virtualBatchName: null,
             };
           });
         }
@@ -1036,23 +1190,40 @@ const useStore = create<UseStoreState>((set, get) => {
     },
 
     deleteFolder: (folderPath) => {
-      const normalizedFolderPath = String(folderPath || '').replace(/\\/g, '/');
+      const normalizedFolderPath = String(folderPath || '')
+        .replace(/\\/g, '/')
+        .trim();
       if (!normalizedFolderPath) return;
+
       const folderPrefix = normalizedFolderPath.endsWith('/')
         ? normalizedFolderPath
         : `${normalizedFolderPath}/`;
+
       let removedIds: string[] = [];
 
       set((state) => {
-        const nextImages = state.images.filter(
-          (img) =>
-            !img.relativePath.startsWith(folderPrefix) &&
-            img.relativePath !== normalizedFolderPath,
-        );
+        // 1. Remove images associated with this folder (or subfolders)
+        const nextImages = state.images.filter((img) => {
+          const rel = normalizePath(img.relativePath);
+          const abs = normalizePath(img.absolutePath || '');
+          const isMatch =
+            rel === normalizedFolderPath ||
+            rel.startsWith(folderPrefix) ||
+            abs === normalizedFolderPath ||
+            abs.startsWith(folderPrefix);
+          return !isMatch;
+        });
 
-        const nextRootNames = state.rootNames.filter(
-          (name) => name !== normalizedFolderPath,
-        );
+        // 2. Remove from rootNames. 
+        // We check for exact match or if the root name is part of the path.
+        const nextRootNames = state.rootNames.filter((name) => {
+          const normName = normalizePath(name);
+          return (
+            normName !== normalizedFolderPath &&
+            !normalizedFolderPath.endsWith(`/${normName}`) &&
+            !normName.startsWith(folderPrefix)
+          );
+        });
 
         const nextCropData = new Map<string, CropEntry>(state.cropData);
         const nextCaptionById = new Map<string, string>(state.captionById);
@@ -1226,26 +1397,35 @@ const useStore = create<UseStoreState>((set, get) => {
       });
     },
 
-	    applyCropToImages: (sourceId, targetIds, options) => {
-	      const { images, cropData } = get();
-	      const sourceImg = images.find((img) => img.id === sourceId);
-	      if (!sourceImg) return;
+    updateCropEntry: (id, updates) => {
+      set((state) => {
+        const nextCropData = new Map(state.cropData);
+        const prev = nextCropData.get(id) || {};
+        nextCropData.set(id, { ...prev, ...updates });
+        return { cropData: nextCropData };
+      });
+    },
+
+    applyCropToImages: (sourceId, targetIds, options) => {
+      const { images, cropData } = get();
+      const sourceImg = images.find((img) => img.id === sourceId);
+      if (!sourceImg) return;
 
       const sourceRawData = cropData.get(sourceId);
       if (!sourceRawData) return;
-	      const sourceData = normalizeCropEntryForImage(sourceRawData, sourceImg);
-	      const sourceOps = Array.isArray(sourceData?.sourceEditOps)
-	        ? (sourceData.sourceEditOps as Array<'watermark' | 'background'>)
-	        : [];
-	      const shouldIncludeWatermarkRemoval = Boolean(
-	        options?.includeWatermarkRemoval && sourceOps.includes('watermark'),
-	      );
-	      const shouldIncludeBackgroundRemoval = Boolean(
-	        options?.includeBackgroundRemoval && sourceOps.includes('background'),
-	      );
-	      const bulkSourceEditOpsToApply = sourceOps.filter((op) =>
-	        op === 'watermark' ? shouldIncludeWatermarkRemoval : shouldIncludeBackgroundRemoval,
-	      );
+      const sourceData = normalizeCropEntryForImage(sourceRawData, sourceImg);
+      const sourceOps = Array.isArray(sourceData?.sourceEditOps)
+        ? (sourceData.sourceEditOps as Array<'watermark' | 'background'>)
+        : [];
+      const shouldIncludeWatermarkRemoval = Boolean(
+        options?.includeWatermarkRemoval && sourceOps.includes('watermark'),
+      );
+      const shouldIncludeBackgroundRemoval = Boolean(
+        options?.includeBackgroundRemoval && sourceOps.includes('background'),
+      );
+      const bulkSourceEditOpsToApply = sourceOps.filter((op) =>
+        op === 'watermark' ? shouldIncludeWatermarkRemoval : shouldIncludeBackgroundRemoval,
+      );
       const sourceCoordinates = normalizeStoredCoordinates(
         sourceData.coordinates,
       );
@@ -1289,10 +1469,12 @@ const useStore = create<UseStoreState>((set, get) => {
         ? (sourceCoordinates?.height || sourceH) / sourceH
         : 1;
 
+      const shouldApplyAiCaption = Boolean(options?.includeCaption && options?.captionMode === 'ai');
+
       set((state) => {
         const nextCropData = new Map(state.cropData);
         const sourceHasCaptionOverride = state.captionById.has(sourceId);
-        const shouldCopyCaption = Boolean(options?.includeCaption);
+        const shouldCopyCaption = Boolean(options?.includeCaption && options?.captionMode !== 'ai');
         const sourceCaptionOverride = sourceHasCaptionOverride
           ? String(state.captionById.get(sourceId) ?? '')
           : '';
@@ -1305,9 +1487,11 @@ const useStore = create<UseStoreState>((set, get) => {
         const now = getNowTs();
         let shouldBumpLayoutVersion = false;
 
-	        uniqueTargetIds.forEach((id) => {
-	          const targetImg = imagesById.get(id);
-	          if (!targetImg) return;
+        uniqueTargetIds.forEach((id) => {
+          const targetImg = imagesById.get(id);
+          if (!targetImg) return;
+
+          const previousEntry = nextCropData.get(id);
 
           const targetBounds = getRotatedBounds(
             targetImg.naturalWidth,
@@ -1316,8 +1500,6 @@ const useStore = create<UseStoreState>((set, get) => {
           );
           const targetW = Math.max(1, targetBounds.width);
           const targetH = Math.max(1, targetBounds.height);
-
-          const previousEntry = nextCropData.get(id);
 
           const applyTransforms = options?.includeTransforms ?? true;
           const applyCropState = options?.includeCropState ?? true;
@@ -1331,17 +1513,17 @@ const useStore = create<UseStoreState>((set, get) => {
                 flip: { horizontal: false, vertical: false },
               };
 
-	          let mergedEntry: CropEntry = {
-	            ...sourceData,
-	            transforms: baseTransforms,
-	            imageWidth: targetImg.naturalWidth,
-	            imageHeight: targetImg.naturalHeight,
-	          };
-	          // Never copy source-edited pixels across images. Keep the target's own edit history unless
-	          // a bulk edit is explicitly requested (handled asynchronously after this set()).
-	          mergedEntry.sourceEditHistory = previousEntry?.sourceEditHistory;
-	          mergedEntry.sourceEditHistoryIndex = previousEntry?.sourceEditHistoryIndex;
-	          mergedEntry.sourceEditOps = previousEntry?.sourceEditOps;
+          let mergedEntry: CropEntry = {
+            ...sourceData,
+            transforms: baseTransforms,
+            imageWidth: targetImg.naturalWidth,
+            imageHeight: targetImg.naturalHeight,
+          };
+          // Never copy source-edited pixels across images. Keep the target's own edit history unless
+          // a bulk edit is explicitly requested (handled asynchronously after this set()).
+          mergedEntry.sourceEditHistory = previousEntry?.sourceEditHistory;
+          mergedEntry.sourceEditHistoryIndex = previousEntry?.sourceEditHistoryIndex;
+          mergedEntry.sourceEditOps = previousEntry?.sourceEditOps;
 
           // Override Crop/Aspect State
           if (!applyCropState) {
@@ -1368,6 +1550,13 @@ const useStore = create<UseStoreState>((set, get) => {
             mergedEntry.paddingFillValue = previousEntry?.paddingFillValue;
             mergedEntry.paddingImageUrl = previousEntry?.paddingImageUrl;
             mergedEntry.outputWidth = previousEntry?.outputWidth;
+          }
+
+          // Override Detection Region
+          if (!options?.includeDetectionRegion) {
+            mergedEntry.detectionRegion = previousEntry?.detectionRegion;
+          } else {
+            mergedEntry.detectionRegion = sourceData.detectionRegion;
           }
 
           const nextEntry = normalizeCropEntryForImage(mergedEntry, targetImg);
@@ -1408,23 +1597,27 @@ const useStore = create<UseStoreState>((set, get) => {
             ? state.cropLayoutVersion + 1
             : state.cropLayoutVersion,
         };
-	      });
+      });
 
-	      if (bulkSourceEditOpsToApply.length === 0) return;
+      if (bulkSourceEditOpsToApply.length === 0 && !shouldApplyAiCaption) return;
 
-	      // Apply the selected heavy edits (watermark removal / background removal) to each target image.
-	      // Runs in the background; export will reflect results once completed.
-	      void (async () => {
-          const { setProcessingState } = get();
-          setProcessingState({
-            isActive: true,
-            total: uniqueTargetIds.length,
-            current: 0,
-            statusText: '',
-            estimatedTimeRemaining: undefined,
-          });
+      // Apply the selected heavy edits (watermark removal / background removal / AI captioning) to each target image.
+      // Runs in the background; export will reflect results once completed.
+      void (async () => {
+        const { setProcessingState, captioningSettings, addToast } = get();
+        const totalItems = uniqueTargetIds.length;
+        const startTime = Date.now();
+        
+        setProcessingState({
+          isActive: true,
+          total: totalItems,
+          current: 0,
+          statusText: '',
+          estimatedTimeRemaining: undefined,
+        });
 
-          // Phase 1: Waking up the engine / loading models if needed
+        // Phase 1: Waking up the engine / loading models if needed
+        if (bulkSourceEditOpsToApply.length > 0) {
           try {
             const status = await invoke<WatermarkSidecarStatus>('get_watermark_sidecar_status');
             if (!status.isBridgeActive) {
@@ -1437,34 +1630,54 @@ const useStore = create<UseStoreState>((set, get) => {
           } catch (e) {
             console.error('Failed to check initial status:', e);
           }
+        }
 
-          const startTime = Date.now();
-          let currentCount = 0;
-	        for (const id of uniqueTargetIds) {
-	          const img = get().images.find((entry) => entry.id === id);
-	          const absolutePath = String(img?.absolutePath || '').trim();
-	          
-	          if (!img || !absolutePath) {
-              currentCount++;
-              setProcessingState({ current: currentCount });
-              continue;
-            }
+        const providerSettings = captioningSettings[captioningSettings.provider];
+        if (shouldApplyAiCaption && !providerSettings.apiKey) {
+          addToast(`Please configure API key for ${captioningSettings.provider}`, 'warning');
+          setProcessingState({ isActive: false });
+          return;
+        }
 
-            const currentName = img.name || 'image';
+        let currentCount = 0;
+        for (const id of uniqueTargetIds) {
+          const img = get().images.find((entry) => entry.id === id);
+          if (!img) {
+            currentCount++;
+            setProcessingState({ current: currentCount });
+            continue;
+          }
+
+          const absolutePath = String(img.absolutePath || '').trim();
+          const currentName = img.name || 'image';
+          const filename = truncateFilename(currentName, 20);
+
+          // 1. Handle Skip Logic for heavy ops
+          const cropState = get().cropData.get(id);
+          const existingOps = Array.isArray(cropState?.sourceEditOps) ? cropState?.sourceEditOps : [];
+          const opsToRun = bulkSourceEditOpsToApply.filter(op => !existingOps.includes(op));
+
+          // 2. Handle Skip Logic for AI Caption
+          const hasExistingCaption = get().captionById.has(id);
+          const shouldRunAi = shouldApplyAiCaption && !hasExistingCaption;
+
+          if (opsToRun.length === 0 && !shouldRunAi) {
+            currentCount++;
+            setProcessingState({ current: currentCount });
+            continue;
+          }
+
+          // Run heavy physical edits
+          if (opsToRun.length > 0 && absolutePath) {
             const history: string[] = [];
-	          const ops: Array<'watermark' | 'background'> = [];
-	          let lastDeviceUsed: string | undefined;
-
-            const isLastImage = currentCount === uniqueTargetIds.length - 1;
-
-	          for (let opIdx = 0; opIdx < bulkSourceEditOpsToApply.length; opIdx++) {
-              const op = bulkSourceEditOpsToApply[opIdx];
-              const isLastOp = isLastImage && opIdx === bulkSourceEditOpsToApply.length - 1;
+            const ops: Array<'watermark' | 'background'> = [];
+            
+            for (let opIdx = 0; opIdx < opsToRun.length; opIdx++) {
+              const op = opsToRun[opIdx];
+              const isLastOp = currentCount === totalItems - 1 && opIdx === opsToRun.length - 1;
               const shouldAutoUnload = get().autoUnload && isLastOp;
 
-	            try {
-                // Determine natural status message based on the operation
-                const filename = truncateFilename(currentName, 20);
+              try {
                 const statusMsg = op === 'watermark' 
                   ? `Finding watermarks in ${filename}...`
                   : `Removing background from ${filename}...`;
@@ -1475,101 +1688,110 @@ const useStore = create<UseStoreState>((set, get) => {
                 });
                 await yieldToMainThread();
 
-	              if (op === 'watermark') {
-                  // No need for a separate sub-status here, the main one is enough
-                  // and keeps the log less noisy.
-
-	                const result = await invoke<{ imageBase64: string; deviceUsed?: string; description?: string }>(
-	                  'remove_watermark_single',
-	                  { 
+                if (op === 'watermark') {
+                  const result = await invoke<{ imageBase64: string; deviceUsed?: string }>(
+                    'remove_watermark_single',
+                    { 
                       imagePath: absolutePath, 
-                      maxBboxPercent: 10.0,
-                      autoUnload: shouldAutoUnload
+                      maxBboxPercent: 10.0, 
+                      autoUnload: shouldAutoUnload,
+                      detectionRegion: get().cropData.get(id)?.detectionRegion || null
                     },
-	                );
+                  );
+                  history.push(result.imageBase64);
+                  ops.push('watermark');
+                  if (result.deviceUsed) {
+                    try { get().setLastUsedHardware(result.deviceUsed); } catch {}
+                  }
+                } else {
+                  const result = await invoke<{ imageBase64: string; deviceUsed?: string }>(
+                    'remove_background_single',
+                    { imagePath: absolutePath, autoUnload: shouldAutoUnload },
+                  );
+                  history.push(result.imageBase64);
+                  ops.push('background');
+                  if (result.deviceUsed) {
+                    try { get().setLastUsedHardware(result.deviceUsed); } catch {}
+                  }
+                }
+              } catch (e) {
+                console.error(`Failed bulk ${op}:`, e);
+              }
+            }
 
-                  setProcessingState({
-                    current: currentCount,
-                    statusText: `Removed watermarks from ${truncateFilename(currentName, 20)}`,
-                  });
-                  await yieldToMainThread();
+            if (history.length > 0) {
+              set((state) => {
+                const nextCropData = new Map(state.cropData);
+                const current = nextCropData.get(id) || {};
+                nextCropData.set(id, {
+                  ...current,
+                  sourceEditHistory: history,
+                  sourceEditHistoryIndex: history.length - 1,
+                  sourceEditOps: ops,
+                });
+                return { cropData: nextCropData };
+              });
+            }
+          }
 
-	                history.push(result.imageBase64);
-	                ops.push('watermark');
-	                lastDeviceUsed = result.deviceUsed;
-	              } else {
-                  // No need for a separate sub-status here
+          // Run AI Captioning
+          if (shouldRunAi && absolutePath) {
+            try {
+              setProcessingState({ 
+                current: currentCount, 
+                statusText: `Generating caption for ${filename}...` 
+              });
+              await yieldToMainThread();
 
-	                const result = await invoke<{ imageBase64: string; deviceUsed?: string; description?: string }>(
-	                  'remove_background_single',
-	                  { 
-                      imagePath: absolutePath,
-                      autoUnload: shouldAutoUnload 
-                    },
-	                );
+              const result = await invoke<string>('generate_ai_caption', {
+                imagePath: absolutePath,
+                provider: captioningSettings.provider,
+                model: 'model' in providerSettings ? providerSettings.model : '',
+                apiKey: providerSettings.apiKey,
+                systemPrompt: captioningSettings.systemPrompt,
+              });
 
-                  setProcessingState({
-                    current: currentCount,
-                    statusText: `Removed background from ${truncateFilename(currentName, 20)}`,
-                  });
-                  await yieldToMainThread();
+              if (result) {
+                get().setCaptionForImage(id, result);
+              }
 
-	                history.push(result.imageBase64);
-	                ops.push('background');
-	                lastDeviceUsed = result.deviceUsed;
-	              }
-	            } catch (error) {
-	              console.error(`Bulk ${op} failed for image ${id}:`, error);
-	              break;
-	            }
-	            await yieldToMainThread();
-	          }
+              // Apply RPM delay to avoid rate limits
+              // Small delay of 800ms between calls
+              await new Promise(r => setTimeout(r, 800));
+            } catch (e) {
+              console.error(`Failed bulk AI caption for ${id}:`, e);
+            }
+          }
 
-	          if (lastDeviceUsed) {
-	            try {
-	              get().setLastUsedHardware(lastDeviceUsed);
-	            } catch {}
-	          }
+          currentCount++;
+          
+          // ETA Calculation
+          const elapsed = Date.now() - startTime;
+          const avgTimePerImage = elapsed / currentCount;
+          const remainingImages = totalItems - currentCount;
+          const eta = remainingImages * avgTimePerImage;
 
-	          if (history.length > 0) {
-	            const previousEntry = get().cropData.get(id) || {};
-	            get().setCropChange(id, {
-	              ...previousEntry,
-	              sourceEditHistory: history,
-	              sourceEditHistoryIndex: history.length - 1,
-	              sourceEditOps: ops,
-	            });
-	          }
+          setProcessingState({ 
+            current: currentCount,
+            estimatedTimeRemaining: eta
+          });
+          await yieldToMainThread();
+        }
 
-	          currentCount++;
-            
-            // ETA Calculation
-            const elapsed = Date.now() - startTime;
-            const avgTimePerImage = elapsed / currentCount;
-            const remainingImages = uniqueTargetIds.length - currentCount;
-            const eta = remainingImages * avgTimePerImage;
+        setProcessingState({ 
+          statusText: 'All bulk operations completed',
+          estimatedTimeRemaining: 0,
+        });
 
-	          setProcessingState({ 
-              current: currentCount,
-              estimatedTimeRemaining: eta
-            });
-	          await yieldToMainThread();
-	        }
-
-	        setProcessingState({
-	          statusText: 'All bulk operations completed',
-            estimatedTimeRemaining: 0,
-	        });
-
-	        // Auto-hide after a short delay if not minimized
-	        setTimeout(() => {
-	          const finalState = get().processingState;
-	          if (!finalState.isMinimized) {
-	            setProcessingState({ isActive: false });
-	          }
-	        }, 2000);
-	      })();
-	    },
+        // Auto-hide after a short delay if not minimized
+        setTimeout(() => {
+          const finalState = get().processingState;
+          if (!finalState.isMinimized) {
+            setProcessingState({ isActive: false });
+          }
+        }, 2000);
+      })();
+    },
 
     setCaptionForImage: (id: string, caption: string) => {
       set((state) => {
@@ -1768,6 +1990,71 @@ const useStore = create<UseStoreState>((set, get) => {
             ? sortOption
             : 'last_modified',
       }),
+    
+    updateFolderLastModified: (path, lastModified) => {
+      set((state) => {
+        const next = new Map(state.folderLastModified);
+        next.set(normalizePath(path), lastModified);
+        return { folderLastModified: next };
+      });
+    },
+
+    refreshImagesForFolder: async (folderPath, rawNewImages) => {
+      const normalizedFolderPath = normalizePath(folderPath);
+      if (!normalizedFolderPath) return;
+
+      const newImages = await buildImageShells(rawNewImages);
+      const newImageIds = new Set(newImages.map((img) => img.id));
+      const nextImageIdsForHydration = newImages
+        .filter((img) => !img.dimensionsLoaded)
+        .map((img) => img.id);
+
+      set((state) => {
+        const currentImages = state.images;
+        
+        // 1. Remove old images that were in this folder but are gone now
+        const filteredCurrent = currentImages.filter((img) => {
+          const imgPath = normalizePath(img.relativePath);
+          // Only reconcile images that are DIRECTLY in this folder (matching the non-recursive scan)
+          const inScope = isImageDirectlyInFolder(imgPath, normalizedFolderPath);
+          if (inScope) {
+            // Keep it only if it's in the new set
+            const exists = newImageIds.has(img.id);
+            if (!exists) {
+              revokeImageObjectUrl(img);
+              return false;
+            }
+          }
+          return true;
+        });
+
+        // 2. Map existing images for quick lookup
+        const imagesById = new Map(filteredCurrent.map((img) => [img.id, img] as const));
+
+        // 3. Update existing or add new
+        const finalImages = [...filteredCurrent];
+        newImages.forEach((newImg) => {
+          if (imagesById.has(newImg.id)) {
+            // Update existing image metadata if needed (though usually we trust our store's dimension cache)
+            // For now, let's just keep the existing one to avoid flickering/reloading
+            return;
+          }
+          finalImages.push(newImg);
+        });
+
+        return {
+          images: finalImages,
+          folderNodes: buildFolderNodes(finalImages, state.rootNames),
+          selectedId: finalImages.some((img) => img.id === state.selectedId)
+            ? state.selectedId
+            : null,
+        };
+      });
+
+      if (nextImageIdsForHydration.length > 0) {
+        queueImageMetadataHydration(nextImageIdsForHydration);
+      }
+    },
 
     // Expanded Paths
     toggleExpandedPath: (path) =>
@@ -1781,7 +2068,44 @@ const useStore = create<UseStoreState>((set, get) => {
         return { expandedPaths: next };
       }),
     setExpandedPaths: (expandedPaths) => set({ expandedPaths }),
-  };
-});
+    settingsModal: {
+      isOpen: false,
+      activeTab: 'engine',
+    },
+    openSettings: (tab = 'engine') =>
+      set((state) => ({
+        settingsModal: { isOpen: true, activeTab: tab },
+      })),
+    closeSettings: () =>
+      set((state) => ({
+        settingsModal: { ...state.settingsModal, isOpen: false },
+      })),
+    };
+  },
+  {
+      name: 'beautiful-batches-settings',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        rowHeight: state.rowHeight,
+        format: state.format,
+        quality: state.quality,
+        showAllFooters: state.showAllFooters,
+        inspectorWidth: state.inspectorWidth,
+        explorerWidth: state.explorerWidth,
+        sortOption: state.sortOption,
+        lastUsedHardware: state.lastUsedHardware,
+        autoUnload: state.autoUnload,
+        captioningSettings: {
+          ...state.captioningSettings,
+          google: { ...(state.captioningSettings.google || {}), apiKey: '' },
+          openai: { ...(state.captioningSettings.openai || {}), apiKey: '' },
+          anthropic: { ...(state.captioningSettings.anthropic || {}), apiKey: '' },
+          openrouter: { ...(state.captioningSettings.openrouter || {}), apiKey: '' },
+          custom: { ...(state.captioningSettings.custom || {}), apiKey: '', lastResponse: '' },
+        },
+      }),
+    }
+  )
+);
 
 export default useStore;

@@ -2,72 +2,43 @@
   position: relative;
   isolation: isolate;
   contain: layout paint;
-  background: var(--bg-surface);
-  border-radius: var(--radius-ui);
-  overflow: hidden;
-  transition: box-shadow var(--transition-spring), background var(--transition-spring);
   cursor: pointer;
   user-select: none;
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.image-card:active {
+  transform: scale(0.97);
 }
 
 .image-card.selected {
-  box-shadow: 0 0 0 2px var(--accent-dim), var(--shadow-glow);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  z-index: 10;
 }
 
 .image-card.is-excluded {
-  opacity: 0.42;
-  cursor: default;
+  opacity: 0.3;
+  filter: grayscale(1);
 }
 
 .card-preview {
   position: relative;
   width: 100%;
-  background-color: var(--bg-base);
+  background-color: var(--bg-surface);
   overflow: hidden;
-  border-radius: var(--radius-ui);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background-clip: content-box;
 }
 
-.preview-padding-shell {
-  position: absolute;
-  inset: 0;
-  box-sizing: border-box;
-}
-
-.preview-padding-content {
+.preview-content-root {
   width: 100%;
   height: 100%;
-  position: relative;
-  overflow: hidden;
 }
 
-.preview-image {
-  width: 100%;
-  height: 100%;
+.card-skeleton {
   position: absolute;
   inset: 0;
-  display: block;
-  object-fit: cover;
-}
-
-.preview-image--fallback {
   z-index: 1;
-}
-
-.preview-image--canvas {
-  z-index: 2;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.preview-image--canvas.visible {
-  opacity: 1;
-}
-
-.preview-image--fallback.hidden {
-  opacity: 0;
 }
 
 .card-overlay {
@@ -78,12 +49,28 @@
   bottom: 0;
   z-index: 40;
   background: rgba(0, 0, 0, 0);
-  transition: background 0.2s ease;
+  transition: background 0.4s ease;
   pointer-events: none;
 }
 
 .image-card:hover .card-overlay {
-  background: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* Premium Image Loading Animation */
+.image-card img {
+  opacity: 0;
+  transform: scale(1.04);
+  filter: blur(4px);
+  transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1), 
+              transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1),
+              filter 0.6s ease;
+}
+
+.image-card.is-loaded img {
+  opacity: 1;
+  transform: scale(1);
+  filter: blur(0);
 }
 
 .card-overlay button {
@@ -92,49 +79,47 @@
 
 .card-delete {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 12px;
+  right: 12px;
   z-index: 41;
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: scale(0.85);
   opacity: 0;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.image-card:hover .card-delete {
+.image-card:hover .card-delete,
+.image-card.is-excluded .card-delete {
   opacity: 1;
+  transform: scale(1);
 }
 
 .card-delete:hover {
-  background: var(--danger);
+  background: rgba(0, 0, 0, 0.6);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
 }
 
-.image-card.is-excluded .card-overlay {
-  background: rgba(18, 18, 18, 0.26);
-}
-
+/* Using a more subtle red for restoration if desired, but keeping it premium */
 .image-card.is-excluded .card-delete {
+  background: var(--accent);
   opacity: 1;
-  background: rgba(129, 140, 248, 0.26);
-  color: rgba(255, 255, 255, 0.95);
-}
-
-.image-card.is-excluded .card-delete:hover,
-.card-delete.is-restore:hover {
-  background: rgba(129, 140, 248, 0.44);
+  transform: scale(1);
 }
 
 .selection-badge {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 12px;
+  left: 12px;
   z-index: 41;
   width: 22px;
   height: 22px;
@@ -144,12 +129,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--shadow-sm);
-  border: 2px solid var(--bg-surface);
-  animation: slideIn 0.3s var(--transition-spring);
-}
-
-@keyframes slideIn {
-  from { transform: scale(0) rotate(-45deg); opacity: 0; }
-  to { transform: scale(1) rotate(0); opacity: 1; }
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border: 1.5px solid white;
 }

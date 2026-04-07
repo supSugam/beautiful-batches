@@ -1,11 +1,16 @@
-.justified-grid-container {
-  direction: ltr;
+.masonry-grid-container {
   padding: 12px;
   box-sizing: border-box;
-  overflow-x: hidden;
 }
 
-.justified-grid-container .react-photo-album--rows,
-.justified-grid-container .react-photo-album--track {
-  direction: ltr;
+/* Hide scrollbars for a cleaner "pure image" look if desired, 
+   but standard ones are safer for usability. 
+   We'll just make sure the container doesn't have extra padding or borders. */
+.masonry-grid-container div[data-virtuoso-scroller] {
+  scrollbar-gutter: stable;
+}
+
+/* Ensure no clipping on the virtuoso container itself */
+.masonry-grid-container [data-test-id="virtuoso-item-list"] {
+  padding-bottom: 40px !important;
 }

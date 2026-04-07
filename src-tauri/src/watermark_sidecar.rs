@@ -85,7 +85,7 @@ fn sidecar_base_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(sidecar_dir)
 }
 
-fn get_repo_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub fn get_repo_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(sidecar_base_dir(app)?.join(REPO_DIR_NAME))
 }
 

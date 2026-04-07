@@ -1,3 +1,4 @@
+use keyring::Entry;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -15,7 +16,8 @@ use crate::models::{
     PickAndScanRootResult, ProcessBulkExportResult,
 };
 use crate::scanner::{
-    list_directory_children, scan_folder_by_path, scan_single_image_path, scan_single_root,
+    list_directory_children, scan_folder_by_path, scan_multiple_paths, scan_single_image_path,
+    scan_single_root, to_unix_timestamp_seconds,
 };
 use crate::storage;
 use crate::watermark_sidecar;
@@ -53,6 +55,44 @@ fn spawn_detached(command: &str, args: &[&str]) -> Result<(), String> {
     cmd.spawn()
         .map(|_| ())
         .map_err(|error| format!("{command}: {error}"))
+}
+
+#[tauri::command]
+pub fn is_directory(path: String) -> bool {
+    Path::new(&path).is_dir()
+}
+
+#[tauri::command]
+pub fn get_git_info(app: AppHandle) -> serde_json::Value {
+    let repo_path = match crate::watermark_sidecar::get_repo_path(&app) {
+        Ok(p) => p,
+        Err(_) => return serde_json::json!({ "hash": "unknown", "date": "0" }),
+    };
+
+    if !repo_path.join(".git").exists() {
+        return serde_json::json!({ "hash": "unknown", "date": "0" });
+    }
+
+    let commit_hash = Command::new("git")
+        .args(&["-C", repo_path.to_str().unwrap(), "rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let commit_date = Command::new("git")
+        .args(&["-C", repo_path.to_str().unwrap(), "log", "-1", "--format=%ct"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "0".to_string());
+
+    serde_json::json!({
+        "hash": commit_hash,
+        "date": commit_date
+    })
 }
 
 fn inflate_zlib_bytes(data: &[u8]) -> Option<Vec<u8>> {
@@ -519,6 +559,48 @@ pub async fn scan_folder_by_path_command(
     .map_err(|error| format!("Scan folder task failed: {error}"))?
 }
 
+/// Get the last modified timestamp of a folder in seconds.
+#[tauri::command]
+pub async fn get_folder_last_modified(folder_path: String) -> Result<u64, String> {
+    let normalized = folder_path.trim().to_string();
+    if normalized.is_empty() {
+        return Err("Folder path is empty".to_string());
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&normalized);
+        if !path.exists() || !path.is_dir() {
+            return Err(format!("Folder path is not an accessible directory: {normalized}"));
+        }
+
+        let metadata = std::fs::metadata(path)
+            .map_err(|error| format!("Failed to read folder metadata: {error}"))?;
+        
+        Ok(to_unix_timestamp_seconds(metadata.modified()))
+    })
+    .await
+    .map_err(|error| format!("Folder metadata task failed: {error}"))?
+}
+
+/// Scan a list of arbitrary paths (directories or individual image files).
+#[tauri::command]
+pub async fn scan_paths(
+    paths: Vec<String>,
+    root_name: Option<String>,
+) -> Result<crate::models::NativeRootScan, String> {
+    if paths.is_empty() {
+        return Err("No paths provided".to_string());
+    }
+
+    let path_bufs: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+
+    tokio::task::spawn_blocking(move || -> Result<crate::models::NativeRootScan, String> {
+        scan_multiple_paths(path_bufs, root_name.as_deref())
+    })
+    .await
+    .map_err(|error| format!("Scan paths task failed: {error}"))?
+}
+
 /// List immediate child directories for a root/tail path (non-recursive).
 #[tauri::command]
 pub async fn list_directory_children_by_path(
@@ -599,6 +681,13 @@ pub async fn clear_saved_roots(app: AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Add a specific root path manually (e.g. via drag and drop).
+#[tauri::command]
+pub async fn add_root_path(app: AppHandle, root_path: String) -> Result<Vec<String>, String> {
+    let result = storage::add_root_path(&app, &root_path)?;
+    Ok(result.saved_paths)
+}
+
 /// Process a bulk image export: read images from disk, apply transforms, and
 /// return a base64-encoded ZIP archive.
 #[tauri::command]
@@ -644,7 +733,7 @@ pub async fn open_external_url(url: String) -> Result<(), String> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        return spawn_detached("xdg-open", &[url_ref])
+        return spawn_detached("xdg-open", &[url_ref][..])
             .map_err(|error| format!("Failed to open URL: {error}"));
     }
 }
@@ -746,12 +835,12 @@ pub async fn load_watermark_models(
 }
 
 #[tauri::command]
-pub async fn stop_watermark_models(app: AppHandle) -> Result<(), String> {
+pub async fn stop_watermark_models(_app: AppHandle) -> Result<(), String> {
     watermark_sidecar::stop_bridge()
 }
 
 #[tauri::command]
-pub async fn restart_watermark_bridge(app: AppHandle) -> Result<(), String> {
+pub async fn restart_watermark_bridge(_app: AppHandle) -> Result<(), String> {
     let _ = watermark_sidecar::stop_bridge();
     // Bridge will be auto-recreated on next use or can be triggered via load_watermark_models
     Ok(())
@@ -773,6 +862,7 @@ pub async fn remove_watermark_single(
     prompt: Option<String>,
     max_bbox_percent: Option<f64>,
     auto_unload: Option<bool>,
+    detection_region: Option<crate::models::WatermarkRegion>,
 ) -> Result<RemoveResult, String> {
     let bridge_arc = watermark_sidecar::ensure_bridge_ready(&app)?;
     let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
@@ -781,7 +871,8 @@ pub async fn remove_watermark_single(
         "command": "process",
         "path": image_path,
         "max_bbox_percent": max_bbox_percent.unwrap_or(10.0),
-        "prompt": prompt.unwrap_or_else(|| "watermark".to_string())
+        "prompt": prompt.unwrap_or_else(|| "watermark".to_string()),
+        "region": detection_region.map(|r| vec![r.x1, r.y1, r.x2, r.y2])
     }), Some(&app))?;
 
     if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
@@ -855,4 +946,54 @@ pub async fn remove_background_single(
     }
 
     result
+}
+
+#[tauri::command]
+pub async fn generate_ai_caption(
+    image_path: String,
+    provider: String,
+    model: String,
+    api_key: String,
+    system_prompt: String,
+    endpoint: Option<String>,
+    custom_body_template: Option<String>,
+    custom_headers: Option<String>,
+    response_field: Option<String>,
+) -> Result<crate::ai_captioning::CaptionResult, String> {
+    crate::ai_captioning::generate(crate::ai_captioning::CaptionRequest {
+        image_path,
+        provider,
+        model,
+        api_key,
+        system_prompt,
+        endpoint,
+        custom_body_template,
+        custom_headers,
+        response_field,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn save_secure_api_key(provider: String, key: String) -> Result<(), String> {
+    let service = "beautiful-batches-ai-keys";
+    let entry = Entry::new(service, &provider).map_err(|e| e.to_string())?;
+    
+    if key.is_empty() {
+        let _ = entry.delete_password();
+    } else {
+        entry.set_password(&key).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_secure_api_key(provider: String) -> Result<String, String> {
+    let service = "beautiful-batches-ai-keys";
+    let entry = Entry::new(service, &provider).map_err(|e| e.to_string())?;
+    match entry.get_password() {
+        Ok(key) => Ok(key),
+        Err(keyring::Error::NoEntry) => Ok("".to_string()),
+        Err(e) => Err(e.to_string()),
+    }
 }

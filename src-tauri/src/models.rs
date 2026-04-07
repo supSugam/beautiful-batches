@@ -216,3 +216,11 @@ pub struct WatermarkModelStatus {
     pub expected_size_bytes: u64,
     pub model_type: String, // "detection" or "inpainting"
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct WatermarkRegion {
+    pub x1: f64,
+    pub y1: f64,
+    pub x2: f64,
+    pub y2: f64,
+}

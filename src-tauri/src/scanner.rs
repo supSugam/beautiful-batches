@@ -4,7 +4,6 @@ use std::time::UNIX_EPOCH;
 
 use crate::helpers::{is_supported_image_path, normalize_path_for_ui};
 use crate::models::{NativeDirectoryChild, NativeRootScan, NativeScannedImage};
-use image::image_dimensions;
 
 /// Collect supported image file paths under `directory`.
 fn collect_image_paths(directory: &Path, collector: &mut Vec<PathBuf>) {
@@ -47,33 +46,7 @@ fn collect_image_paths_direct(directory: &Path, collector: &mut Vec<PathBuf>) {
     }
 }
 
-/// Return true as soon as any supported image file is found under `directory`
-/// (including all descendants).
-fn contains_supported_image_recursive(directory: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return false;
-    };
-
-    for entry_result in entries {
-        let Ok(entry) = entry_result else {
-            continue;
-        };
-        let path = entry.path();
-        if path.is_file() {
-            if is_supported_image_path(&path) {
-                return true;
-            }
-            continue;
-        }
-        if path.is_dir() && contains_supported_image_recursive(&path) {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn to_unix_timestamp_seconds(value: Result<std::time::SystemTime, std::io::Error>) -> u64 {
+pub fn to_unix_timestamp_seconds(value: Result<std::time::SystemTime, std::io::Error>) -> u64 {
     value
         .ok()
         .and_then(|timestamp| timestamp.duration_since(UNIX_EPOCH).ok())
@@ -94,8 +67,11 @@ fn read_image_metadata(file_path: &Path) -> Option<(u64, u64, u64, u64, u32, u32
     let created_at = to_unix_timestamp_seconds(metadata.created());
     let last_modified = to_unix_timestamp_seconds(metadata.modified());
 
-    // Header-only parse for image dimensions; fails for corrupt/truncated files.
-    let (width, height) = image_dimensions(file_path).ok()?;
+    // Use ImageReader with format guessing to handle cases where extension doesn't match content 
+    // (e.g., JPEG renamed to .png).
+    let reader = image::ImageReader::open(file_path).ok()?.with_guessed_format().ok()?;
+    let (width, height) = reader.into_dimensions().ok()?;
+    
     if width == 0 || height == 0 {
         return None;
     }
@@ -295,9 +271,6 @@ pub fn list_directory_children(
         if !path.is_dir() {
             continue;
         }
-        if !contains_supported_image_recursive(&path) {
-            continue;
-        }
 
         let name = entry.file_name().to_string_lossy().to_string();
         if name.trim().is_empty() {
@@ -437,5 +410,72 @@ pub fn scan_folder_by_path(
         root_path: normalize_path_for_ui(&canonical_root),
         directory_name,
         images,
+    })
+}
+
+/// Scan a list of paths (directories or files) and return them as a single root scan.
+/// Directories are scanned recursively.
+pub fn scan_multiple_paths(
+    paths: Vec<PathBuf>,
+    root_name_override: Option<&str>,
+) -> Result<NativeRootScan, String> {
+    if paths.is_empty() {
+        return Ok(NativeRootScan {
+            root_path: String::new(),
+            directory_name: root_name_override.unwrap_or("Dropped Files").to_string(),
+            images: Vec::new(),
+        });
+    }
+
+    let mut all_images = Vec::new();
+    let root_name = root_name_override.unwrap_or("Dropped Files").to_string();
+
+    for path in &paths {
+        if !path.exists() {
+            continue;
+        }
+
+        if path.is_dir() {
+            // If it's a directory, scan it recursively
+            if let Ok(scan) = scan_single_root(&path) {
+                all_images.extend(scan.images);
+            }
+        } else if path.is_file() && is_supported_image_path(&path) {
+            // If it's a single image file
+            let canonical_file = fs::canonicalize(&path).unwrap_or_else(|_| path.to_path_buf());
+            let file_name = canonical_file
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("image")
+                .to_string();
+
+            if let Some((size, accessed_at, created_at, last_modified, width, height)) =
+                read_image_metadata(&canonical_file)
+            {
+                all_images.push(NativeScannedImage {
+                    relative_path: normalize_path_for_ui(&Path::new(&root_name).join(&file_name)),
+                    file_name,
+                    absolute_path: normalize_path_for_ui(&canonical_file),
+                    size,
+                    accessed_at,
+                    created_at,
+                    last_modified,
+                    width,
+                    height,
+                });
+            }
+        }
+    }
+
+    // Use the first path's parent as root_path for lack of a better consolidated root
+    let root_path = paths[0]
+        .parent()
+        .map(|p| normalize_path_for_ui(p))
+        .unwrap_or_default();
+
+    Ok(NativeRootScan {
+        root_path,
+        directory_name: root_name,
+        images: all_images,
     })
 }

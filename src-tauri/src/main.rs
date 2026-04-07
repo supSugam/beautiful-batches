@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod clipboard;
 mod commands;
 mod helpers;
 mod image_processing;
@@ -8,6 +9,7 @@ mod scanner;
 mod storage;
 mod thumbnails;
 mod watermark_sidecar;
+mod ai_captioning;
 
 #[cfg(target_os = "macos")]
 use crate::helpers::is_supported_image_path;
@@ -42,6 +44,7 @@ fn load_app_icon() -> Option<tauri::image::Image<'static>> {
 
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             // Ensure we have a cache dir ready
             let _ = app.path().app_cache_dir();
@@ -140,8 +143,11 @@ fn main() {
             commands::reveal_file_in_file_explorer,
             commands::read_image_embedded_metadata,
             commands::scan_root_by_path,
+            commands::scan_paths,
+            commands::is_directory,
             commands::scan_folder_by_path_command,
             commands::list_directory_children_by_path,
+            commands::add_root_path,
             commands::remove_saved_root,
             commands::clear_saved_roots,
             commands::get_watermark_sidecar_status,
@@ -156,6 +162,13 @@ fn main() {
             commands::remove_background_single,
             commands::open_external_url,
             commands::get_detailed_system_info,
+            commands::get_folder_last_modified,
+            commands::generate_ai_caption,
+            commands::save_secure_api_key,
+            commands::get_secure_api_key,
+            commands::get_git_info,
+            clipboard::read_clipboard_image,
+            clipboard::has_clipboard_image,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

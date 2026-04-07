@@ -59,13 +59,22 @@ pub fn get_or_create_thumbnail(
 
     let thumb_path = cache_dir.join(format!("{:x}.webp", hash));
 
-    // If cached version exists, return it.
+    // If cached version exists, return it (unless it's a tiny placeholder we should try to refresh).
     if thumb_path.exists() {
-        return fs::read(&thumb_path).map_err(|e| format!("Failed to read cached thumb: {}", e));
+        if let Ok(meta) = fs::metadata(&thumb_path) {
+            if meta.len() > 150 {
+                return fs::read(&thumb_path).map_err(|e| format!("Failed to read cached thumb: {}", e));
+            }
+        }
     }
 
     // Otherwise, generate new thumbnail.
-    let img = match image::open(image_path) {
+    // Use ImageReader with format guessing to handle cases where extension doesn't match content.
+    let img = match image::ImageReader::open(image_path)
+        .and_then(|r| r.with_guessed_format())
+        .map_err(|e| e.to_string())
+        .and_then(|r| r.decode().map_err(|e| e.to_string()))
+    {
         Ok(decoded) => decoded,
         Err(_) => {
             // Gracefully handle corrupt/truncated files by caching a tiny placeholder.

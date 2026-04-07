@@ -4,6 +4,7 @@ import { JustifiedGrid } from '../components/JustifiedGrid';
 import { Inspector } from '../components/Inspector';
 import FolderExplorer from '../components/FolderExplorer';
 import type {
+  ApplyCropToImagesOptions,
   CropEntry,
   FolderNode,
   GalleryImage,
@@ -12,14 +13,6 @@ import type {
 import './MainLayout.css';
 
 type ApplyTargetType = 'all' | 'rest' | 'prev';
-type ApplyOptions = {
-  includeCaption?: boolean;
-  includeTransforms?: boolean;
-  includeCropState?: boolean;
-  includeUiTweaks?: boolean;
-  includeWatermarkRemoval?: boolean;
-  includeBackgroundRemoval?: boolean;
-};
 
 type MainLayoutProps = {
   images: GalleryImage[];
@@ -41,7 +34,7 @@ type MainLayoutProps = {
   handleApplyCropToImages: (
     sourceId: string,
     targetIds: string[],
-    options?: ApplyOptions,
+    options?: ApplyCropToImagesOptions,
   ) => void;
   explorerOpen: boolean;
   folderNodes: FolderNode[];
@@ -61,6 +54,9 @@ type MainLayoutProps = {
   onSetFolderSelectionMode?: (value: boolean) => void;
   onSetSelectedFolderPaths?: (paths: Set<string>) => void;
   inspectorMode: InspectorMode;
+  isSingleEditMode?: boolean;
+  isVirtualBatch?: boolean;
+  virtualBatchName?: string;
 };
 
 const MainLayout = ({
@@ -98,6 +94,9 @@ const MainLayout = ({
   onSetFolderSelectionMode,
   onSetSelectedFolderPaths,
   inspectorMode,
+  isSingleEditMode = false,
+  isVirtualBatch = false,
+  virtualBatchName = '',
 }: MainLayoutProps) => {
   const navigableImages = images.filter((img) => !excludedById.has(img.id));
   const selectedImage =
@@ -123,6 +122,8 @@ const MainLayout = ({
         selectedFolderPaths={selectedFolderPaths}
         onSetFolderSelectionMode={onSetFolderSelectionMode}
         onSetSelectedFolderPaths={onSetSelectedFolderPaths}
+        isVirtualBatch={isVirtualBatch}
+        virtualBatchName={virtualBatchName}
       />
 
       <div className="image-grid-scroll">
@@ -137,6 +138,7 @@ const MainLayout = ({
             onDelete={handleDelete}
             onRestore={handleRestore}
             onEndReached={onLoadMoreImages}
+            isSingleEditMode={isSingleEditMode}
           />
         ) : isActiveFolderLoading ? (
           <div className="grid-empty-state">
@@ -163,11 +165,9 @@ const MainLayout = ({
             onCropChange={handleCropChange}
             onClose={() => setSelectedId(null)}
             onDelete={handleDelete}
-            onNext={selectNext}
-            onPrev={selectPrev}
             width={inspectorWidth}
             onResize={setInspectorWidth}
-            onApplyTo={(type: ApplyTargetType, options?: ApplyOptions) => {
+            onApplyTo={(type: ApplyTargetType, options?: ApplyCropToImagesOptions) => {
               const idx = navigableImages.findIndex(
                 (img) => img.id === selectedId,
               );
@@ -182,18 +182,18 @@ const MainLayout = ({
                   .slice(idx + 1)
                   .map((img) => img.id);
               } else if (type === 'prev') {
-                targets = navigableImages.slice(0, idx).map((img) => img.id);
+                targets = navigableImages
+                  .slice(0, Math.max(0, idx))
+                  .map((img) => img.id);
               }
               handleApplyCropToImages(selectedId, targets, options);
             }}
-            hasNext={
-              navigableImages.findIndex((img) => img.id === selectedId) <
-              navigableImages.length - 1
-            }
-            hasPrev={
-              navigableImages.findIndex((img) => img.id === selectedId) > 0
-            }
             mode={inspectorMode}
+            hasNext={selectNext !== undefined}
+            hasPrev={selectPrev !== undefined}
+            onNext={selectNext}
+            onPrev={selectPrev}
+            isSingleEditMode={isSingleEditMode}
           />
         )}
       </AnimatePresence>

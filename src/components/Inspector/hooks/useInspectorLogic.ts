@@ -364,6 +364,7 @@ export function useInspectorLogic({
         imagePath: image.absolutePath,
         maxBboxPercent: 10.0,
         autoUnload: useStore.getState().autoUnload,
+        detectionRegion: useStore.getState().detectionRegion,
       });
       console.log('Result received, updating history. Hardware used:', result.deviceUsed);
       if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);

@@ -75,14 +75,24 @@ body {
   background-position: 0 0, calc(var(--checker-size) / 2) calc(var(--checker-size) / 2);
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.08);
-  border-radius: 3px;
+/* Premium Custom Scrollbar */
+::-webkit-scrollbar { 
+  width: 8px; 
+  height: 8px; 
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+::-webkit-scrollbar-track { 
+  background: rgba(0, 0, 0, 0.2); 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(129, 140, 248, 0.25);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { 
+  background: rgba(129, 140, 248, 0.45); 
+}
 
 button { cursor: pointer; font-family: var(--font); }
 input, select { font-family: var(--font); }

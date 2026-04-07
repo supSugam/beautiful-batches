@@ -7,37 +7,9 @@ import { normalizeStoredCoordinates } from '../utils/cropCoordinates';
 import type { GalleryImage } from '../types/app';
 import './JustifiedGrid.css';
 
-const THUMB_SIZE_BUCKETS = [192, 256, 320, 384, 512, 640];
-
 const resolveThumbnailSize = (targetRowHeight: number): number => {
-  const dpr =
-    typeof window === 'undefined'
-      ? 1
-      : Math.max(1, Number(window.devicePixelRatio || 1));
-  const requested = Math.max(
-    THUMB_SIZE_BUCKETS[0],
-    Math.round(Math.max(1, Number(targetRowHeight || 1)) * dpr * 1.2),
-  );
-  return (
-    THUMB_SIZE_BUCKETS.find((bucket) => bucket >= requested) ||
-    THUMB_SIZE_BUCKETS[THUMB_SIZE_BUCKETS.length - 1]
-  );
-};
-
-const getRotatedBounds = (
-  width: number,
-  height: number,
-  rotation: number,
-): { width: number; height: number } => {
-  const safeWidth = Math.max(1, Number(width) || 1);
-  const safeHeight = Math.max(1, Number(height) || 1);
-  const radians = ((Number(rotation) || 0) * Math.PI) / 180;
-  const cos = Math.abs(Math.cos(radians));
-  const sin = Math.abs(Math.sin(radians));
-  return {
-    width: safeWidth * cos + safeHeight * sin,
-    height: safeWidth * sin + safeHeight * cos,
-  };
+  const dpr = typeof window === 'undefined' ? 1 : Math.max(1, window.devicePixelRatio || 1);
+  return Math.round(targetRowHeight * dpr * 1.2);
 };
 
 type JustifiedGridProps = {
@@ -45,113 +17,56 @@ type JustifiedGridProps = {
   excludedById: Map<string, boolean>;
   targetRowHeight: number;
   padding?: number;
-  showAllFooters?: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onDelete: (id: string) => void;
   onRestore: (id: string) => void;
   onEndReached?: () => void;
-};
-
-type GridPhoto = {
-  src: string;
-  width: number;
-  height: number;
-  id: string;
-  originalImage: GalleryImage;
+  isSingleEditMode?: boolean;
 };
 
 const JustifiedGrid = ({
   images,
   excludedById,
   targetRowHeight,
-  padding = 8,
+  padding = 12,
   selectedId,
   onSelect,
   onDelete,
   onRestore,
   onEndReached,
+  isSingleEditMode = false,
 }: JustifiedGridProps) => {
   const cropLayoutVersion = useStore((state) => state.cropLayoutVersion);
   const containerRef = useRef<HTMLDivElement>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
-  const scrollerElementRef = useRef<HTMLElement | null>(null);
-  const lastEndReachedAtRef = useRef(0);
-  const lastSelectionScrollIdRef = useRef<string | null>(null);
-  const lastAutoScrollAtRef = useRef(0);
-  const lastUserScrollAtRef = useRef(0);
   const [containerWidth, setContainerWidth] = useState<number>(0);
-  const thumbnailSize = useMemo(
-    () => resolveThumbnailSize(targetRowHeight),
-    [targetRowHeight],
-  );
+  const thumbnailSize = useMemo(() => resolveThumbnailSize(targetRowHeight), [targetRowHeight]);
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const setMeasuredWidth = (nextWidth: number) => {
-      const safe = Math.max(0, Math.floor(nextWidth));
-      setContainerWidth((previous) => (previous === safe ? previous : safe));
-    };
-    const readViewportWidth = (fallbackWidth: number) => {
-      const scrollerWidth = scrollerElementRef.current?.clientWidth || 0;
-      if (scrollerWidth > 0) return Math.floor(scrollerWidth);
-      return Math.floor(fallbackWidth);
-    };
-
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setMeasuredWidth(readViewportWidth(entry.contentRect.width));
+        setContainerWidth(entry.contentRect.width);
       }
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    const scroller = scrollerElementRef.current;
-    if (!scroller) return;
-    const markUserScroll = () => {
-      lastUserScrollAtRef.current = Date.now();
-    };
-    scroller.addEventListener('wheel', markUserScroll, { passive: true });
-    scroller.addEventListener('touchmove', markUserScroll, { passive: true });
-    scroller.addEventListener('scroll', markUserScroll, { passive: true });
-    return () => {
-      scroller.removeEventListener('wheel', markUserScroll);
-      scroller.removeEventListener('touchmove', markUserScroll);
-      scroller.removeEventListener('scroll', markUserScroll);
-    };
-  }, [containerWidth]);
-
   const photos = useMemo(() => {
-    if (!images || images.length === 0) return [];
-    const cropData = useStore.getState().cropData;
-
-    return images.map((img): GridPhoto => {
+    return images.map((img) => {
+      const cropData = useStore.getState().cropData;
       const cropEntry = cropData.get(img.id);
-      let contentWidth = Math.max(1, Number(img.naturalWidth) || 1);
-      let contentHeight = Math.max(1, Number(img.naturalHeight) || 1);
-
-      const coordinates = normalizeStoredCoordinates(cropEntry?.coordinates);
-      if (coordinates) {
-        contentWidth = Math.max(1, Number(coordinates.width) || 1);
-        contentHeight = Math.max(1, Number(coordinates.height) || 1);
-      } else {
-        const rotatedBounds = getRotatedBounds(
-          img.naturalWidth,
-          img.naturalHeight,
-          Number(cropEntry?.transforms?.rotate || 0),
-        );
-        contentWidth = Math.max(1, rotatedBounds.width);
-        contentHeight = Math.max(1, rotatedBounds.height);
-      }
-      const ratio = contentWidth / contentHeight;
-      const stableRatio =
-        Number.isFinite(ratio) && ratio > 0 ? Math.round(ratio * 200) / 200 : 1;
+      
+      const coords = normalizeStoredCoordinates(cropEntry?.coordinates);
+      const cw = coords ? Number(coords.width) : img.naturalWidth;
+      const ch = coords ? Number(coords.height) : img.naturalHeight;
+      const ratio = cw / ch;
 
       return {
         src: img.objectUrl,
-        width: stableRatio * 1000,
+        width: ratio * 1000,
         height: 1000,
         id: img.id,
         originalImage: img,
@@ -161,77 +76,12 @@ const JustifiedGrid = ({
 
   const layout = useMemo(() => {
     if (!photos.length || containerWidth <= 0) return null;
-    const computedLayout = computeRowsLayout(
-      photos,
-      padding,
-      0,
-      containerWidth,
-      targetRowHeight,
-    );
-
-    if (computedLayout?.tracks) {
-      computedLayout.tracks.forEach((track) => {
-        const rowHeight = track.photos[0]?.height || 0;
-        // If a row (usually the last row or a single image) was stretched significantly
-        // to fill the container, constrain its height. This prevents "blowout" where
-        // a single image stretches to fill a massive screen width.
-        if (rowHeight > targetRowHeight * 1.5) {
-          const capHeight = targetRowHeight * 1.25; // allow slight stretch
-          const scale = capHeight / rowHeight;
-          track.photos.forEach((p) => {
-            p.width = p.width * scale;
-            p.height = capHeight;
-          });
-        }
-      });
-    }
-
-    return computedLayout;
+    return computeRowsLayout(photos, padding, 0, containerWidth, targetRowHeight);
   }, [photos, padding, containerWidth, targetRowHeight]);
 
-  const trackIndexByImageId = useMemo(() => {
-    const next = new Map<string, number>();
-    if (!layout?.tracks) return next;
-    layout.tracks.forEach((track, trackIndex) => {
-      track.photos.forEach((photo) => {
-        next.set(photo.photo.id, trackIndex);
-      });
-    });
-    return next;
-  }, [layout]);
-
-  useEffect(() => {
-    if (!selectedId) {
-      lastSelectionScrollIdRef.current = null;
-      return;
-    }
-    if (lastSelectionScrollIdRef.current === selectedId) return;
-    if (Date.now() - lastUserScrollAtRef.current < 450) return;
-
-    const targetIndex = trackIndexByImageId.get(selectedId);
-    if (targetIndex === undefined) return;
-
-    const now = Date.now();
-    const behavior: ScrollBehavior =
-      now - lastAutoScrollAtRef.current < 140 ? 'auto' : 'smooth';
-    lastAutoScrollAtRef.current = now;
-    lastSelectionScrollIdRef.current = selectedId;
-    virtuosoRef.current?.scrollToIndex({
-      index: targetIndex,
-      align: 'center',
-      behavior,
-    });
-  }, [selectedId, trackIndexByImageId]);
-
-  if (!images.length) return null;
-
-  const handleEndReached = () => {
-    if (!onEndReached) return;
-    const now = Date.now();
-    if (now - lastEndReachedAtRef.current < 250) return;
-    lastEndReachedAtRef.current = now;
-    onEndReached();
-  };
+  if (!images.length || containerWidth <= 0) {
+    return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
+  }
 
   return (
     <div
@@ -239,23 +89,36 @@ const JustifiedGrid = ({
       className="justified-grid-container"
       style={{ width: '100%', height: '100%' }}
     >
-      {layout && (
+      {isSingleEditMode && images.length === 1 ? (
+        <div 
+          className="single-edit-preview-wrap"
+          style={{ 
+            display: 'flex', 
+            justifyContent: 'center', 
+            alignItems: 'center', 
+            height: '100%',
+            padding: padding * 2 
+          }}
+        >
+          <ImageCard
+            image={images[0]}
+            excluded={excludedById.has(images[0].id)}
+            width={Math.min(containerWidth - padding * 4, (images[0].naturalRatio || 1) * (window.innerHeight * 0.6))}
+            thumbnailSize={thumbnailSize * 2}
+            selected={selectedId === images[0].id}
+            onSelect={onSelect}
+            onDelete={onDelete}
+            onRestore={onRestore}
+            isSingleEditMode={true}
+          />
+        </div>
+      ) : layout && (
         <Virtuoso
           ref={virtuosoRef}
-          style={{ height: '100%', overflowX: 'hidden' }}
+          style={{ height: '100%' }}
           data={layout.tracks}
-          overscan={120}
-          endReached={handleEndReached}
-          scrollerRef={(ref) => {
-            const element = ref instanceof HTMLElement ? ref : null;
-            scrollerElementRef.current = element;
-            if (element) {
-              const width = Math.max(0, Math.floor(element.clientWidth));
-              setContainerWidth((previous) =>
-                previous === width ? previous : width,
-              );
-            }
-          }}
+          overscan={400}
+          endReached={onEndReached}
           itemContent={(index, track) => (
             <div
               key={index}
@@ -263,29 +126,22 @@ const JustifiedGrid = ({
                 display: 'flex',
                 gap: padding,
                 marginBottom: padding,
-                direction: 'ltr',
+                paddingRight: padding, // match the gap on the right
               }}
             >
               {track.photos.map((photo) => (
-                <div
+                <ImageCard
                   key={photo.photo.id}
-                  style={{
-                    width: photo.width,
-                    height: photo.height,
-                    position: 'relative',
-                  }}
-                >
-                  <ImageCard
-                    image={photo.photo.originalImage}
-                    excluded={excludedById.has(photo.photo.id)}
-                    rowHeight={photo.height}
-                    thumbnailSize={thumbnailSize}
-                    selected={selectedId === photo.photo.id}
-                    onSelect={onSelect}
-                    onDelete={onDelete}
-                    onRestore={onRestore}
-                  />
-                </div>
+                  image={photo.photo.originalImage}
+                  excluded={excludedById.has(photo.photo.id)}
+                  width={photo.width}
+                  thumbnailSize={thumbnailSize}
+                  selected={selectedId === photo.photo.id}
+                  onSelect={onSelect}
+                  onDelete={onDelete}
+                  onRestore={onRestore}
+                  isSingleEditMode={isSingleEditMode}
+                />
               ))}
             </div>
           )}

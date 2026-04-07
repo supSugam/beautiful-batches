@@ -11,6 +11,7 @@ import {
 
 import InspectorHeader from './Inspector/parts/InspectorHeader';
 import InspectorPreview from './Inspector/parts/InspectorPreview';
+import InspectorStaticPreview from './Inspector/parts/InspectorStaticPreview';
 import InspectorStats from './Inspector/parts/InspectorStats';
 import InspectorMetadataView from './Inspector/parts/InspectorMetadataView';
 import SelectionControls from './Inspector/parts/SelectionControls';
@@ -24,7 +25,7 @@ import SourceEditSection from './Inspector/parts/SourceEditSection';
 import { useInspectorLogic } from './Inspector/hooks/useInspectorLogic';
 import { useSidebarResize } from './Inspector/hooks/useSidebarResize';
 import useStore from '../store/useStore';
-import type { CropEntry, GalleryImage, InspectorMode, WatermarkSidecarStatus } from '../types/app';
+import type { ApplyCropToImagesOptions, CropEntry, GalleryImage, InspectorMode, WatermarkSidecarStatus } from '../types/app';
 
 
 import './Inspector.css';
@@ -38,14 +39,6 @@ const ASPECT_PRESETS = [
 ];
 
 type ApplyTargetType = 'all' | 'rest' | 'prev';
-type ApplyOptions = {
-  includeCaption?: boolean;
-  includeTransforms?: boolean;
-  includeCropState?: boolean;
-  includeUiTweaks?: boolean;
-  includeWatermarkRemoval?: boolean;
-  includeBackgroundRemoval?: boolean;
-};
 
 type InspectorProps = {
   image: GalleryImage | null;
@@ -56,10 +49,11 @@ type InspectorProps = {
   onPrev: () => void;
   hasNext: boolean;
   hasPrev: boolean;
-  onApplyTo: (type: ApplyTargetType, options?: ApplyOptions) => void;
+  onApplyTo: (type: ApplyTargetType, options?: ApplyCropToImagesOptions) => void;
   width: number;
   onResize: (width: number) => void;
   mode: InspectorMode;
+  isSingleEditMode?: boolean;
 };
 
 type InspectorEditSessionProps = {
@@ -71,7 +65,8 @@ type InspectorEditSessionProps = {
   onPrev: () => void;
   hasNext: boolean;
   hasPrev: boolean;
-  onApplyTo: (type: ApplyTargetType, options?: ApplyOptions) => void;
+  onApplyTo: (type: ApplyTargetType, options?: ApplyCropToImagesOptions) => void;
+  isSingleEditMode?: boolean;
 };
 
 const InspectorEditSession = ({
@@ -84,6 +79,7 @@ const InspectorEditSession = ({
   hasNext,
   hasPrev,
   onApplyTo,
+  isSingleEditMode = false,
 }: InspectorEditSessionProps) => {
   const [sidecarStatus, setSidecarStatus] = useState<WatermarkSidecarStatus | null>(null);
   
@@ -323,15 +319,17 @@ const InspectorEditSession = ({
               currentPixelHeight={logic.currentPixelHeight}
               showSectionLabel={false}
             />
-            <BulkApplySection
-              onApplyTo={(target, options) => {
-                logic.editor.commitChangeNow();
-                onApplyTo(target, options);
-              }}
-              showSectionLabel={false}
-              canIncludeWatermarkRemoval={canIncludeWatermarkRemoval}
-              canIncludeBackgroundRemoval={canIncludeBackgroundRemoval}
-            />
+            {!isSingleEditMode && (
+              <BulkApplySection
+                onApplyTo={(target, options) => {
+                  logic.editor.commitChangeNow();
+                  onApplyTo(target, options);
+                }}
+                showSectionLabel={false}
+                canIncludeWatermarkRemoval={canIncludeWatermarkRemoval}
+                canIncludeBackgroundRemoval={canIncludeBackgroundRemoval}
+              />
+            )}
           </section>
         </div>
       </div>
@@ -356,6 +354,17 @@ const InspectorViewSession = ({
   hasNext,
   hasPrev,
 }: InspectorViewSessionProps) => {
+  const cropState = useStore((state) => state.cropData.get(image.id));
+  const logic = useInspectorLogic({
+    image,
+    cropState,
+    onClose,
+    onNext,
+    onPrev,
+    hasNext,
+    hasPrev,
+  });
+
   const normalizedImagePath = String(image?.absolutePath || '')
     .replace(/\\/g, '/')
     .trim();
@@ -400,7 +409,7 @@ const InspectorViewSession = ({
         if (!hasNext) return;
         event.preventDefault();
         event.stopPropagation();
-        onNext();
+        logic.navigateNext();
         return;
       }
 
@@ -408,13 +417,13 @@ const InspectorViewSession = ({
         if (!hasPrev) return;
         event.preventDefault();
         event.stopPropagation();
-        onPrev();
+        logic.navigatePrev();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [hasNext, hasPrev, onNext, onPrev]);
+  }, [hasNext, hasPrev, logic.navigateNext, logic.navigatePrev]);
 
   return (
     <>
@@ -423,15 +432,31 @@ const InspectorViewSession = ({
         imageName={image.name}
         onOpenImageInExplorer={handleOpenImageInExplorer}
         canOpenImageInExplorer={canOpenImageInExplorer}
-        onClose={onClose}
-        onPrev={onPrev}
-        onNext={onNext}
+        onClose={logic.handleClose}
+        onPrev={logic.navigatePrev}
+        onNext={logic.navigateNext}
         hasPrev={hasPrev}
         hasNext={hasNext}
       />
 
       <div className="inspector-scroll">
-        <InspectorMetadataView image={image} />
+        <div className="inspector-view-layout">
+          <section className="inspector-view-preview-card">
+            <div className="inspector-view-preview-host">
+              <InspectorStaticPreview
+                isProcessing={logic.isProcessing}
+                imageObjectUrl={logic.activeImageObjectUrl || image.objectUrl}
+                editor={logic.editor}
+                paddingPx={logic.paddingPx}
+                cornerRadius={logic.cornerRadiusInput}
+                paddingFillType={logic.paddingFillType}
+                paddingFillValue={logic.paddingFillValue}
+                paddingImageUrl={logic.paddingImageUrl}
+              />
+            </div>
+          </section>
+          <InspectorMetadataView image={image} />
+        </div>
       </div>
     </>
   );
@@ -450,6 +475,7 @@ export const Inspector = ({
   width: sidebarWidth,
   onResize,
   mode,
+  isSingleEditMode = false,
 }: InspectorProps) => {
   const { isResizing, startResizing, viewportWidth, liveWidth } =
     useSidebarResize(sidebarWidth, onResize);
@@ -497,6 +523,7 @@ export const Inspector = ({
           hasNext={hasNext}
           hasPrev={hasPrev}
           onApplyTo={onApplyTo}
+          isSingleEditMode={isSingleEditMode}
         />
       )}
     </motion.div>

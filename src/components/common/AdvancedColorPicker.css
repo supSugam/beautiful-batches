@@ -2,15 +2,13 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+  background: rgba(17, 17, 19, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-lg);
   padding: 12px;
-  box-shadow: 
-    0 4px 6px -1px rgba(0, 0, 0, 0.1),
-    0 2px 4px -1px rgba(0, 0, 0, 0.06),
-    0 10px 15px -3px rgba(0, 0, 0, 0.1),
-    0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-lg);
   width: 240px;
 }
 
@@ -94,14 +92,19 @@
   padding: 0;
   min-width: 0;
 }
-
 .color-preview-dot {
   width: 18px;
   height: 18px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
   flex-shrink: 0;
+  /* Add transparency grid support if color has alpha */
+  background-color: var(--checker-b);
+  background-image:
+    linear-gradient(45deg, var(--checker-a) 25%, transparent 25%, transparent 75%, var(--checker-a) 75%, var(--checker-a)),
+    linear-gradient(45deg, var(--checker-a) 25%, transparent 25%, transparent 75%, var(--checker-a) 75%, var(--checker-a));
+  background-size: 6px 6px;
+  background-position: 0 0, 3px 3px;
 }
 
 /* Presets */
@@ -129,12 +132,12 @@
 .preset-swatch {
   width: 100%;
   aspect-ratio: 1;
+  min-height: 24px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 0;
   cursor: pointer;
   transition: transform var(--transition-fast), border-color var(--transition-fast);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
 .preset-swatch:hover {

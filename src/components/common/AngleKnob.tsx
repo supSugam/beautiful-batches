@@ -64,8 +64,8 @@ const AngleKnob: React.FC<AngleKnobProps> = ({
   // To draw on canvas/DOM: UP is -90 deg from Right
   const visualAngleRad = ((value - 90) * Math.PI) / 180;
   
-  // Keep dot within circle bounds
-  const radius = size / 2 - 4.5;
+  // Keep dot within circle bounds with a visible gap from the edge
+  const radius = size / 2 - 7;
   const dotX = Math.cos(visualAngleRad) * radius;
   const dotY = Math.sin(visualAngleRad) * radius;
 

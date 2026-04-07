@@ -1,18 +1,13 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeftCircle, ArrowRightCircle, Zap, ChevronDown } from 'lucide-react';
+import { ArrowLeftCircle, ArrowRightCircle, Zap, ChevronDown, Sparkles, Copy } from 'lucide-react';
+import type { ApplyCropToImagesOptions } from '../../../types/app';
+import SegmentedControl from '../../common/SegmentedControl';
 
 type BulkApplySectionProps = {
   onApplyTo: (
     target: 'prev' | 'rest' | 'all',
-    options?: {
-      includeCaption?: boolean;
-      includeTransforms?: boolean;
-      includeCropState?: boolean;
-      includeUiTweaks?: boolean;
-      includeWatermarkRemoval?: boolean;
-      includeBackgroundRemoval?: boolean;
-    },
+    options?: ApplyCropToImagesOptions,
   ) => void;
   showSectionLabel?: boolean;
   canIncludeWatermarkRemoval?: boolean;
@@ -42,6 +37,8 @@ const BulkApplySection = ({
   const [includeUiTweaks, setIncludeUiTweaks] = useState(true);
   const [includeWatermarkRemoval, setIncludeWatermarkRemoval] = useState(false);
   const [includeBackgroundRemoval, setIncludeBackgroundRemoval] = useState(false);
+  const [includeDetectionRegion, setIncludeDetectionRegion] = useState(true);
+  const [captionMode, setCaptionMode] = useState<'copy' | 'ai'>('copy');
 
   useEffect(() => {
     return () => {
@@ -172,6 +169,7 @@ const BulkApplySection = ({
   const apply = (target: 'prev' | 'rest' | 'all') =>
     onApplyTo(target, {
       includeCaption,
+      captionMode,
       includeTransforms,
       includeCropState,
       includeUiTweaks,
@@ -181,6 +179,7 @@ const BulkApplySection = ({
       includeBackgroundRemoval: canIncludeBackgroundRemoval
         ? includeBackgroundRemoval
         : false,
+      includeDetectionRegion,
     });
 
   return (
@@ -361,6 +360,40 @@ const BulkApplySection = ({
                   </label>
                 </div>
 
+                <div
+                  className="metadata-toggle-row bulk-caption-switch-row clickable-row"
+                  title="Apply AI Detection Region (ROI) to the selected images"
+                  onClick={() => setIncludeDetectionRegion(!includeDetectionRegion)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <span className="metadata-toggle-label">Include AI Detection Region</span>
+                  <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="metadata-checkbox-input"
+                      checked={includeDetectionRegion}
+                      onChange={(event) => setIncludeDetectionRegion(event.target.checked)}
+                      aria-label="Include detection region in bulk apply"
+                    />
+                    <span className="metadata-checkbox-indicator" aria-hidden="true">
+                      <svg
+                        className="metadata-checkbox-mark"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        style={{ transform: 'scale(1.2)' }}
+                      >
+                        <path
+                          className="metadata-checkbox-mark-path"
+                          d="M5 12l4.5 4.5L19 7"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </span>
+                  </label>
+                </div>
+
                 {canIncludeWatermarkRemoval && (
                   <div
                     className="metadata-toggle-row bulk-caption-switch-row clickable-row"
@@ -445,7 +478,7 @@ const BulkApplySection = ({
                   className="metadata-toggle-row bulk-caption-switch-row clickable-row"
                   title="Apply Caption Override"
                   onClick={() => setIncludeCaption(!includeCaption)}
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', marginBottom: includeCaption ? '0' : '4px' }}
                 >
                   <span className="metadata-toggle-label">Include Caption</span>
                   <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
@@ -474,6 +507,42 @@ const BulkApplySection = ({
                     </span>
                   </label>
                 </div>
+
+                {includeCaption && (
+                  <div
+                    className="caption-mode-selector-wrapper"
+                    style={{ marginBottom: '12px', marginTop: '-4px', padding: '0 4px' }}
+                  >
+                    <SegmentedControl<'copy' | 'ai'>
+                      value={captionMode}
+                      onChange={setCaptionMode}
+                      ariaLabel="Caption mode"
+                      equalWidth
+                      options={[
+                        {
+                          value: 'copy',
+                          label: (
+                            <>
+                              <Copy size={12} />
+                              <span>Copy Current</span>
+                            </>
+                          ),
+                          title: 'Copy the caption from the current image to all selected images',
+                        },
+                        {
+                          value: 'ai',
+                          label: (
+                            <>
+                              <Sparkles size={12} />
+                              <span>AI Generate</span>
+                            </>
+                          ),
+                          title: 'Generate new AI captions for all selected images',
+                        },
+                      ]}
+                    />
+                  </div>
+                )}
               </div>
 
             <div className="apply-grid">

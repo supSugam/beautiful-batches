@@ -315,6 +315,41 @@
     opacity var(--transition-fast);
 }
 
+.folder-explorer-batch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.batch-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.virtual-batch-info {
+  padding: 12px;
+  margin: 4px 8px;
+  background: rgba(129, 140, 248, 0.04);
+  border: 1px dashed rgba(129, 140, 248, 0.2);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.virtual-batch-info p {
+  margin: 0;
+  opacity: 0.8;
+}
+
 .folder-remove-btn:hover {
   color: var(--danger);
   background: rgba(248, 113, 113, 0.1);

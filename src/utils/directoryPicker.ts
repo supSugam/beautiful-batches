@@ -70,7 +70,10 @@ export const isTauriRuntime = () => {
 };
 
 const normalizePath = (value: unknown): string =>
-  String(value || '').replace(/\\/g, '/');
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/+$/, '');
 
 const getExtension = (filename: unknown): string => {
   const safeName = String(filename || '');
@@ -378,6 +381,15 @@ export const loadSavedRootPaths = async (): Promise<string[]> => {
   }
 };
 
+export const saveRootPaths = async (roots: string[]): Promise<void> => {
+  if (!isTauriRuntime()) return;
+  try {
+    await invoke('save_root_paths', { roots });
+  } catch (err) {
+    console.error('Failed to save root paths:', err);
+  }
+};
+
 export const loadQuickEditLaunchImages = async (): Promise<RawUploadImage[]> => {
   if (!isTauriRuntime()) return [];
   try {
@@ -437,7 +449,7 @@ export const scanImagesFromRootPath = async (
   }
 };
 
-const toRelativeTail = (rootName: string, folderPath: string): string => {
+export const toRelativeTail = (rootName: string, folderPath: string): string => {
   const normalizedRootName = normalizePath(rootName);
   const normalizedFolderPath = normalizePath(folderPath);
   if (!normalizedRootName || !normalizedFolderPath) return '';

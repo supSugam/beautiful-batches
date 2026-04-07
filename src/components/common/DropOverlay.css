@@ -1,0 +1,178 @@
+.drop-overlay-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(9, 9, 11, 0.96);
+  backdrop-filter: blur(8px) saturate(120%);
+  display: flex;
+  flex-direction: column;
+  color: white;
+  pointer-events: none;
+  padding: 1.5rem;
+}
+
+.drop-overlay-border-wrap {
+  flex: 1;
+  display: flex;
+  border-radius: 1.5rem;
+  overflow: hidden;
+  position: relative;
+}
+
+.drop-overlay-bg-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.drop-overlay-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.region-fill {
+  fill: rgba(255, 255, 255, 0);
+  transition: all 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.region-fill.active {
+  fill: rgba(129, 140, 248, 0.1);
+}
+
+.region-fill.cancel.active {
+  fill: rgba(248, 113, 113, 0.1);
+}
+
+.divider-line {
+  opacity: 0.15;
+  transition: all 0.4s ease;
+  animation: flow 3s linear infinite;
+}
+
+.divider-line.active {
+  opacity: 0.8;
+  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.4));
+  stroke-width: 3;
+}
+
+.outer-border {
+  opacity: 0.35;
+  animation: flow 10s linear infinite;
+}
+
+@keyframes flow {
+  from { stroke-dashoffset: 60; }
+  to { stroke-dashoffset: 0; }
+}
+
+.drop-columns {
+  flex: 1;
+  display: flex;
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+.drop-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2rem;
+  transition: flex 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+  cursor: copy;
+}
+
+/* We let the SVG handle the visual background, so columns are transparent */
+
+.drop-column-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  max-width: 240px;
+  pointer-events: none;
+}
+
+.drop-icon {
+  color: var(--text-muted);
+  transition: all 0.4s var(--transition-spring);
+  transform: scale(0.9);
+}
+
+.drop-column.active .drop-icon {
+  color: var(--accent);
+  transform: scale(1.1) translateY(-8px);
+  filter: drop-shadow(0 0 15px var(--accent-dim));
+}
+
+.drop-column.cancel.active .drop-icon {
+  color: var(--danger);
+  filter: drop-shadow(0 0 15px rgba(248, 113, 113, 0.3));
+}
+
+.drop-column h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-bright);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.drop-column p {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.drop-overlay-hint {
+  position: absolute;
+  bottom: 3rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--text-muted);
+  animation: pulse 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.drop-summary-container {
+  position: absolute;
+  top: 1.5rem;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.drop-summary-pill {
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  padding: 0.6rem 1.2rem;
+  border-radius: 99rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: white;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.summary-icon {
+  font-size: 1.1rem;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}

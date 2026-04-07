@@ -1,20 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
+import { MonitorCheck, Trash2 } from 'lucide-react';
+
 import EditorCanvas from './EditorCanvas';
 import CropOverlay from './CropOverlay';
 import type { ImageEditorApi } from '../hooks/useImageEditor';
 import type { PaddingFillType } from '../../../types/app';
 import { clampPaddingToReference } from '../../../utils/boxValues';
 import { computePaddedContentRect } from '../../../utils/paddedContentRect';
+import useStore from '../../../store/useStore';
 
 /**
  * InspectorPreview — the editor zone that hosts canvas + crop overlay.
- *
- * Props:
- *  - isProcessing     — shows processing overlay
- *  - imageObjectUrl   — objectURL for the source image
- *  - editor           — useImageEditor() return value
- *  - naturalWidth     — original image width (optional, reads from editor)
- *  - naturalHeight    — original image height (optional, reads from editor)
  */
 type InspectorPreviewProps = {
   isProcessing: boolean;
@@ -38,6 +36,13 @@ const InspectorPreview = ({
   paddingImageUrl,
 }: InspectorPreviewProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  
+  // Store hooks
+  const selectedId = useStore((state) => state.selectedId);
+  const cropData = useStore((state) => state.cropData);
+  const updateCropEntry = useStore((state) => state.updateCropEntry);
+  const addToast = useStore((state) => state.addToast);
+  
   const editorRef = useRef<ImageEditorApi>(editor);
   editorRef.current = editor;
 
@@ -46,6 +51,7 @@ const InspectorPreview = ({
     height: 0,
   });
   const [isPinching, setIsPinching] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
 
   // Observe container size changes
   useEffect(() => {
@@ -66,7 +72,7 @@ const InspectorPreview = ({
     return () => observer.disconnect();
   }, []);
 
-  // Native listeners keep wheel + touch pinch consistent (passive false).
+  // Native listeners for wheel + touch pinch
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return undefined;
@@ -159,6 +165,33 @@ const InspectorPreview = ({
     };
   }, []);
 
+  // Native context menu listener for guaranteed capture
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const handleNativeContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const currentRegion = selectedId ? cropData.get(selectedId)?.detectionRegion : null;
+
+      const menuWidth = 230;
+      const menuHeight = currentRegion ? 160 : 80;
+      
+      let x = e.clientX;
+      let y = e.clientY;
+      
+      if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 10;
+      if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 10;
+      
+      setContextMenu({ x, y });
+    };
+
+    el.addEventListener('contextmenu', handleNativeContextMenu);
+    return () => el.removeEventListener('contextmenu', handleNativeContextMenu);
+  }, [selectedId, cropData]);
+
   const paddingValues = clampPaddingToReference(
     String(Math.max(0, Math.round(Number(paddingPx) || 0))),
     editor.effectiveWidth,
@@ -184,11 +217,45 @@ const InspectorPreview = ({
   };
   const shouldShowContentGuides = Math.max(0, Math.round(Number(paddingPx) || 0)) > 0;
 
+  // ── Context Menu Handlers ──────────────────────────────────────────
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    // React listener as backup/secondary
+    e.preventDefault();
+  };
+
+  const closeMenu = () => setContextMenu(null);
+
+  const setAsDetectionRegion = () => {
+    if (!selectedId || !editor.fitLayout) return;
+    const naturalW = editor.fitLayout.displayW / editor.fitLayout.scale;
+    const naturalH = editor.fitLayout.displayH / editor.fitLayout.scale;
+    
+    updateCropEntry(selectedId, {
+      detectionRegion: {
+        x1: editor.crop.x / naturalW,
+        y1: editor.crop.y / naturalH,
+        x2: (editor.crop.x + editor.crop.w) / naturalW,
+        y2: (editor.crop.y + editor.crop.h) / naturalH
+      }
+    });
+    addToast('Region set for watermark detection', 'success');
+    closeMenu();
+  };
+
+  const clearDetectionRegion = () => {
+    if (!selectedId) return;
+    updateCropEntry(selectedId, { detectionRegion: null });
+    addToast('Detection region cleared', 'info');
+    closeMenu();
+  };
+
   return (
     <div
       className="inspector-crop-container"
       ref={containerRef}
       style={{ overflow: 'hidden', touchAction: 'none' }}
+      onContextMenu={handleContextMenu}
     >
       {isProcessing && (
         <div className="editor-processing-overlay">
@@ -238,6 +305,75 @@ const InspectorPreview = ({
         }
         contentGuideStatus={shouldShowContentGuides ? contentGuideStatus : undefined}
       />
+
+      {contextMenu && (
+        <>
+          <div 
+            className="context-menu-backdrop" 
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              closeMenu();
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              closeMenu();
+            }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 999999,
+              background: 'rgba(0,0,0,0.2)', 
+              pointerEvents: 'auto'
+            }}
+          />
+          <div
+            className="premium-context-menu"
+            style={{
+              position: 'fixed',
+              zIndex: 1000000,
+              top: contextMenu.y,
+              left: contextMenu.x,
+              pointerEvents: 'auto'
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div className="menu-header">AI Detection</div>
+            
+            <button className="menu-item" onClick={(e) => { e.stopPropagation(); setAsDetectionRegion(); }}>
+              <MonitorCheck size={16} className="menu-icon text-primary" />
+              <div className="menu-text">
+                <span className="menu-label">Set as Detection Region</span>
+                <span className="menu-sub">Detect watermarks in this area</span>
+              </div>
+            </button>
+
+            {(selectedId && cropData.get(selectedId)?.detectionRegion) && (
+              <button className="menu-button-destructive clickable-row" onClick={(e) => { e.stopPropagation(); clearDetectionRegion(); }} style={{ 
+                margin: '4px',
+                padding: '8px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                borderRadius: '8px',
+                border: 'none',
+                background: 'rgba(239, 68, 68, 0.1)',
+                color: '#f87171',
+                cursor: 'pointer',
+                width: 'calc(100% - 8px)',
+                textAlign: 'left'
+              }}>
+                <Trash2 size={16} />
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>Unset Detection Region</span>
+                  <span style={{ fontSize: '0.68rem', opacity: 0.7 }}>Reset to full image detection</span>
+                </div>
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 };

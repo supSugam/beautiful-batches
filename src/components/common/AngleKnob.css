@@ -35,7 +35,7 @@
 }
 
 .angle-knob:hover .angle-knob-dot {
-  background: var(--accent-primary);
+  background: var(--accent);
 }
 
 

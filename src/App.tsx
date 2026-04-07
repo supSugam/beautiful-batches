@@ -15,15 +15,24 @@ import {
   listDirectoryChildren,
   loadQuickEditLaunchImages,
   loadSavedRootPaths,
+  saveRootPaths,
   removeSavedRootByPath,
   scanImagesFromFolderPath,
+  toRelativeTail,
 } from './utils/directoryPicker';
 import { DropZone } from './components/DropZone';
 import Toolbar from './components/Toolbar/Toolbar';
 import MainLayout from './layouts/MainLayout';
+import { DropOverlay, type DropRegion } from './components/common/DropOverlay';
+
+interface DragContext {
+  files: number;
+  folders: number;
+}
 import ExportPlanModal from './components/modals/ExportPlanModal';
 import WatermarkSettingsModal from './components/modals/WatermarkSettingsModal';
 import ProcessingOverlay from './components/common/ProcessingOverlay';
+import ToastContainer from './components/common/ToastContainer';
 import useStore from './store/useStore';
 import {
   clearFolderDraft,
@@ -34,13 +43,17 @@ import {
   resolveDraftsForImages,
 } from './utils/editDraftPersistence';
 import { useImageUpload } from './hooks/useImageUpload';
+import { useClipboardPaste } from './hooks/useClipboardPaste';
 import type {
+  ApplyCropToImagesOptions,
   CropEntry,
   DirectoryHandle,
   DirectoryRoot,
   FolderNode,
   GalleryImage,
   InspectorMode,
+  NativeRootScan,
+  RawUploadImage,
   SortOption,
 } from './types/app';
 import './App.css';
@@ -177,37 +190,74 @@ const getShuffleScore = (value: string, seed: number): number => {
 };
 
 function App() {
-  const images = useStore((state) => state.images);
-  const excludedById = useStore((state) => state.excludedById);
-  const rowHeight = useStore((state) => state.rowHeight);
-  const showAllFooters = useStore((state) => state.showAllFooters);
-  const selectedId = useStore((state) => state.selectedId);
-  const cropData = useStore((state) => state.cropData);
-  const captionById = useStore((state) => state.captionById);
-  const inspectorWidth = useStore((state) => state.inspectorWidth);
-  const format = useStore((state) => state.format);
-  const quality = useStore((state) => state.quality);
-  const setSelectedId = useStore((state) => state.setSelectedId);
-  const setCropChange = useStore((state) => state.setCropChange);
-  const applyCropToImages = useStore((state) => state.applyCropToImages);
-  const setRowHeight = useStore((state) => state.setRowHeight);
-  const setInspectorWidth = useStore((state) => state.setInspectorWidth);
-  const explorerWidth = useStore((state) => state.explorerWidth);
-  const setExplorerWidth = useStore((state) => state.setExplorerWidth);
-  const sortOption = useStore((state) => state.sortOption);
-  const setSortOption = useStore((state) => state.setSortOption);
-  const applyPersistedImageDrafts = useStore(
-    (state) => state.applyPersistedImageDrafts,
-  );
-  const clearDraftsForFolder = useStore((state) => state.clearDraftsForFolder);
-  const deleteFolder = useStore((state) => state.deleteFolder);
-  const folderNodes = useStore((state) => state.folderNodes);
-  const rootNames = useStore((state) => state.rootNames);
-  const addImages = useStore((state) => state.addImages);
-  const clearImages = useStore((state) => state.clearImages);
-  const expandedPaths = useStore((state) => state.expandedPaths);
-  const toggleExpandedPath = useStore((state) => state.toggleExpandedPath);
-  const setExpandedPaths = useStore((state) => state.setExpandedPaths);
+  const {
+    images,
+    excludedById,
+    rowHeight,
+    showAllFooters,
+    selectedId,
+    cropData,
+    captionById,
+    inspectorWidth,
+    format,
+    quality,
+    setSelectedId,
+    setCropChange,
+    applyCropToImages,
+    setRowHeight,
+    setInspectorWidth,
+    explorerWidth,
+    setExplorerWidth,
+    sortOption,
+    setSortOption,
+    applyPersistedImageDrafts,
+    clearDraftsForFolder,
+    deleteFolder,
+    folderNodes,
+    rootNames,
+    addImages,
+    clearImages,
+    expandedPaths,
+    toggleExpandedPath,
+    setExpandedPaths,
+    setImages,
+    setLastUsedHardware,
+    isSingleEditMode,
+    isVirtualBatch,
+    virtualBatchName,
+    setSingleEditMode,
+    setVirtualBatchMode,
+    addToast,
+  } = useStore();
+
+  const mapNativeToRaw = (img: any): RawUploadImage => {
+    const absolutePath = img.absolutePath || '';
+    const encoded = encodeURIComponent(absolutePath).replace(/%2F/g, '/');
+    const assetUrl = `localfile://localhost${encoded.startsWith('/') ? '' : '/'}${encoded}`;
+
+    return {
+      file: new File([], img.fileName || 'image.jpg'),
+      id: `drop-${absolutePath}-${Math.random().toString(36).substring(2, 7)}`,
+      relativePath: img.relativePath || '',
+      absolutePath,
+      assetUrl,
+      nativeSize: img.size || 0,
+      nativeWidth: img.width || 0,
+      nativeHeight: img.height || 0,
+      nativeAccessedAt: (img.accessedAt || 0) * 1000,
+      nativeCreatedAt: (img.createdAt || 0) * 1000,
+      nativeLastModifiedAt: (img.lastModified || 0) * 1000,
+    };
+  };
+
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragContext, setDragContext] = useState<DragContext | null>(null);
+  const [dropRegion, setDropRegion] = useState<DropRegion>(null);
+  const dropRegionRef = useRef<DropRegion>(null);
+
+  useEffect(() => {
+    dropRegionRef.current = dropRegion;
+  }, [dropRegion]);
 
   const addMoreRef = useRef<HTMLInputElement | null>(null);
   const {
@@ -215,6 +265,9 @@ function App() {
     handleAddMore,
     handlePickFolderViaDirectoryPicker,
   } = useImageUpload();
+
+
+
   const linkedRootsHydratedRef = useRef<boolean>(false);
   const cachedRootNamesBootstrappedRef = useRef<boolean>(false);
   const rowHeightRafRef = useRef<number>(0);
@@ -263,7 +316,9 @@ function App() {
     () => new Set(),
   );
   const [exportPlanOpen, setExportPlanOpen] = useState(false);
-  const [watermarkSettingsOpen, setWatermarkSettingsOpen] = useState(false);
+  const settingsModal = useStore((state) => state.settingsModal);
+  const openSettings = useStore((state) => state.openSettings);
+  const closeSettings = useStore((state) => state.closeSettings);
   const [exportFolderSelectionMode, setExportFolderSelectionMode] = useState(false);
   const [selectedExportFolderPaths, setSelectedExportFolderPaths] = useState<
     Set<string>
@@ -275,6 +330,35 @@ function App() {
   const [directoryRootsVersion, setDirectoryRootsVersion] = useState(0);
   const loadedTreePathsRef = useRef<Set<string>>(new Set());
   const loadingTreePathsRef = useRef<Set<string>>(new Set());
+
+  const handlePastedImages = useCallback(
+    async (pastedImages: RawUploadImage[]) => {
+      if (pastedImages.length === 0) return;
+      try {
+        await setImages(pastedImages, []);
+        setActiveFolderPath(ALL_FOLDERS_VALUE);
+        setSingleEditMode(true);
+        setVirtualBatchMode(false);
+
+        if (pastedImages[0]?.id) {
+          setSelectedId(pastedImages[0].id);
+        }
+        addToast('Image pasted from clipboard', 'success');
+      } catch (err) {
+        console.error('Failed to load pasted image:', err);
+        addToast('Failed to load pasted image', 'error');
+      }
+    },
+    [setImages, setActiveFolderPath, setSingleEditMode, setVirtualBatchMode, setSelectedId, addToast],
+  );
+
+  useClipboardPaste({
+    onPaste: handlePastedImages,
+    onError: (err) => {
+      addToast(`Paste failed: ${err}`, 'error');
+    },
+    enabled: true,
+  });
 
   const markFolderLoading = useCallback(
     (paths: string[], loading: boolean) => {
@@ -530,7 +614,7 @@ function App() {
     }).finally(() => {
       setStartupRootsResolved(true);
     });
-  }, [addImages, images.length, launchContextResolved, quickEditMode]);
+  }, [addImages, launchContextResolved, quickEditMode]);
 
   useEffect(() => {
     if (!launchContextResolved) return;
@@ -563,20 +647,27 @@ function App() {
   }, [inspectorMode]);
 
   const mergeTreeNodes = useCallback(
-    (nextNodes: FolderNode[], options: { pruneToRoots?: string[] } = {}) => {
-      setTreeFolderNodes((previous) => {
+    (newNodes: FolderNode[], options: { pruneToRoots?: string[] } = {}) => {
+      setTreeFolderNodes((previousNodes) => {
         const byPath = new Map<string, FolderNode>();
         const allowedRoots = options.pruneToRoots
           ? new Set(options.pruneToRoots)
           : null;
 
-        previous.forEach((node) => {
-          const rootPath = normalizePath(node.path).split('/').filter(Boolean)[0] || '';
-          if (allowedRoots && rootPath && !allowedRoots.has(rootPath)) return;
+        previousNodes.forEach((node) => {
+          const normalizedNodePath = normalizePath(node.path);
+          const isAllowed =
+            !allowedRoots ||
+            Array.from(allowedRoots).some(
+              (root) =>
+                normalizedNodePath === root ||
+                normalizedNodePath.startsWith(root + '/'),
+            );
+          if (!isAllowed) return;
           byPath.set(node.path, node);
         });
 
-        nextNodes.forEach((node) => {
+        newNodes.forEach((node) => {
           const existing = byPath.get(node.path);
           byPath.set(node.path, {
             ...(existing || {}),
@@ -596,17 +687,22 @@ function App() {
 
   const resolveRootForFolderPath = useCallback((folderPath: string) => {
     const normalized = normalizePath(folderPath);
-    const rootToken = normalized.split('/').filter(Boolean)[0] || normalized;
-    if (!rootToken) return null;
+    if (!normalized) return null;
 
     const root = directoryRootsRef.current.find(
       (candidate) =>
-        candidate.rootName === rootToken || candidate.rootPath === rootToken,
+        normalized === candidate.rootName ||
+        normalized.startsWith(candidate.rootName + '/') ||
+        (candidate.rootPath &&
+          (normalized === candidate.rootPath ||
+            normalized.startsWith(candidate.rootPath + '/'))),
     );
-    if (!root?.rootPath || !root.rootName) return null;
+
+    if (!root) return null;
+
     return {
       root,
-      rootToken,
+      rootToken: root.rootName,
     };
   }, []);
 
@@ -636,14 +732,8 @@ function App() {
           [
             {
               path: normalizedFolderPath,
-              name:
-                normalizedFolderPath.split('/').filter(Boolean).pop() ||
-                normalizedFolderPath,
-              depth:
-                normalizedFolderPath
-                  .split('/')
-                  .filter(Boolean)
-                  .length - 1,
+              name: getFolderNameFromPath(normalizedFolderPath),
+              depth: normalizedFolderPath.split('/').filter(Boolean).length - 1,
               count: 0,
               expandable: children.length > 0,
             },
@@ -651,6 +741,7 @@ function App() {
           ],
         );
         loadedTreePathsRef.current.add(normalizedFolderPath);
+      } catch (err) {
       } finally {
         loadingTreePathsRef.current.delete(normalizedFolderPath);
         markTreePathLoading([normalizedFolderPath], false);
@@ -684,57 +775,54 @@ function App() {
     const source =
       Array.isArray(rootNames) && rootNames.length > 0
         ? rootNames
-        : linkedRootNamesFromPaths.length > 0
-          ? linkedRootNamesFromPaths
-          : cachedLinkedRootNames;
-    return Array.from(new Set(source.filter(Boolean)));
-  }, [cachedLinkedRootNames, linkedRootNamesFromPaths, rootNames]);
+        : linkedRootNamesFromPaths;
+    const result = Array.from(new Set(source.filter(Boolean)));
+    return result;
+  }, [linkedRootNamesFromPaths, rootNames]);
 
   useEffect(() => {
     const uniqueRoots = Array.from(new Set(effectiveRootNames.filter(Boolean)));
-    const allowedRoots = new Set(uniqueRoots);
-    const getScanKeyRootToken = (scanKey: string): string => {
+
+    const isPathAllowedByRoots = (path: string): boolean => {
+      const normalizedPath = normalizePath(path);
+      if (!normalizedPath) return false;
+      const allowed = uniqueRoots.some(
+        (root) =>
+          normalizedPath === root || normalizedPath.startsWith(root + '/'),
+      );
+      return allowed;
+    };
+
+    const isScanKeyAllowedByRoots = (scanKey: string): boolean => {
       const pathPart = String(scanKey || '').split('::')[0] || '';
-      return getRootTokenFromPath(pathPart);
+      return isPathAllowedByRoots(pathPart);
     };
 
     loadedTreePathsRef.current = new Set(
-      Array.from(loadedTreePathsRef.current).filter((path) => {
-        const root = getRootTokenFromPath(path);
-        return root ? allowedRoots.has(root) : false;
-      }),
+      Array.from(loadedTreePathsRef.current).filter(isPathAllowedByRoots),
     );
     loadingTreePathsRef.current = new Set(
-      Array.from(loadingTreePathsRef.current).filter((path) => {
-        const root = getRootTokenFromPath(path);
-        return root ? allowedRoots.has(root) : false;
-      }),
+      Array.from(loadingTreePathsRef.current).filter(isPathAllowedByRoots),
     );
     loadedFolderScanKeysRef.current = new Set(
-      Array.from(loadedFolderScanKeysRef.current).filter((scanKey) => {
-        const root = getScanKeyRootToken(scanKey);
-        return root ? allowedRoots.has(root) : false;
-      }),
+      Array.from(loadedFolderScanKeysRef.current).filter(
+        isScanKeyAllowedByRoots,
+      ),
     );
     loadingFolderScanKeysRef.current = new Set(
-      Array.from(loadingFolderScanKeysRef.current).filter((scanKey) => {
-        const root = getScanKeyRootToken(scanKey);
-        return root ? allowedRoots.has(root) : false;
-      }),
+      Array.from(loadingFolderScanKeysRef.current).filter(
+        isScanKeyAllowedByRoots,
+      ),
     );
     folderScanNextOffsetRef.current = new Map(
-      Array.from(folderScanNextOffsetRef.current.entries()).filter(
-        ([scanKey]) => {
-          const root = getScanKeyRootToken(scanKey);
-          return root ? allowedRoots.has(root) : false;
-        },
+      Array.from(folderScanNextOffsetRef.current.entries()).filter(([key]) =>
+        isScanKeyAllowedByRoots(key),
       ),
     );
     folderScanHasMoreRef.current = new Map(
-      Array.from(folderScanHasMoreRef.current.entries()).filter(([scanKey]) => {
-        const root = getScanKeyRootToken(scanKey);
-        return root ? allowedRoots.has(root) : false;
-      }),
+      Array.from(folderScanHasMoreRef.current.entries()).filter(([key]) =>
+        isScanKeyAllowedByRoots(key),
+      ),
     );
 
     const rootNodes: FolderNode[] = uniqueRoots.map((name) => ({
@@ -749,8 +837,7 @@ function App() {
     setLoadingTreePaths((previous) => {
       const next = new Set<string>();
       previous.forEach((path) => {
-        const root = getRootTokenFromPath(path);
-        if (root && allowedRoots.has(root)) {
+        if (isPathAllowedByRoots(path)) {
           next.add(path);
         }
       });
@@ -799,12 +886,12 @@ function App() {
   }, [addImages, folderNodes.length, images.length, launchContextResolved, quickEditMode]);
 
   const scopedImages = useMemo(() => {
+    if (isSingleEditMode || isVirtualBatch) {
+      return images;
+    }
+
     if (activeFolderPath === ALL_FOLDERS_VALUE) {
-      return images.filter((image) => {
-        const relativePath = normalizePath(image.relativePath);
-        const parts = relativePath.split('/').filter(Boolean);
-        return parts.length <= 2;
-      });
+      return images.filter((img) => !excludedById.has(img.id));
     }
     const prefix = `${activeFolderPath}/`;
     return images.filter((image) => {
@@ -813,7 +900,7 @@ function App() {
       const remainder = relativePath.substring(prefix.length);
       return !remainder.includes('/');
     });
-  }, [activeFolderPath, images]);
+  }, [activeFolderPath, images, isSingleEditMode, isVirtualBatch]);
 
   const visibleImages = useMemo(() => {
     const next = scopedImages.map((image, originalIndex) => ({
@@ -977,28 +1064,68 @@ function App() {
 
       const { root, rootToken } = resolved;
       const scanKey = `${normalizedFolderPath}::direct`;
-      if (!append && loadedFolderScanKeysRef.current.has(scanKey)) return;
-      if (append && folderScanHasMoreRef.current.get(scanKey) === false) return;
+      const isVerifiedInSession = loadedFolderScanKeysRef.current.has(scanKey);
+
+      // --- PATH 1: Folder Entry (Sync) ---
+      if (!append) {
+        try {
+          const relativeTail = toRelativeTail(root.rootName, normalizedFolderPath);
+          const checkPath = relativeTail ? `${root.rootPath}/${relativeTail}` : root.rootPath;
+
+          const diskLastModified = await invoke<number>('get_folder_last_modified', {
+            folderPath: checkPath
+          }).catch(() => 0);
+          
+          const storedLastModified = useStore.getState().folderLastModified.get(normalizedFolderPath) || 0;
+          
+          // If we already verified it in this session AND the disk hasn't changed, skip.
+          if (isVerifiedInSession && diskLastModified > 0 && diskLastModified <= storedLastModified) {
+            return;
+          }
+
+          // Perform full sync (limit 0)
+          const loadingKeys = Array.from(new Set([normalizedFolderPath, rootToken, root.rootName, root.rootPath])).filter(Boolean);
+          markFolderLoading(loadingKeys, true);
+
+          const scanResult = await scanImagesFromFolderPath({
+            rootPath: root.rootPath,
+            rootName: root.rootName,
+            folderPath: normalizedFolderPath,
+            recursive,
+            offset: 0,
+            limit: 0,
+          });
+
+          await useStore.getState().refreshImagesForFolder(normalizedFolderPath, scanResult.images);
+          
+          // Update verification state and timestamp
+          useStore.getState().updateFolderLastModified(normalizedFolderPath, diskLastModified || Math.floor(Date.now() / 1000));
+          loadedFolderScanKeysRef.current.add(scanKey);
+          
+          // Reset pagination
+          folderScanNextOffsetRef.current.set(scanKey, scanResult.images.length);
+          folderScanHasMoreRef.current.set(scanKey, false);
+          return;
+        } catch (err) {
+          console.error('Failed to sync folder on entry:', err);
+        } finally {
+          const loadingKeys = Array.from(new Set([normalizedFolderPath, rootToken, root.rootName, root.rootPath])).filter(Boolean);
+          markFolderLoading(loadingKeys, false);
+        }
+      }
+
+      // --- PATH 2: Paging (Append) ---
+      if (folderScanHasMoreRef.current.get(scanKey) === false) return;
       if (loadingFolderScanKeysRef.current.has(scanKey)) return;
 
-      const offset = append
-        ? Math.max(0, folderScanNextOffsetRef.current.get(scanKey) || 0)
-        : 0;
-      const limit = append
-        ? FOLDER_LOAD_MORE_BATCH
-        : FOLDER_INITIAL_IMAGE_BATCH;
-
-      loadingFolderScanKeysRef.current.add(scanKey);
-      const loadingKeys = Array.from(
-        new Set([
-          normalizedFolderPath,
-          rootToken,
-          root.rootName,
-          root.rootPath,
-        ]),
-      ).filter(Boolean);
-      markFolderLoading(loadingKeys, true);
       try {
+        const offset = Math.max(0, folderScanNextOffsetRef.current.get(scanKey) || 0);
+        const limit = FOLDER_LOAD_MORE_BATCH;
+
+        loadingFolderScanKeysRef.current.add(scanKey);
+        const loadingKeys = Array.from(new Set([normalizedFolderPath, rootToken, root.rootName, root.rootPath, scanKey])).filter(Boolean);
+        markFolderLoading(loadingKeys, true);
+
         const scanResult = await scanImagesFromFolderPath({
           rootPath: root.rootPath,
           rootName: root.rootName,
@@ -1007,18 +1134,16 @@ function App() {
           offset,
           limit,
         });
+
         await addImages(scanResult.images, [root.rootName]);
-        loadedFolderScanKeysRef.current.add(scanKey);
-        const nextOffset =
-          offset +
-          (Array.isArray(scanResult.images) ? scanResult.images.length : 0);
+
+        const nextOffset = offset + (Array.isArray(scanResult.images) ? scanResult.images.length : 0);
         folderScanNextOffsetRef.current.set(scanKey, nextOffset);
-        const hasMore = Array.isArray(scanResult.images)
-          ? scanResult.images.length >= limit
-          : false;
+        const hasMore = Array.isArray(scanResult.images) && limit > 0 && scanResult.images.length >= limit;
         folderScanHasMoreRef.current.set(scanKey, hasMore);
       } finally {
         loadingFolderScanKeysRef.current.delete(scanKey);
+        const loadingKeys = Array.from(new Set([normalizedFolderPath, rootToken, root.rootName, root.rootPath, scanKey])).filter(Boolean);
         markFolderLoading(loadingKeys, false);
       }
     },
@@ -1050,6 +1175,14 @@ function App() {
   );
 
   useEffect(() => {
+    if (!startupRootsResolved) return;
+    if (activeFolderPath !== ALL_FOLDERS_VALUE) return;
+    if (effectiveRootNames.length > 0) {
+      setActiveFolderPath(effectiveRootNames[0]);
+    }
+  }, [activeFolderPath, effectiveRootNames, startupRootsResolved]);
+
+  useEffect(() => {
     if (!launchContextResolved) return;
     if (quickEditMode) return;
     persistStorageValue(EXPLORER_OPEN_STORAGE_KEY, explorerOpen ? '1' : '0');
@@ -1078,11 +1211,15 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (!startupRootsResolved) return;
     expandedPaths.forEach((path) => {
       if (!path || path === ALL_FOLDERS_VALUE) return;
       void loadTreeChildrenForPath(path);
     });
-  }, [expandedPaths, loadTreeChildrenForPath]);
+    // This only needs to run once when roots are resolved to handle restoration.
+    // Subsequent expansions are handled by handleToggleExpand.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startupRootsResolved, loadTreeChildrenForPath]);
 
 
 
@@ -1399,6 +1536,124 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+      return;
+    }
+
+    const appWindow = getCurrentWindow();
+    let unlistenDragEnter: (() => void) | null = null;
+
+    const setupListeners = async () => {
+      unlistenDragEnter = await appWindow.onDragDropEvent(async (event) => {
+        if (event.payload.type === 'enter') {
+          const { paths } = event.payload;
+          setIsDragging(true);
+          
+          // Asynchronously determine counts
+          try {
+            const dirChecks = await Promise.all(
+              paths.map((path) => invoke<boolean>('is_directory', { path }))
+            );
+            const folderCount = dirChecks.filter(Boolean).length;
+            setDragContext({
+              files: paths.length - folderCount,
+              folders: folderCount,
+            });
+          } catch (err) {
+            setDragContext({ files: paths.length, folders: 0 });
+          }
+        } else if (event.payload.type === 'leave') {
+          setIsDragging(false);
+          setDropRegion(null);
+          setDragContext(null);
+        } else if (event.payload.type === 'drop') {
+          const region = dropRegionRef.current;
+          setIsDragging(false);
+          setDropRegion(null);
+
+          if (region === 'cancel') return;
+
+          const { paths } = event.payload;
+          if (paths.length === 0) return;
+
+          try {
+            const dirChecks = await Promise.all(
+              paths.map((path) => invoke<boolean>('is_directory', { path })),
+            );
+            const hasDirectory = dirChecks.some((isDir) => isDir);
+
+            if (region === 'add' || (hasDirectory && region !== 'single' && region !== 'batch')) {
+              const scan = await invoke<NativeRootScan>('scan_paths', {
+                paths,
+              });
+
+              if (scan.images.length > 0) {
+                // Ensure dropped directories are persisted as roots
+                const droppedDirectories = paths.filter((_, index) => dirChecks[index]);
+                const newRootNames: string[] = [];
+
+                for (const dirPath of droppedDirectories) {
+                  try {
+                    await invoke('add_root_path', { rootPath: dirPath });
+                    const normalized = dirPath.replace(/\\/g, '/');
+                    const parts = normalized.split('/').filter(Boolean);
+                    const folderName = parts[parts.length - 1] || normalized;
+                    if (folderName) newRootNames.push(folderName);
+                  } catch (err) {
+                    console.error('Failed to persist dropped root:', dirPath, err);
+                  }
+                }
+
+                const mapped = scan.images.map(mapNativeToRaw);
+                const uniqueRootNames = Array.from(new Set(newRootNames));
+                await addImages(mapped, uniqueRootNames.length > 0 ? uniqueRootNames : [scan.root_path]);
+              }
+            } else {
+              const scan = await invoke<NativeRootScan>('scan_paths', {
+                paths,
+              });
+
+              if (region === 'single' || (scan.images.length === 1 && region !== 'batch')) {
+                const mapped = scan.images.map(mapNativeToRaw);
+                await setImages(mapped, []);
+                setActiveFolderPath(ALL_FOLDERS_VALUE);
+                setSingleEditMode(true);
+                if (mapped[0]) {
+                  setSelectedId(mapped[0].id);
+                }
+              } else {
+                const mapped = scan.images.map(mapNativeToRaw);
+                await setImages(mapped, []);
+                setActiveFolderPath(ALL_FOLDERS_VALUE);
+                setVirtualBatchMode(
+                  true,
+                  `Dropped Batch (${scan.images.length} images)`,
+                );
+              }
+            }
+          } catch (error) {
+            console.error('Failed to scan dropped paths:', error);
+            addToast('Failed to load dropped items', 'error');
+          }
+        }
+      });
+    };
+
+    void setupListeners();
+
+    return () => {
+      if (unlistenDragEnter) unlistenDragEnter();
+    };
+  }, [
+    addImages,
+    setImages,
+    setSingleEditMode,
+    setVirtualBatchMode,
+    setSelectedId,
+    addToast,
+  ]);
+
   const folderName = useMemo(() => {
     if (activeFolderPath && activeFolderPath !== ALL_FOLDERS_VALUE) {
       const normalized = normalizePath(activeFolderPath);
@@ -1471,10 +1726,6 @@ function App() {
     return loadingFolderPaths.has(activeFolderPath);
   }, [activeFolderPath, loadingFolderPaths]);
 
-  const explorerLoadingFolderPaths = useMemo(
-    () => new Set([...loadingFolderPaths, ...loadingTreePaths]),
-    [loadingFolderPaths, loadingTreePaths],
-  );
 
   const handleAddFolder = useCallback(async () => {
     const result = await handlePickFolderViaDirectoryPicker();
@@ -1569,6 +1820,9 @@ function App() {
           ),
         ),
       );
+      saveRootPaths(
+        directoryRootsRef.current.map((root) => root.rootPath).filter(Boolean),
+      );
     }
 
     await addImages([], rootName ? [rootName] : []);
@@ -1618,23 +1872,29 @@ function App() {
       loadedFolderScanKeysRef.current = new Set(
         Array.from(loadedFolderScanKeysRef.current).filter((scanKey) => {
           const pathPart = String(scanKey || '').split('::')[0] || '';
-          const rootToken = getRootTokenFromPath(pathPart);
-          return rootToken !== removedRootToken;
+          const isFromRemovedRoot =
+            pathPart === removedRootToken ||
+            pathPart.startsWith(removedRootToken + '/');
+          return !isFromRemovedRoot;
         }),
       );
       loadingFolderScanKeysRef.current = new Set(
         Array.from(loadingFolderScanKeysRef.current).filter((scanKey) => {
           const pathPart = String(scanKey || '').split('::')[0] || '';
-          const rootToken = getRootTokenFromPath(pathPart);
-          return rootToken !== removedRootToken;
+          const isFromRemovedRoot =
+            pathPart === removedRootToken ||
+            pathPart.startsWith(removedRootToken + '/');
+          return !isFromRemovedRoot;
         }),
       );
       folderScanNextOffsetRef.current = new Map(
         Array.from(folderScanNextOffsetRef.current.entries()).filter(
           ([scanKey]) => {
             const pathPart = String(scanKey || '').split('::')[0] || '';
-            const rootToken = getRootTokenFromPath(pathPart);
-            return rootToken !== removedRootToken;
+            const isFromRemovedRoot =
+              pathPart === removedRootToken ||
+              pathPart.startsWith(removedRootToken + '/');
+            return !isFromRemovedRoot;
           },
         ),
       );
@@ -1642,34 +1902,48 @@ function App() {
         Array.from(folderScanHasMoreRef.current.entries()).filter(
           ([scanKey]) => {
             const pathPart = String(scanKey || '').split('::')[0] || '';
-            const rootToken = getRootTokenFromPath(pathPart);
-            return rootToken !== removedRootToken;
+            const isFromRemovedRoot =
+              pathPart === removedRootToken ||
+              pathPart.startsWith(removedRootToken + '/');
+            return !isFromRemovedRoot;
           },
         ),
       );
       setTreeFolderNodes((previous) =>
         previous.filter((node) => {
-          const rootToken = getRootTokenFromPath(node.path);
-          return rootToken !== removedRootToken;
+          const normalizedPath = normalizePath(node.path);
+          const isFromRemovedRoot =
+            normalizedPath === removedRootToken ||
+            normalizedPath.startsWith(removedRootToken + '/');
+          return !isFromRemovedRoot;
         }),
       );
       loadedTreePathsRef.current = new Set(
         Array.from(loadedTreePathsRef.current).filter((path) => {
-          const rootToken = getRootTokenFromPath(path);
-          return rootToken !== removedRootToken;
+          const normalizedPath = normalizePath(path);
+          const isFromRemovedRoot =
+            normalizedPath === removedRootToken ||
+            normalizedPath.startsWith(removedRootToken + '/');
+          return !isFromRemovedRoot;
         }),
       );
       loadingTreePathsRef.current = new Set(
         Array.from(loadingTreePathsRef.current).filter((path) => {
-          const rootToken = getRootTokenFromPath(path);
-          return rootToken !== removedRootToken;
+          const normalizedPath = normalizePath(path);
+          const isFromRemovedRoot =
+            normalizedPath === removedRootToken ||
+            normalizedPath.startsWith(removedRootToken + '/');
+          return !isFromRemovedRoot;
         }),
       );
       setLoadingTreePaths((previous) => {
         const next = new Set<string>();
         previous.forEach((path) => {
-          const rootToken = getRootTokenFromPath(path);
-          if (rootToken !== removedRootToken) {
+          const normalizedPath = normalizePath(path);
+          const isFromRemovedRoot =
+            normalizedPath === removedRootToken ||
+            normalizedPath.startsWith(removedRootToken + '/');
+          if (!isFromRemovedRoot) {
             next.add(path);
           }
         });
@@ -1686,6 +1960,9 @@ function App() {
             ),
           ),
         ),
+      );
+      saveRootPaths(
+        directoryRootsRef.current.map((root) => root.rootPath).filter(Boolean),
       );
       if (directoryRootsRef.current.length === 0) {
         await clearSavedDirectoryHandle();
@@ -1704,10 +1981,10 @@ function App() {
       await clearFolderDraft(normalizedFolderPath);
       clearDraftsForFolder(normalizedFolderPath);
 
-      const rootToken = getRootTokenFromPath(normalizedFolderPath);
-      if (rootToken) {
-        loadedDraftPayloadByFolderRef.current.delete(rootToken);
-        loadingDraftPayloadFoldersRef.current.delete(rootToken);
+      const resolved = resolveRootForFolderPath(normalizedFolderPath);
+      if (resolved) {
+        loadedDraftPayloadByFolderRef.current.delete(resolved.rootToken);
+        loadingDraftPayloadFoldersRef.current.delete(resolved.rootToken);
       }
 
       const currentImages = useStore.getState().images;
@@ -1765,7 +2042,7 @@ function App() {
         rowHeight={rowHeight}
         setRowHeight={handleRowHeightChange}
         onOpenExportPlan={() => setExportPlanOpen(true)}
-        onOpenWatermarkSettings={() => setWatermarkSettingsOpen(true)}
+        onOpenWatermarkSettings={() => openSettings('engine')}
         inspectorMode={inspectorMode}
         onSetInspectorMode={setInspectorMode}
       />
@@ -1801,7 +2078,7 @@ function App() {
         expandedPaths={expandedPaths}
         onToggleExpand={handleToggleExpand}
         onLoadMoreImages={handleLoadMoreActiveFolder}
-        loadingFolderPaths={explorerLoadingFolderPaths}
+        loadingFolderPaths={loadingTreePaths}
         isActiveFolderLoading={isActiveFolderLoading}
         folderSelectionMode={exportFolderSelectionMode}
         selectedFolderPaths={selectedExportFolderPaths}
@@ -1822,6 +2099,7 @@ function App() {
 
           setSelectedExportFolderPaths(nextSet);
         }}
+        isSingleEditMode={isSingleEditMode}
       />
 
       <input
@@ -1855,13 +2133,22 @@ function App() {
         />
       )}
 
-      {watermarkSettingsOpen && (
+      {settingsModal.isOpen && (
         <WatermarkSettingsModal
-          onClose={() => setWatermarkSettingsOpen(false)}
+          initialTab={settingsModal.activeTab}
+          onClose={closeSettings}
         />
       )}
 
       <ProcessingOverlay />
+      <ToastContainer />
+      <DropOverlay
+        isVisible={isDragging}
+        onRegionChange={setDropRegion}
+        isProjectOpen={images.length > 0}
+        dragContext={dragContext}
+      />
+
     </div>
   );
 }

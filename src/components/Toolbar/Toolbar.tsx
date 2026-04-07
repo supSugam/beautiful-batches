@@ -26,7 +26,7 @@ import './Toolbar.css';
 
 const MIN_ROW_HEIGHT = 150;
 const MAX_ROW_HEIGHT = 500;
-const ROW_HEIGHT_STEP = 4;
+const ROW_HEIGHT_STEP = 70;
 const snapRowHeight = (value: number): number => {
   const safeValue = Number.isFinite(value) ? value : MIN_ROW_HEIGHT;
   const clamped = Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, safeValue));
@@ -186,6 +186,27 @@ const Toolbar = ({
     [rowHeight],
   );
 
+  // Local state for smooth slider dragging without triggering layout too early
+  const [localRowHeight, setLocalRowHeight] = useState(snappedRowHeight);
+
+  // Sync local state if external rowHeight changes
+  useEffect(() => {
+    setLocalRowHeight(snappedRowHeight);
+  }, [snappedRowHeight]);
+
+  const localSliderFillPercent = useMemo(() => {
+    return (
+      ((localRowHeight - MIN_ROW_HEIGHT) / (MAX_ROW_HEIGHT - MIN_ROW_HEIGHT)) * 100
+    );
+  }, [localRowHeight]);
+
+  // Precise math to ensure the rounded fill bar always encapsulates the 12px thumb perfectly.
+  // The fill should extend from the left edge to the far edge of the thumb circle.
+  const fillWidthStyle = useMemo(() => {
+    // 6px (start radius) + (remaining track space) * percent
+    return `calc(12px + (100% - 12px) * ${localSliderFillPercent / 100})`;
+  }, [localSliderFillPercent]);
+
   useEffect(() => {
     if (!isSortMenuOpen) return undefined;
 
@@ -211,6 +232,7 @@ const Toolbar = ({
 
   const processingState = useStore((state) => state.processingState);
   const setProcessingState = useStore((state) => state.setProcessingState);
+  const openSettings = useStore((state) => state.openSettings);
 
   return (
     <header
@@ -316,20 +338,23 @@ const Toolbar = ({
 
         <div className="control-group">
           <Grid3x3 size={13} className="toolbar-dim" />
-          <input
-            type="range"
-            className="size-slider"
-            min={MIN_ROW_HEIGHT}
-            max={MAX_ROW_HEIGHT}
-            step={ROW_HEIGHT_STEP}
-            value={snappedRowHeight}
-            onChange={(e) => setRowHeight(snapRowHeight(Number(e.target.value)))}
-            style={
-              {
-                '--toolbar-slider-fill': `${sliderFillPercent}%`,
-              } as React.CSSProperties
-            }
-          />
+          <div className="size-slider-container">
+            <div className="size-slider-track" />
+            <div 
+              className="size-slider-fill" 
+              style={{ width: fillWidthStyle }} 
+            />
+            <input
+              type="range"
+              className="size-slider"
+              min={MIN_ROW_HEIGHT}
+              max={MAX_ROW_HEIGHT}
+              step={ROW_HEIGHT_STEP}
+              value={localRowHeight}
+              onChange={(e) => setLocalRowHeight(snapRowHeight(Number(e.target.value)))}
+              onPointerUp={() => setRowHeight(localRowHeight)}
+            />
+          </div>
           <MaximizeIcon size={14} className="toolbar-dim" />
         </div>
       </div>

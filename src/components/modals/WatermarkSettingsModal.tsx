@@ -9,6 +9,8 @@ import {
   Terminal,
   Cpu,
   RefreshCcw,
+  RefreshCw,
+  RotateCcw,
   Trash2,
   Download,
   Database,
@@ -21,12 +23,25 @@ import {
   Github,
   ClipboardCopy,
   ClipboardCheck,
+  MessageSquare,
+  Sparkles,
+  Copy,
+  Settings,
+  GitBranch,
+  Calendar,
+  Hash,
 } from 'lucide-react';
-import type { WatermarkSidecarStatus } from '../../types/app';
-import useStore from '../../store/useStore';
+import useStore, { SettingsTab } from '../../store/useStore';
+import { WatermarkSidecarStatus, WatermarkRegion } from '../../types/app';
+import DesignDropdown, { DesignDropdownOption } from '../common/DesignDropdown';
+import SegmentedControl from '../common/SegmentedControl';
+import OpenRouterLogo from '../icons/OpenRouterLogo';
 import './WatermarkSettingsModal.css';
 
+/* ROI presets removed in favor of context-menu based custom regions */
+
 type WatermarkSettingsModalProps = {
+  initialTab?: SettingsTab;
   onClose: () => void;
 };
 
@@ -35,6 +50,13 @@ type LogEntry = {
   isError: boolean;
   timestamp: number;
 };
+
+type GitInfo = {
+  hash: string;
+  date: string;
+};
+
+const DEFAULT_JSON_TEMPLATE = `{\n  "messages": [\n    {\n      "role": "user",\n      "content": [\n        { "type": "text", "text": "{{prompt}}" },\n        { "type": "image_url", "image_url": { "url": "{{image}}" } }\n      ]\n    }\n  ]\n}`;
 
 const formatBytes = (bytes: number): string => {
   if (bytes === 0) return '0 B';
@@ -49,6 +71,34 @@ const HealthDot = ({ label, ok, error }: { label: string; ok: boolean; error?: b
     <span className={`wsm-led ${ok ? 'is-ok' : error ? 'is-error' : 'is-idle'}`} />
     <span className="wsm-health-label">{label}</span>
   </div>
+);
+
+const GeminiGradient = () => (
+  <svg width="0" height="0" style={{ position: 'absolute', pointerEvents: 'none', opacity: 0 }}>
+    <defs>
+      <linearGradient id="gemini_grad" x1="18.447" y1="43.42" x2="52.153" y2="15.004" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#4893FC"/><stop offset=".27" stopColor="#4893FC"/><stop offset=".777" stopColor="#969DFF"/><stop offset="1" stopColor="#BD99FE"/>
+      </linearGradient>
+    </defs>
+  </svg>
+);
+
+const GeminiLogo = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 65 65" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M32.447 0c.68 0 1.273.465 1.439 1.125a38.904 38.904 0 001.999 5.905c2.152 5 5.105 9.376 8.854 13.125 3.751 3.75 8.126 6.703 13.125 8.855a38.98 38.98 0 005.906 1.999c.66.166 1.124.758 1.124 1.438 0 .68-.464 1.273-1.125 1.439a38.902 38.902 0 00-5.905 1.999c-5 2.152-9.375 5.105-13.125 8.854-3.749 3.751-6.702 8.126-8.854 13.125a38.973 38.973 0 00-2 5.906 1.485 1.485 0 01-1.438 1.124c-.68 0-1.272-.464-1.438-1.125a38.913 38.913 0 00-2-5.905c-2.151-5-5.103-9.375-8.854-13.125-3.75-3.749-8.125-6.702-13.125-8.854a38.973 38.973 0 00-5.905-2A1.485 1.485 0 010 32.448c0-.68.465-1.272 1.125-1.438a38.903 38.903 0 005.905-2c5-2.151 9.376-5.104 13.125-8.854 3.75-3.749 6.703-8.125 8.855-13.125a38.972 38.972 0 001.999-5.905A1.485 1.485 0 0132.447 0z" fill="url(#gemini_grad)"/>
+  </svg>
+);
+
+const ClaudeLogo = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path fill="#d97757" d="M 233.959793 800.214905 L 468.644287 668.536987 L 472.590637 657.100647 L 468.644287 650.738403 L 457.208069 650.738403 L 417.986633 648.322144 L 283.892639 644.69812 L 167.597321 639.865845 L 54.926208 633.825623 L 26.577238 627.785339 L 3.3e-05 592.751709 L 2.73832 575.27533 L 26.577238 559.248352 L 60.724873 562.228149 L 136.187973 567.382629 L 249.422867 575.194763 L 331.570496 580.026978 L 453.261841 592.671082 L 472.590637 592.671082 L 475.328857 584.859009 L 468.724915 580.026978 L 463.570557 575.194763 L 346.389313 495.785217 L 219.543671 411.865906 L 153.100723 363.543762 L 117.181267 339.060425 L 99.060455 316.107361 L 91.248367 266.01355 L 123.865784 230.093994 L 167.677887 233.073853 L 178.872513 236.053772 L 223.248367 270.201477 L 318.040283 343.570496 L 441.825592 434.738342 L 459.946411 449.798706 L 467.194672 444.64447 L 468.080597 441.020203 L 459.946411 427.409485 L 392.617493 305.718323 L 320.778564 181.932983 L 288.80542 130.630859 L 280.348999 99.865845 C 277.369171 87.221436 275.194641 76.590698 275.194641 63.624268 L 312.322174 13.20813 L 332.8591 6.604126 L 382.389313 13.20813 L 403.248352 31.328979 L 434.013519 101.71814 L 483.865753 212.537048 L 561.181274 363.221497 L 583.812134 407.919434 L 595.892639 449.315491 L 600.40271 461.959839 L 608.214783 461.959839 L 608.214783 454.711609 L 614.577271 369.825623 L 626.335632 265.61084 L 637.771851 131.516846 L 641.718201 93.745117 L 660.402832 48.483276 L 697.530334 24.000122 L 726.52356 37.852417 L 750.362549 72 L 747.060486 94.067139 L 732.886047 186.201416 L 705.100708 330.52356 L 686.979919 427.167847 L 697.530334 427.167847 L 709.61084 415.087341 L 758.496704 350.174561 L 840.644348 247.490051 L 876.885925 206.738342 L 919.167847 161.71814 L 946.308838 140.29541 L 997.61084 140.29541 L 1035.38269 196.429626 L 1018.469849 254.416199 L 965.637634 321.422852 L 921.825562 378.201538 L 859.006714 462.765259 L 819.785278 530.41626 L 823.409424 535.812073 L 832.75177 534.92627 L 974.657776 504.724915 L 1051.328979 490.872559 L 1142.818848 475.167786 L 1184.214844 494.496582 L 1188.724854 514.147644 L 1172.456421 554.335693 L 1074.604126 578.496765 L 959.838989 601.449829 L 788.939636 641.879272 L 786.845764 643.409485 L 789.261841 646.389343 L 866.255127 653.637634 L 899.194702 655.409424 L 979.812134 655.409424 L 1129.932861 666.604187 L 1169.154419 692.537109 L 1192.671265 724.268677 L 1188.724854 748.429688 L 1128.322144 779.194641 L 1046.818848 759.865845 L 856.590759 714.604126 L 791.355774 698.335754 L 782.335693 698.335754 L 782.335693 703.731567 L 836.69812 756.885986 L 936.322205 846.845581 L 1061.073975 962.81897 L 1067.436279 991.490112 L 1051.409424 1014.120911 L 1034.496704 1011.704712 L 924.885986 929.234924 L 882.604126 892.107544 L 786.845764 811.48999 L 780.483276 811.48999 L 780.483276 819.946289 L 802.550415 852.241699 L 919.087341 1027.409424 L 925.127625 1081.127686 L 916.671204 1098.604126 L 886.469849 1109.154419 L 853.288696 1103.114136 L 785.073914 1007.355835 L 714.684631 899.516785 L 657.906067 802.872498 L 650.979858 806.81897 L 617.476624 1167.704834 L 601.771851 1186.147705 L 565.530212 1200 L 535.328857 1177.046997 L 519.302124 1139.919556 L 535.328857 1066.550537 L 554.657776 970.792053 L 570.362488 894.68457 L 584.536926 800.134277 L 592.993347 768.724976 L 592.429626 766.630859 L 585.503479 767.516968 L 514.22821 865.369263 L 405.825531 1011.865906 L 320.053711 1103.677979 L 299.516815 1111.812256 L 263.919525 1093.369263 L 267.221497 1060.429688 L 287.114136 1031.114136 L 405.825531 880.107361 L 477.422913 786.52356 L 523.651062 732.483276 L 523.328918 724.671265 L 520.590698 724.671265 L 205.288605 929.395935 L 149.154434 936.644409 L 124.993355 914.01355 L 127.973183 876.885986 L 139.409409 864.80542 L 234.201385 799.570435 L 233.879227 799.8927 Z" />
+  </svg>
+);
+
+const ChatGPTLogo = ({ size = 18, color = "white" }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg">
+    <path fill={color} d="m297.06 130.97c7.26-21.79 4.76-45.66-6.85-65.48-17.46-30.4-52.56-46.04-86.84-38.68-15.25-17.18-37.16-26.95-60.13-26.81-35.04-.08-66.13 22.48-76.91 55.82-22.51 4.61-41.94 18.7-53.31 38.67-17.59 30.32-13.58 68.54 9.92 94.54-7.26 21.79-4.76 45.66 6.85 65.48 17.46 30.4 52.56 46.04 86.84 38.68 15.24 17.18 37.16 26.95 60.13 26.8 35.06.09 66.16-22.49 76.94-55.86 22.51-4.61 41.94-18.7 53.31-38.67 17.57-30.32 13.55-68.51-9.94-94.51zm-120.28 168.11c-14.03.02-27.62-4.89-38.39-13.88.49-.26 1.34-.73 1.89-1.07l63.72-36.8c3.26-1.85 5.26-5.32 5.24-9.07v-89.83l26.93 15.55c.29.14.48.42.52.74v74.39c-.04 33.08-26.83 59.9-59.91 59.97zm-128.84-55.03c-7.03-12.14-9.56-26.37-7.15-40.18.47.28 1.3.79 1.89 1.13l63.72 36.8c3.23 1.89 7.23 1.89 10.47 0l77.79-44.92v31.1c.02.32-.13.63-.38.83l-64.41 37.19c-28.69 16.52-65.33 6.7-81.92-21.95zm-16.77-139.09c7-12.16 18.05-21.46 31.21-26.29 0 .55-.03 1.52-.03 2.2v73.61c-.02 3.74 1.98 7.21 5.23 9.06l77.79 44.91-26.93 15.55c-.27.18-.61.21-.91.08l-64.42-37.22c-28.63-16.58-38.45-53.21-21.95-81.89zm221.26 51.49-77.79-44.92 26.93-15.54c.27-.18.61-.21.91-.08l64.42 37.19c28.68 16.57 38.51 53.26 21.94 81.94-7.01 12.14-18.05 21.44-31.2 26.28v-75.81c.03-3.74-1.96-7.2-5.2-9.06zm26.8-40.34c-.47-.29-1.3-.79-1.89-1.13l-63.72-36.8c-3.23-1.89-7.23-1.89-10.47 0l-77.79 44.92v-31.1c-.02-.32.13-.63.38-.83l64.41-37.16c28.69-16.55 65.37-6.7 81.91 22 6.99 12.12 9.52 26.31 7.15 40.1zm-168.51 55.43-26.94-15.55c-.29-.14-.48-.42-.52-.74v-74.39c.02-33.12 26.89-59.96 60.01-59.94 14.01 0 27.57 4.92 38.34 13.88-.49.26-1.33.73-1.89 1.07l-63.72 36.8c-3.26 1.85-5.26 5.31-5.24 9.06l-.04 89.79zm14.63-31.54 34.65-20.01 34.65 20v40.01l-34.65 20-34.65-20z" />
+  </svg>
 );
 
 const HardwareBadge: React.FC<{ type: string }> = ({ type }) => {
@@ -132,10 +182,188 @@ const DriverInstructions = ({ hw, os }: { hw: string; os: string }) => {
   return null;
 };
 
-const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
+const fallbackGoogleModelOptions: DesignDropdownOption[] = [
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', description: 'Stable fast vision model', icon: <GeminiLogo size={14} /> },
+  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', description: 'Stable multimodal with large context', icon: <GeminiLogo size={14} /> },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', description: 'Stable fast vision analysis', icon: <GeminiLogo size={14} /> },
+];
+
+let cachedGoogleOptions: DesignDropdownOption[] | null = null;
+
+const openaiModelOptions: DesignDropdownOption[] = [
+  { value: 'gpt-4o', label: 'GPT-4o', description: 'Omni model with native vision capabilities', icon: <ChatGPTLogo size={14} color="white" /> },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini', description: 'Lightweight and fast vision analysis', icon: <ChatGPTLogo size={14} color="white" /> },
+  { value: 'o1', label: 'GPT-o1', description: 'Advanced reasoning with vision support', icon: <ChatGPTLogo size={14} color="white" /> },
+];
+
+const anthropicModelOptions: DesignDropdownOption[] = [
+  { value: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet', description: 'Exceptional image reasoning and detail', icon: <ClaudeLogo size={14} /> },
+  { value: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku', description: 'Ultra-fast vision understanding', icon: <ClaudeLogo size={14} /> },
+  { value: 'claude-3-opus-latest', label: 'Claude 3 Opus', description: 'Deepest multimodal comprehension', icon: <ClaudeLogo size={14} /> },
+];
+
+// Providers known to only have .png on openrouter (no .svg)
+const pngOnlyProviders = new Set(['qwen', 'mistralai']);
+
+const providerOpenRouterIconMap: Record<string, string> = {
+  google: 'GoogleGemini',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  'meta-llama': 'Meta',
+  mistralai: 'Mistral',
+  cohere: 'Cohere',
+  qwen: 'Qwen',
+  'x-ai': 'X',
+  xiaomi: 'Xiaomi',
+  'z-ai': 'Zhipu',
+  moonshot: 'Moonshot',
+  nvidia: 'NvidiaAPI',
+  deepseek: 'DeepSeek',
+  microsoft: 'Microsoft',
+  '01-ai': '01',
+  databricks: 'Databricks',
+  'arcee-ai': 'ArceeAI',
+  minimax: 'MiniMax',
+  amazon: 'Amazon',
+  bytedance: 'ByteDance',
+  reka: 'Reka',
+};
+
+const providerDomainMap: Record<string, string> = {
+  google: 'google.com',
+  openai: 'openai.com',
+  anthropic: 'anthropic.com',
+  'meta-llama': 'meta.com',
+  mistralai: 'mistral.ai',
+  cohere: 'cohere.com',
+  qwen: 'qwenlm.github.io',
+  'x-ai': 'x.ai',
+  xiaomi: 'xiaomi.com',
+  'z-ai': 'zhipuai.cn',
+  moonshot: 'moonshot.ai',
+  'arcee-ai': 'arcee.ai',
+  nvidia: 'nvidia.com',
+  '01-ai': '01.ai',
+  databricks: 'databricks.com',
+  microsoft: 'microsoft.com',
+  deepseek: 'deepseek.com',
+  amazon: 'nova.amazon.com',
+  bytedance: 'seed.bytedance.com',
+  minimax: 'minimaxi.com',
+  reka: 'huggingface.co',
+};
+
+const ModelIcon = ({ providerId }: { providerId: string }) => {
+  // 0 = openrouter .svg, 1 = openrouter .png, 2 = google favicon, 3 = logo fallback
+  const startStage = pngOnlyProviders.has(providerId) ? 1 : 0;
+  const [stage, setStage] = useState<0 | 1 | 2 | 3>(startStage);
+
+  if (stage === 3) return <OpenRouterLogo size={14} />;
+
+  const shouldInvert = providerId === 'openai';
+  const filterStyle = shouldInvert ? 'invert(1) brightness(2)' : 'none';
+
+  let src: string;
+  if (stage === 0 || stage === 1) {
+    const iconName = providerOpenRouterIconMap[providerId] ||
+      (providerId.charAt(0).toUpperCase() + providerId.slice(1));
+    const ext = stage === 0 ? 'svg' : 'png';
+    src = `https://openrouter.ai/images/icons/${iconName}.${ext}`;
+  } else {
+    const domain = providerDomainMap[providerId] || `${providerId}.com`;
+    src = `https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=256`;
+  }
+
+  return (
+    <img
+      src={src}
+      width={14}
+      height={14}
+      onError={() => setStage(prev => Math.min(prev + 1, 3) as 1 | 2 | 3)}
+      alt={providerId}
+      style={{ objectFit: 'contain', filter: filterStyle, borderRadius: '2px' }}
+    />
+  );
+};
+
+const initialOpenRouterModelOptions: DesignDropdownOption[] = [
+  { value: 'meta-llama/llama-3.2-11b-vision-instruct:free', label: 'Llama 3.2 11B Vision (Free)', description: 'Free vision model via OpenRouter', icon: <ModelIcon providerId="meta-llama" /> },
+  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Fast multimodal via OpenRouter', icon: <ModelIcon providerId="google" /> },
+  { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet', description: 'Excellent vision via OpenRouter', icon: <ModelIcon providerId="anthropic" /> },
+];
+
+
+let cachedOpenRouterOptions: DesignDropdownOption[] | null = null;
+
+const JsonEditor = ({
+  value,
+  onChange,
+  error,
+  readOnly = false,
+}: {
+  value: string;
+  onChange?: (val: string) => void;
+  error?: string | null;
+  readOnly?: boolean;
+}) => {
+  const [localValue, setLocalValue] = useState(value);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    if (readOnly) return;
+    const val = e.target.value;
+    setLocalValue(val);
+    onChange?.(val);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly) return;
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = e.currentTarget.selectionStart;
+      const end = e.currentTarget.selectionEnd;
+      const newValue = localValue.substring(0, start) + '  ' + localValue.substring(end);
+      setLocalValue(newValue);
+      onChange?.(newValue);
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.selectionStart = textareaRef.current.selectionEnd = start + 2;
+        }
+      }, 0);
+    }
+  };
+
+  return (
+    <div className={`wsm-json-editor ${error ? 'has-error' : ''} ${readOnly ? 'is-readonly' : ''}`}>
+      <div className="wsm-json-container">
+        <textarea
+          ref={textareaRef}
+          value={localValue}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder={readOnly ? "No response data available yet." : "Enter JSON structure..."}
+          readOnly={readOnly}
+        />
+      </div>
+    </div>
+  );
+};
+
+const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSettingsModalProps) => {
   const lastUsedHardware = useStore((state) => state.lastUsedHardware);
   const autoUnload = useStore((state) => state.autoUnload);
   const setAutoUnload = useStore((state) => state.setAutoUnload);
+  const selectedId = useStore((state) => state.selectedId);
+  const currentCrop = useStore(
+    useCallback((state) => state.cropData.get(selectedId || ''), [selectedId]),
+  );
+  const updateCropEntry = useStore((state) => state.updateCropEntry);
   const [status, setStatus] = useState<WatermarkSidecarStatus | null>(null);
   const [isSetupRunning, setIsSetupRunning] = useState(false);
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
@@ -146,9 +374,127 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
   const [selectedDetectionId, setSelectedDetectionId] = useState('florence-2-large');
   const [selectedInpaintingId, setSelectedInpaintingId] = useState('lama');
 
-  const [activeTab, setActiveTab] = useState<'engine' | 'tips'>('engine');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+
+  const captioningSettings = useStore((state) => state.captioningSettings);
+  const setCaptioningSettings = useStore((state) => state.setCaptioningSettings);
+  const updateProviderSettings = useStore((state) => state.updateProviderSettings);
+  const addToast = useStore((state) => state.addToast);
   const [logsCopied, setLogsCopied] = useState(false);
+  const [customApiTab, setCustomApiTab] = useState<'prompt' | 'payload' | 'response'>('prompt');
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [lastCustomPrompt, setLastCustomPrompt] = useState<string | null>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
+
+  const [openrouterModelOptions, setOpenrouterModelOptions] = useState<DesignDropdownOption[]>(
+    cachedOpenRouterOptions || initialOpenRouterModelOptions
+  );
+  const [googleModelOptions, setGoogleModelOptions] = useState<DesignDropdownOption[]>(
+    cachedGoogleOptions || fallbackGoogleModelOptions
+  );
+
+  useEffect(() => {
+    const apiKey = captioningSettings.google?.apiKey;
+    if (captioningSettings.provider === 'google' && apiKey && !cachedGoogleOptions) {
+      const fetchGoogleModels = async () => {
+        try {
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=200`
+          );
+          const data = await res.json();
+          if (!data.models) return;
+          const EXCLUDE = /tts|audio|live|embedding|robotics|computer.use|deep.research|nano.banana|image(?!\w)/i;
+          const visionModels = data.models.filter((m: any) =>
+            m.supportedGenerationMethods?.includes('generateContent') &&
+            m.name.startsWith('models/gemini-') &&
+            !EXCLUDE.test(m.name)
+          );
+          visionModels.sort((a: any, b: any) => b.name.localeCompare(a.name));
+          const options = visionModels.map((m: any) => {
+            const id = m.name.replace('models/', '');
+            const label = m.displayName || id;
+            return {
+              value: id,
+              label,
+              description: m.description?.slice(0, 60) || 'Google Gemini model',
+              icon: <GeminiLogo size={14} />,
+            };
+          });
+          if (options.length > 0) {
+            cachedGoogleOptions = options;
+            setGoogleModelOptions(options);
+          }
+        } catch (e) {
+          console.error('Failed to fetch Google models:', e);
+        }
+      };
+      fetchGoogleModels();
+    }
+  }, [captioningSettings.provider, captioningSettings.google?.apiKey]);
+
+  useEffect(() => {
+    if (captioningSettings.provider === 'openrouter' && !cachedOpenRouterOptions) {
+      const fetchModels = async () => {
+        try {
+          const res = await fetch('https://openrouter.ai/api/v1/models');
+          const data = await res.json();
+          const visionModels = data.data.filter((m: any) => 
+            m.architecture?.input_modalities?.includes('image') || 
+            (m.architecture?.modality && String(m.architecture.modality).includes('image'))
+          );
+          
+          visionModels.sort((a: any, b: any) => {
+            const aFree = a.pricing?.prompt === "0" || a.pricing?.prompt === 0;
+            const bFree = b.pricing?.prompt === "0" || b.pricing?.prompt === 0;
+            if (aFree && !bFree) return -1;
+            if (!aFree && bFree) return 1;
+            return a.name.localeCompare(b.name);
+          });
+
+          const options = visionModels.map((m: any) => {
+            const providerId = m.id.split('/')[0];
+            return {
+              value: m.id,
+              label: m.name,
+              description: `Max Context: ${m.context_length} | ${m.pricing?.prompt === "0" || m.pricing?.prompt === 0 ? 'Free' : 'Paid'}`,
+              icon: <ModelIcon providerId={providerId} />,
+            };
+          });
+          
+          if (options.length > 0) {
+            cachedOpenRouterOptions = options;
+            setOpenrouterModelOptions(options);
+          }
+        } catch (e) {
+          console.error("Failed to fetch OpenRouter models:", e);
+        }
+      };
+      fetchModels();
+    }
+  }, [captioningSettings.provider]);
+
+  const applyPreset = useCallback((presetValue: string) => {
+    const current = captioningSettings.systemPrompt;
+    const presets = [
+      'Provide a clear, objective, and concise description of the image. Focus on the primary subjects, their actions, and the overall setting without unnecessary interpretation.',
+      'Acting as an expert Alt-Text generator, describe this image in high detail for accessibility. Focus on the central subject, specific colors, textures, lighting, spatial layout, and any legible text. Adhere to WCAG 2.1 AA standards for clarity and usability.',
+      'Write a creative and evocative caption that captures the mood, atmosphere, and emotional tone of the scene. Utilize vivid terminology and metaphors to bring the stylistic elements, color palette, and "story" of the image to life.'
+    ];
+    
+    // If current is NOT a preset and NOT empty, back it up
+    if (current && !presets.includes(current)) {
+      setLastCustomPrompt(current);
+    }
+    
+    setCaptioningSettings({ systemPrompt: presetValue });
+  }, [captioningSettings.systemPrompt, setCaptioningSettings]);
+
+  const revertPrompt = useCallback(() => {
+    if (lastCustomPrompt !== null) {
+      setCaptioningSettings({ systemPrompt: lastCustomPrompt });
+      setLastCustomPrompt(null);
+    }
+  }, [lastCustomPrompt, setCaptioningSettings]);
   const wipeTimeoutRef = useRef<number | null>(null);
   const deleteTimeoutRef = useRef<Record<string, number>>({});
 
@@ -159,6 +505,8 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
     };
   }, []);
 
+  const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
+
   const fetchStatus = useCallback(async () => {
     try {
       const nextStatus = await invoke<WatermarkSidecarStatus>('get_watermark_sidecar_status');
@@ -166,6 +514,18 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
     } catch (error) {
       console.error('Failed to fetch sidecar status:', error);
     }
+  }, []);
+
+  useEffect(() => {
+    const fetchGitInfo = async () => {
+      try {
+        const info = await invoke<GitInfo>('get_git_info');
+        setGitInfo(info);
+      } catch (e) {
+        console.error('Failed to fetch git info:', e);
+      }
+    };
+    fetchGitInfo();
   }, []);
 
   useEffect(() => {
@@ -205,6 +565,23 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
+
+  useEffect(() => {
+    const loadSecureKeys = async () => {
+      const providers = ['google', 'openai', 'anthropic', 'openrouter'] as const;
+      for (const provider of providers) {
+        try {
+          const key = await invoke<string>('get_secure_api_key', { provider });
+          if (key) {
+            updateProviderSettings(provider, { apiKey: key });
+          }
+        } catch (error) {
+          console.error(`Failed to load secure key for ${provider}:`, error);
+        }
+      }
+    };
+    loadSecureKeys();
+  }, [updateProviderSettings]);
 
   const handleRunSetup = async (force = false) => {
     if (isSetupRunning) return;
@@ -398,6 +775,7 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
       role="presentation"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
+      <GeminiGradient />
       <motion.section
         layout
         className="wsm-modal"
@@ -460,6 +838,21 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
 
           <button
             type="button"
+            className={`wsm-tab ${activeTab === 'captioning' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('captioning')}
+          >
+            <MessageSquare size={14} />
+            Captioning
+            {activeTab === 'captioning' && (
+              <motion.div
+                layoutId="wsm-tab-indicator"
+                className="wsm-tab-active-indicator"
+              />
+            )}
+          </button>
+
+          <button
+            type="button"
             className={`wsm-tab ${activeTab === 'tips' ? 'is-active' : ''}`}
             onClick={() => setActiveTab('tips')}
           >
@@ -486,7 +879,7 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                 className="wsm-tab-pane"
               >
                 {/* Body */}
-                <div className="wsm-body">
+                <div className="wsm-body is-scrollable">
                   {!status ? (
                     <div className="wsm-loading">
                       <RefreshCcw
@@ -1049,6 +1442,9 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                         </div>
                       </div>
 
+
+
+
                       <section className="wsm-card wsm-card-logs wsm-full-width-logs">
                         <div className="wsm-logs-header">
                           <span>
@@ -1129,6 +1525,11 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                   </div>
 
                   <div className="wsm-footer-status">
+                    {gitInfo ? (
+                      <span className="wsm-version-info" title={`Built from commit ${gitInfo.hash} on ${new Date(parseInt(gitInfo.date) * 1000).toLocaleString()}`}>
+                        {gitInfo.hash} • {new Date(parseInt(gitInfo.date) * 1000).toLocaleString()}
+                      </span>
+                    ) : null}
                     {!status || isFullySetup ? null : (
                       <span className="wsm-status-warn">
                         <AlertTriangle size={13} />
@@ -1169,6 +1570,351 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                     </button>
                   </div>
                 </footer>
+              </motion.div>
+            )}
+
+            {activeTab === 'captioning' && (
+              <motion.div
+                key="captioning"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
+                className="wsm-tab-pane"
+              >
+                <div className="wsm-body" style={{ overflow: 'hidden' }}>
+                  <div className="wsm-captioning-layout">
+                    {/* Left Column: Provider & Model */}
+                    <div className="wsm-captioning-col">
+                      <section className="wsm-card">
+                        <h3>AI Provider</h3>
+                        <div className="wsm-provider-grid">
+                          <button
+                            type="button"
+                            className={`wsm-provider-btn ${captioningSettings.provider === 'google' ? 'is-active' : ''}`}
+                            onClick={() => setCaptioningSettings({ ...captioningSettings, provider: 'google' })}
+                          >
+                            <GeminiLogo size={24} />
+                            <span>Gemini</span>
+                          </button>
+                          <button
+                            type="button"
+                            className={`wsm-provider-btn ${captioningSettings.provider === 'openai' ? 'is-active' : ''} is-disabled`}
+                            onClick={() => setCaptioningSettings({ ...captioningSettings, provider: 'openai' })}
+                            title="OpenAI support coming soon"
+                          >
+                            <ChatGPTLogo size={24} color="white" />
+                            <span>OpenAI</span>
+                            <div className="wsm-coming-soon">Soon</div>
+                          </button>
+                          <button
+                            type="button"
+                            className={`wsm-provider-btn ${captioningSettings.provider === 'anthropic' ? 'is-active' : ''} is-disabled`}
+                            onClick={() => setCaptioningSettings({ ...captioningSettings, provider: 'anthropic' })}
+                            title="Anthropic support coming soon"
+                          >
+                            <ClaudeLogo size={24} />
+                            <span>Anthropic</span>
+                            <div className="wsm-coming-soon">Soon</div>
+                          </button>
+                          <button
+                            type="button"
+                            className={`wsm-provider-btn ${captioningSettings.provider === 'openrouter' ? 'is-active' : ''}`}
+                            onClick={() => setCaptioningSettings({ provider: 'openrouter' })}
+                          >
+                            <OpenRouterLogo size={24} className="icon-gradient" />
+                            <span>OpenRouter</span>
+                          </button>
+                          <button
+                            type="button"
+                            className={`wsm-provider-btn ${captioningSettings.provider === 'custom' ? 'is-active' : ''}`}
+                            onClick={() => setCaptioningSettings({ provider: 'custom' })}
+                          >
+                            <Terminal size={24} color="white" />
+                            <span>Custom API</span>
+                          </button>
+                        </div>
+                      </section>
+
+                      {captioningSettings.provider !== 'custom' ? (
+                        <>
+                          <section className="wsm-card">
+                            <h3>Model Selection</h3>
+                            <div className="wsm-model-select-wrap">
+                              {captioningSettings.provider === 'google' && (
+                                <DesignDropdown
+                                  value={captioningSettings.google.model}
+                                  options={googleModelOptions}
+                                  onChange={(val) => updateProviderSettings('google', { model: val })}
+                                />
+                              )}
+                              {captioningSettings.provider === 'openai' && (
+                                <DesignDropdown
+                                  value={captioningSettings.openai.model}
+                                  options={openaiModelOptions}
+                                  onChange={(val) => updateProviderSettings('openai', { model: val })}
+                                />
+                              )}
+                              {captioningSettings.provider === 'anthropic' && (
+                                <DesignDropdown
+                                  value={captioningSettings.anthropic.model}
+                                  options={anthropicModelOptions}
+                                  onChange={(val) => updateProviderSettings('anthropic', { model: val })}
+                                />
+                              )}
+                              {captioningSettings.provider === 'openrouter' && (
+                                <DesignDropdown
+                                  value={captioningSettings.openrouter?.model || 'meta-llama/llama-3.2-11b-vision-instruct:free'}
+                                  options={openrouterModelOptions}
+                                  onChange={(val) => updateProviderSettings('openrouter', { model: val })}
+                                />
+                              )}
+                            </div>
+                          </section>
+
+                          <section className="wsm-card">
+                            <h3>API Key</h3>
+                            <div className="wsm-input-wrapper">
+                              <input
+                                type="password"
+                                placeholder={`Enter ${captioningSettings.provider.charAt(0).toUpperCase() + captioningSettings.provider.slice(1)} API Key`}
+                                className="wsm-input"
+                                value={captioningSettings[captioningSettings.provider]?.apiKey || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  updateProviderSettings(captioningSettings.provider, { apiKey: val });
+                                  invoke('save_secure_api_key', { provider: captioningSettings.provider, key: val });
+                                }}
+                              />
+                            </div>
+                            <p className="wsm-input-hint">
+                              Keys are stored locally and never sent to our servers.
+                            </p>
+                          </section>
+                        </>
+                      ) : (
+                        <section className="wsm-card is-full-height" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                          <h3 style={{ marginBottom: 12, flexShrink: 0 }}>Custom API Configuration</h3>
+                          
+                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto', paddingRight: 4, paddingBottom: 4 }}>
+                            <label className="export-plan-field">
+                              <span>Endpoint URL</span>
+                              <input 
+                                type="text" 
+                                placeholder="http://localhost:11434/v1/chat/completions"
+                                className="input"
+                                value={captioningSettings.custom.endpoint}
+                                onChange={(e) => updateProviderSettings('custom', { endpoint: e.target.value })}
+                              />
+                            </label>
+
+                            <label className="export-plan-field">
+                              <span>Authentication Header (Optional)</span>
+                              <input
+                                type="password"
+                                placeholder="Bearer <Key>"
+                                className="input"
+                                value={captioningSettings.custom.apiKey}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  updateProviderSettings('custom', { apiKey: val });
+                                  invoke('save_secure_api_key', { provider: 'custom', key: val });
+                                }}
+                              />
+                            </label>
+
+                            <label className="export-plan-field">
+                              <span>Response JSON Path</span>
+                              <input 
+                                type="text" 
+                                placeholder="choices[0].message.content"
+                                className="input"
+                                value={captioningSettings.custom.responseField}
+                                onChange={(e) => updateProviderSettings('custom', { responseField: e.target.value })}
+                              />
+                            </label>
+                          </div>
+                        </section>
+                      )}
+                    </div>
+
+                    {/* Right Column: Instructions / JSON Payload (custom API uses segmented control) */}
+                    <div className="wsm-captioning-col">
+                      <section className="wsm-card is-full-height">
+                        {captioningSettings.provider === 'custom' && (
+                          <div className="wsm-custom-tab-header">
+                            <SegmentedControl
+                              value={customApiTab}
+                              options={[
+                                { value: 'prompt', label: 'Instructions' },
+                                { value: 'payload', label: 'Payload' },
+                                { value: 'response', label: 'Response' },
+                              ]}
+                              onChange={(v) => setCustomApiTab(v as any)}
+                              ariaLabel="Custom API editor tab"
+                              equalWidth
+                            />
+                          </div>
+                        )}
+
+                        {/* System Instructions panel */}
+                        <div 
+                          className="wsm-custom-tab-pane" 
+                          style={{ display: (captioningSettings.provider !== 'custom' || customApiTab === 'prompt') ? 'flex' : 'none' }}
+                        >
+                          {captioningSettings.provider !== 'custom' && (
+                            <div className="section-header">
+                              <h3 className="section-label">System Instructions</h3>
+                              <div className="section-header-tools">
+                                <button 
+                                  type="button" 
+                                  className="btn-icon-subtle"
+                                  onClick={revertPrompt}
+                                  disabled={!lastCustomPrompt}
+                                  title={lastCustomPrompt ? "Restore your previous custom prompt" : "No custom prompt to restore"}
+                                >
+                                  <RotateCcw size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          {captioningSettings.provider === 'custom' && (
+                            <div className="section-header">
+                              <div className="section-header-tools" style={{ marginLeft: 'auto' }}>
+                                <button 
+                                  type="button" 
+                                  className="btn-icon-subtle"
+                                  onClick={revertPrompt}
+                                  disabled={!lastCustomPrompt}
+                                  title={lastCustomPrompt ? "Restore your previous custom prompt" : "No custom prompt to restore"}
+                                >
+                                  <RotateCcw size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          <div className="wsm-textarea-wrapper">
+                            <textarea
+                              className="wsm-textarea"
+                              placeholder="e.g. Generate a concise and accurate caption for this image. Focus on the main subject and key details."
+                              value={captioningSettings.systemPrompt}
+                              onChange={(e) => setCaptioningSettings({ systemPrompt: e.target.value })}
+                            />
+                            <div className="wsm-prompt-pills">
+                              <button 
+                                type="button" 
+                                className="wsm-pill"
+                                onClick={() => applyPreset('Provide a clear, objective, and concise description of the image. Focus on the primary subjects, their actions, and the overall setting without unnecessary interpretation.')}
+                              >
+                                Standard
+                              </button>
+                              <button 
+                                type="button" 
+                                className="wsm-pill"
+                                onClick={() => applyPreset('Acting as an expert Alt-Text generator, describe this image in high detail for accessibility. Focus on the central subject, specific colors, textures, lighting, spatial layout, and any legible text. Adhere to WCAG 2.1 AA standards for clarity and usability.')}
+                              >
+                                Detailed
+                              </button>
+                              <button 
+                                type="button" 
+                                className="wsm-pill"
+                                onClick={() => applyPreset('Write a creative and evocative caption that captures the mood, atmosphere, and emotional tone of the scene. Utilize vivid terminology and metaphors to bring the stylistic elements, color palette, and "story" of the image to life.')}
+                              >
+                                Creative
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* JSON Payload panel — only in Custom API mode */}
+                        <div 
+                          className="wsm-custom-tab-pane" 
+                          style={{ display: (captioningSettings.provider === 'custom' && customApiTab === 'payload') ? 'flex' : 'none' }}
+                        >
+                          <div className="wsm-json-editor-header" style={{ flexWrap: 'nowrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 1, minWidth: 0 }}>
+                              <span className="export-plan-token" style={{ flexShrink: 0 }}>{`{{image}}`}</span>
+                              <span className="export-plan-token" style={{ flexShrink: 0 }}>{`{{prompt}}`}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                              {jsonError && (
+                                <span className="wsm-json-error-pill">
+                                  <AlertTriangle size={11} />
+                                  {jsonError}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                className="btn-icon-subtle"
+                                title="Format JSON"
+                                onClick={() => {
+                                  const raw = captioningSettings.custom.customBodyTemplate ?? DEFAULT_JSON_TEMPLATE;
+                                  try {
+                                    const parsed = JSON.parse(raw);
+                                    updateProviderSettings('custom', { customBodyTemplate: JSON.stringify(parsed, null, 2) });
+                                    setJsonError(null);
+                                  } catch (e) {
+                                    setJsonError('Invalid JSON');
+                                  }
+                                }}
+                              >
+                                <Sparkles size={13} />
+                              </button>
+                            </div>
+                          </div>
+                          <JsonEditor
+                            value={captioningSettings.custom.customBodyTemplate ?? DEFAULT_JSON_TEMPLATE}
+                            onChange={(val) => {
+                              updateProviderSettings('custom', { customBodyTemplate: val });
+                              setJsonError(null);
+                            }}
+                            error={jsonError}
+                          />
+                        </div>
+
+                        {/* Response panel */}
+                        <div 
+                          className="wsm-custom-tab-pane" 
+                          style={{ display: (captioningSettings.provider === 'custom' && customApiTab === 'response') ? 'flex' : 'none' }}
+                        >
+                          <div className="wsm-json-editor-header" style={{ flexWrap: 'nowrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 1, minWidth: 0 }}>
+                              <span className="export-plan-token" style={{ flexShrink: 0, opacity: 0.7 }}>Last API Response</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                              <button
+                                type="button"
+                                className="btn-icon-subtle"
+                                title="Copy to Clipboard"
+                                onClick={() => {
+                                  if (captioningSettings.custom.lastResponse) {
+                                    navigator.clipboard.writeText(captioningSettings.custom.lastResponse);
+                                    addToast('Response copied to clipboard', 'success');
+                                  }
+                                }}
+                                disabled={!captioningSettings.custom.lastResponse}
+                              >
+                                <Copy size={13} />
+                              </button>
+                            </div>
+                          </div>
+                          <JsonEditor
+                            value={captioningSettings.custom.lastResponse ? (
+                              (() => {
+                                try {
+                                  return JSON.stringify(JSON.parse(captioningSettings.custom.lastResponse), null, 2);
+                                } catch {
+                                  return captioningSettings.custom.lastResponse;
+                                }
+                              })()
+                            ) : ''}
+                            readOnly={true}
+                          />
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+                </div>
               </motion.div>
             )}
 
@@ -1223,6 +1969,22 @@ const WatermarkSettingsModal = ({ onClose }: WatermarkSettingsModalProps) => {
                     <p className="wsm-tip-desc">
                       Apply your tweaks instantly to all generated images using the
                       "Bulk Apply" menu in the toolbar.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="wsm-tip-card">
+                  <div className="wsm-tip-header">
+                    <div className="wsm-tip-icon-wrap">
+                      <ClipboardCopy size={18} />
+                    </div>
+                    <h4 className="wsm-tip-title">Quick Image Pasting</h4>
+                  </div>
+                  <div className="wsm-tip-content">
+                    <p className="wsm-tip-desc">
+                      Press <span className="wsm-key-hint">Ctrl</span> + <span className="wsm-key-hint">V</span> or{' '}
+                      <span className="wsm-key-hint"><Command size={11} className="wsm-key-icon" /> Cmd</span> + <span className="wsm-key-hint">V</span> to 
+                      immediately start a Single Image Edit session with your clipboard image.
                     </p>
                   </div>
                 </div>

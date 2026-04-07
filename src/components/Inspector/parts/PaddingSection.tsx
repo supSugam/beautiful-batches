@@ -20,9 +20,9 @@ const DEFAULT_GRADIENT_START = '#ffffff';
 const DEFAULT_GRADIENT_END = '#0f172a';
 const DEFAULT_GRADIENT_ANGLE = 90;
 const COLOR_PRESETS = Object.freeze([
-  '#0f172a', '#6366f1', '#7c3aed', '#2563eb', '#3b82f6', '#0d9488', '#fecaca',
-  '#f59e0b', '#ea580c', '#fb7185', '#be123c', '#ff006e', '#a3a3a3', '#737373',
-  '#d4d4d4', '#ffffff'
+  '#000000', '#ffffff', '#737373', '#d4d4d4', '#0f172a', 
+  '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', 
+  '#3b82f6', '#6366f1', '#a855f7', '#ec4899'
 ]);
 
 const FILL_TYPE_OPTIONS: Array<{
@@ -324,6 +324,30 @@ const stepValueAtCursor = (
   };
 };
 
+const handleSteppedNumericKeyDown = (
+  e: React.KeyboardEvent<HTMLInputElement>,
+  onChange: (value: string) => void,
+) => {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    const input = e.currentTarget;
+    const delta = e.key === 'ArrowUp' ? (e.shiftKey ? 10 : 1) : (e.shiftKey ? -10 : -1);
+    
+    const result = stepValueAtCursor(
+      input.value,
+      input.selectionStart,
+      input.selectionEnd,
+      delta,
+    );
+    if (result) {
+      onChange(result.value);
+      requestAnimationFrame(() => {
+        input.setSelectionRange(result.selectionStart, result.selectionEnd);
+      });
+    }
+  }
+};
+
 type PaddingSectionProps = {
   paddingPx: number;
   paddingMaxPx: number;
@@ -357,197 +381,165 @@ const PaddingSection = ({
   handlePaddingImageFileChange,
   handleResetTweaks,
 }: PaddingSectionProps) => {
-  const [colors, setColors] = useState<string[]>([DEFAULT_SOLID]);
-  const [gradientAngle, setGradientAngle] = useState(DEFAULT_GRADIENT_ANGLE);
-  const [gradientType, setGradientType] = useState<'linear' | 'radial'>('linear');
-  const [activePickerKey, setActivePickerKey] = useState<string | null>(null);
+  // --- Internal State Management ---
+  // We keep local state for the gradient components to ensure smooth interaction.
+  // We initialize this state from props on mount (keyed by imageId in parent)
+  // and when the fill type changes to 'color'.
+  const [colors, setColors] = useState<string[]>(() => {
+    const parsed = parseGradientValue(paddingFillValue) || parseRadialGradient(paddingFillValue);
+    if (parsed) return [parsed.start, parsed.end];
+    return [normalizeColor(paddingFillValue, DEFAULT_SOLID)];
+  });
+  
+  const [gradientAngle, setGradientAngle] = useState(() => {
+    const parsed = parseGradientValue(paddingFillValue);
+    return parsed ? parsed.angle : DEFAULT_GRADIENT_ANGLE;
+  });
 
+  const [gradientType, setGradientType] = useState<'linear' | 'radial'>(() => {
+    return parseRadialGradient(paddingFillValue) ? 'radial' : 'linear';
+  });
 
-  const [pickerHexInput, setPickerHexInput] = useState(DEFAULT_SOLID);
-  const pickerAnchorRef = useRef<HTMLElement | null>(null);
-  const pickerPopoverRef = useRef<HTMLDivElement | null>(null);
-  const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
-  const lastNumericStepAtRef = useRef(0);
-  const paddingDragRemainderRef = useRef(0);
-  const paddingPxRef = useRef(paddingPx);
-  paddingPxRef.current = paddingPx;
+  // These refs keep the store-pushing logic stable without re-creating callbacks.
+  const stateRef = useRef({
+    colors,
+    angle: gradientAngle,
+    type: gradientType,
+    lastPushed: paddingFillValue,
+    isInteracting: false
+  });
 
+  // Sync stateRef when state changes locally
+  useEffect(() => {
+    stateRef.current.colors = colors;
+    stateRef.current.angle = gradientAngle;
+    stateRef.current.type = gradientType;
+  }, [colors, gradientAngle, gradientType]);
 
+  // Sync internal state if paddingFillValue changes FROM OUTSIDE (e.g. undo/redo, image switch)
   useEffect(() => {
     if (paddingFillType !== 'color') return;
+    
+    // IF WE ARE INTERACTING OR THE VALUE MATCHES WHAT WE LAST SENT, IGNORE THE STORE.
+    // This is the primary fix for the "jitter" / "snapping back" problem.
+    if (stateRef.current.isInteracting || paddingFillValue === stateRef.current.lastPushed) {
+      return;
+    }
+    
     const parsedGradient = parseGradientValue(paddingFillValue);
     if (parsedGradient) {
       setColors([parsedGradient.start, parsedGradient.end]);
       setGradientAngle(parsedGradient.angle);
       setGradientType('linear');
+      stateRef.current.lastPushed = paddingFillValue;
       return;
     }
+    
     const parsedRadial = parseRadialGradient(paddingFillValue);
     if (parsedRadial) {
       setColors([parsedRadial.start, parsedRadial.end]);
       setGradientType('radial');
+      stateRef.current.lastPushed = paddingFillValue;
       return;
     }
-    setColors([normalizeColor(paddingFillValue, DEFAULT_SOLID)]);
+    
+    const singleColor = normalizeColor(paddingFillValue, DEFAULT_SOLID);
+    setColors([singleColor]);
+    stateRef.current.lastPushed = paddingFillValue;
   }, [paddingFillValue, paddingFillType]);
 
-  useEffect(() => {
-    if (paddingFillType !== 'color') return;
-    if (colors.length === 2) {
-      const nextValue = gradientType === 'linear'
-        ? buildLinearGradient(colors[0], colors[1], gradientAngle)
-        : buildRadialGradient(colors[0], colors[1]);
-      if (paddingFillValue !== nextValue) {
-        handlePaddingFillValueChange(nextValue);
-      }
-    } else {
-      if (paddingFillValue !== colors[0]) {
-        handlePaddingFillValueChange(colors[0]);
-      }
-    }
-  }, [colors, gradientAngle, gradientType, paddingFillType, handlePaddingFillValueChange, paddingFillValue]);
-
-
-
-  useEffect(() => {
-    if (paddingFillType !== 'color') {
-      setActivePickerKey(null);
-    }
-  }, [paddingFillType]);
-
-
-  useEffect(() => {
-    if (!activePickerKey) return undefined;
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (pickerAnchorRef.current?.contains(target)) return;
-      if (pickerPopoverRef.current?.contains(target)) return;
-      setActivePickerKey(null);
-    };
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setActivePickerKey(null);
-      }
-    };
-
-    window.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('keydown', handleEscape);
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('keydown', handleEscape);
-    };
-  }, [activePickerKey]);
-
-  useEffect(() => {
-    if (!activePickerKey) return undefined;
-
-    const updateRect = () => {
-      const el = pickerAnchorRef.current;
-      if (!el) return;
-      setPickerAnchorRect(el.getBoundingClientRect());
-    };
-
-    updateRect();
-    window.addEventListener('resize', updateRect);
-    window.addEventListener('scroll', updateRect, true);
-    return () => {
-      window.removeEventListener('resize', updateRect);
-      window.removeEventListener('scroll', updateRect, true);
-    };
-  }, [activePickerKey]);
-
-  const onImageFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    handlePaddingImageFileChange(file || null);
-    event.target.value = '';
-  };
-
-  const handleSteppedNumericKeyDown = (
-    event: React.KeyboardEvent<HTMLInputElement>,
-    onValueChange: (value: string) => void,
+  const pushGradientUpdate = (
+    nextColors: string[],
+    nextAngle: number,
+    nextType: 'linear' | 'radial'
   ) => {
-    const { key } = event;
-    if (key !== 'ArrowUp' && key !== 'ArrowDown') {
-      return;
+    let nextValue = '';
+    if (nextColors.length === 2) {
+      nextValue = nextType === 'linear'
+        ? buildLinearGradient(nextColors[0], nextColors[1], nextAngle)
+        : buildRadialGradient(nextColors[0], nextColors[1]);
+    } else {
+      nextValue = nextColors[0];
     }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    // Avoid event-queue backlog on long key repeats, which can look like the value
-    // keeps changing after the user releases the key.
-    const now = (typeof performance !== 'undefined' && performance.now)
-      ? performance.now()
-      : Date.now();
-    if (now - lastNumericStepAtRef.current < 28) return;
-    lastNumericStepAtRef.current = now;
-
-    const inputEl = event.currentTarget;
-    const { value, selectionStart, selectionEnd } = inputEl;
-    const delta = key === 'ArrowUp' ? 1 : -1;
-    const stepped = stepValueAtCursor(value, selectionStart, selectionEnd, delta);
-    if (!stepped) return;
-
-    onValueChange(stepped.value);
-    requestAnimationFrame(() => {
-      if (document.activeElement !== inputEl) return;
-      inputEl.setSelectionRange(
-        stepped.selectionStart,
-        stepped.selectionEnd,
-      );
-    });
+    
+    if (nextValue === stateRef.current.lastPushed) return;
+    
+    stateRef.current.lastPushed = nextValue;
+    handlePaddingFillValueChange(nextValue);
   };
 
-  const updateFillValue = (nextColors: string[], nextAngle: number) => {
+  const updateColors = (nextColors: string[]) => {
     setColors(nextColors);
-    setGradientAngle(nextAngle);
-    handlePaddingFillTypeChange('color');
-    if (nextColors.length === 2) {
-      handlePaddingFillValueChange(buildLinearGradient(nextColors[0], nextColors[1], nextAngle));
-    } else {
-      handlePaddingFillValueChange(nextColors[0]);
-    }
+    pushGradientUpdate(nextColors, gradientAngle, gradientType);
+  };
+
+  const updateAngle = (nextAngle: number) => {
+    const rounded = Math.round(nextAngle);
+    setGradientAngle(rounded);
+    pushGradientUpdate(colors, rounded, gradientType);
+  };
+
+  const updateType = (nextType: 'linear' | 'radial') => {
+    setGradientType(nextType);
+    pushGradientUpdate(colors, gradientAngle, nextType);
   };
 
   const addColorRow = () => {
     if (colors.length >= 2) return;
-    updateFillValue([...colors, DEFAULT_GRADIENT_END], gradientAngle);
+    const nextColors = [...colors, DEFAULT_GRADIENT_END];
+    updateColors(nextColors);
   };
 
   const removeColorRow = (index: number) => {
     if (colors.length <= 1) return;
     const nextColors = colors.filter((_, i) => i !== index);
-    updateFillValue(nextColors, gradientAngle);
+    updateColors(nextColors);
   };
 
-  const handleColorChange = (index: number, nextColor: string) => {
-    const nextColors = [...colors];
-    nextColors[index] = normalizeColor(nextColor, nextColors[index]);
-    updateFillValue(nextColors, gradientAngle);
+  const handleColorChange = React.useCallback((index: number, nextColor: string) => {
+    stateRef.current.isInteracting = true;
+    const normalized = normalizeColor(nextColor, stateRef.current.colors[index]);
+    const nextColors = [...stateRef.current.colors];
+    nextColors[index] = normalized;
+    
+    setColors(nextColors);
+    pushGradientUpdate(nextColors, stateRef.current.angle, stateRef.current.type);
+  }, [handlePaddingFillValueChange]); // Very stable dependency array
+
+  const onImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    handlePaddingImageFileChange(file);
   };
 
+  const [activePickerKey, setActivePickerKey] = useState<string | null>(null);
+  const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
+  const pickerAnchorRef = useRef<HTMLElement | null>(null);
+  const pickerPopoverRef = useRef<HTMLDivElement | null>(null);
 
-  const openColorPicker = (pickerKey: string, currentColor: string) => {
-    setPickerHexInput(currentColor);
-    setActivePickerKey((prev) => (prev === pickerKey ? null : pickerKey));
-  };
+  useEffect(() => {
+    if (!activePickerKey) {
+      stateRef.current.isInteracting = false;
+      return;
+    }
 
-  const applyPickerColor = (
-    rawColor: string,
-    fallbackColor: string,
-    onColorChange: (value: string) => void,
-  ) => {
-    const normalized = normalizeColor(rawColor, fallbackColor);
-    setPickerHexInput(normalized);
-    onColorChange(normalized);
-  };
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const isOutsidePopover = pickerPopoverRef.current && !pickerPopoverRef.current.contains(target);
+      const isOutsideAnchor = pickerAnchorRef.current && !pickerAnchorRef.current.contains(target);
 
-  const tryNormalizePickerColor = (rawColor: string) => {
-    const parsed = normalizeColor(rawColor, '');
-    return parsed || null;
-  };
+      if (isOutsidePopover && isOutsideAnchor) {
+        setActivePickerKey(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [activePickerKey]);
+  
+  const lastNumericStepAtRef = useRef(0);
+  const paddingDragRemainderRef = useRef(0);
+  const paddingPxRef = useRef(paddingPx);
+  paddingPxRef.current = paddingPx;
 
   const renderColorRow = (color: string, index: number) => {
     const pickerKey = `color-${index}`;
@@ -557,110 +549,142 @@ const PaddingSection = ({
       <motion.div
         key={pickerKey}
         layout
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        className="padding-color-row"
+        initial={{ opacity: 0, height: 0, marginTop: 0 }}
+        animate={{ 
+          opacity: 1, 
+          height: 'auto',
+          marginTop: index > 0 ? 12 : 0
+        }}
+        exit={{ 
+          opacity: 0, 
+          height: 0, 
+          marginTop: 0,
+          transition: {
+            opacity: { duration: 0.12 },
+            height: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
+            marginTop: { duration: 0.22, ease: [0.22, 1, 0.36, 1] }
+          }
+        }}
+        transition={REVEAL_SECTION_TRANSITION}
+        className="padding-color-row-container"
+        style={{ overflow: 'hidden' }}
       >
-        <div className="padding-color-swatch-trigger">
-          <button
-            type="button"
-            className="padding-color-swatch-box"
-            style={{ backgroundColor: color }}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              pickerAnchorRef.current = event.currentTarget;
-              setPickerAnchorRect(event.currentTarget.getBoundingClientRect());
-              setActivePickerKey(prev => prev === pickerKey ? null : pickerKey);
-            }}
-            aria-label={`Choose color ${index + 1}`}
-            aria-expanded={isPickerOpen}
-          />
-          {isPickerOpen &&
-            typeof document !== 'undefined' &&
-            pickerAnchorRect &&
-            createPortal(
-              <div
-                ref={pickerPopoverRef}
-                className="padding-color-popover-new"
-                style={{
-                  position: 'fixed',
-                  zIndex: 9999,
-                  left: Math.max(
-                    12,
-                    Math.min(
-                      pickerAnchorRect.left,
-                      window.innerWidth - 252,
-                    ),
-                  ),
-                  top:
-                    pickerAnchorRect.top > 400
-                      ? pickerAnchorRect.top - 10
-                      : pickerAnchorRect.bottom + 10,
-                  transform:
-                    pickerAnchorRect.top > 400
-                      ? 'translateY(-100%)'
-                      : 'none',
-                }}
-              >
-                <AdvancedColorPicker
-                  color={color}
-                  onChange={(nextColor) => handleColorChange(index, nextColor)}
-                  presets={[...COLOR_PRESETS]}
-                />
-              </div>,
-              document.body,
-            )}
-        </div>
-        
-        <div className="padding-color-hex-field">
-          <div className="padding-color-hex-main">
-            <span className="padding-color-hex-prefix">#</span>
-            <input
-              type="text"
-              className="padding-color-hex-text"
-              value={(color || '').replace('#', '').toUpperCase()}
-              onChange={(e) => handleColorChange(index, e.target.value)}
-              onBlur={() => handleColorChange(index, color)}
-              spellCheck={false}
-              onKeyDown={(e) => e.stopPropagation()}
+        <div className="padding-color-row">
+          <div className="padding-color-swatch-trigger">
+            <button
+              type="button"
+              className="padding-color-swatch-box"
+              style={{ backgroundColor: color }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                pickerAnchorRef.current = event.currentTarget;
+                setPickerAnchorRect(event.currentTarget.getBoundingClientRect());
+                setActivePickerKey(prev => prev === pickerKey ? null : pickerKey);
+              }}
+              aria-label={`Choose color ${index + 1}`}
+              aria-expanded={isPickerOpen}
             />
-          </div>
-
-          <div className="padding-color-row-actions">
-            <AnimatePresence initial={false}>
-              {index === 0 && colors.length === 1 && (
-                <motion.button
-                  key="new-btn"
-                  initial={{ opacity: 0, x: 4 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 4 }}
-                  type="button"
-                  className="padding-color-new-btn"
-                  onClick={addColorRow}
-                >
-                  ADD
-                </motion.button>
+            {typeof document !== 'undefined' &&
+              createPortal(
+                <AnimatePresence>
+                  {isPickerOpen && pickerAnchorRect && (
+                    <div
+                      key="picker-popover-portal-container"
+                      className="padding-color-popover-new"
+                      style={{
+                        position: 'fixed',
+                        zIndex: 9999,
+                        left: Math.max(
+                          12,
+                          Math.min(
+                            pickerAnchorRect.left,
+                            window.innerWidth - 252,
+                          ),
+                        ),
+                        top:
+                          pickerAnchorRect.top > 400
+                            ? pickerAnchorRect.top - 10
+                            : pickerAnchorRect.bottom + 10,
+                        transform:
+                          pickerAnchorRect.top > 400
+                            ? 'translateY(-100%)'
+                            : 'none',
+                      }}
+                    >
+                      <motion.div
+                        key="picker-animation-wrapper"
+                        initial={{ opacity: 0, scale: 0.92, y: pickerAnchorRect.top > 400 ? 10 : -10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.92, y: pickerAnchorRect.top > 400 ? 10 : -10 }}
+                        transition={{ 
+                          type: 'spring', 
+                          damping: 25, 
+                          stiffness: 350,
+                          opacity: { duration: 0.12 }
+                        }}
+                        style={{ transformOrigin: pickerAnchorRect.top > 400 ? 'bottom left' : 'top left' }}
+                      >
+                        <AdvancedColorPicker
+                          innerRef={pickerPopoverRef as any}
+                          color={color}
+                          onChange={(nextColor) => handleColorChange(index, nextColor)}
+                          presets={COLOR_PRESETS as string[]}
+                          showInput={false}
+                        />
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>,
+                document.body,
               )}
+          </div>          
+          <div className="padding-color-hex-field">
+            <div className="padding-color-hex-main">
+              <span className="padding-color-hex-prefix">#</span>
+              <input
+                type="text"
+                className="padding-color-hex-text"
+                value={(color || '').replace('#', '').toUpperCase()}
+                onChange={(e) => handleColorChange(index, e.target.value)}
+                onBlur={() => handleColorChange(index, color)}
+                spellCheck={false}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+            </div>
 
-              {colors.length === 2 && (
-                <motion.button
-                  key="remove-btn"
-                  initial={{ opacity: 0, x: 4 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 4 }}
-                  type="button"
-                  className="padding-color-remove-btn"
-                  onClick={() => removeColorRow(index)}
-                  title="Remove color"
-                >
-                  <Trash2 size={15} />
-                </motion.button>
-              )}
-
-            </AnimatePresence>
+            <div className="padding-color-row-actions">
+              <AnimatePresence mode="wait" initial={false}>
+                {index === 0 && colors.length === 1 ? (
+                  <motion.button
+                    key="new-btn"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ duration: 0.12 }}
+                    type="button"
+                    className="padding-color-new-btn"
+                    onClick={addColorRow}
+                  >
+                    ADD
+                  </motion.button>
+                ) : colors.length === 2 ? (
+                  <motion.button
+                    key="remove-btn"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ duration: 0.12 }}
+                    type="button"
+                    className="padding-color-remove-btn"
+                    onClick={() => removeColorRow(index)}
+                    title="Remove color"
+                  >
+                    <Trash2 size={15} />
+                  </motion.button>
+                ) : null}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
       </motion.div>
@@ -679,7 +703,7 @@ const PaddingSection = ({
       <div className="padding-gradient-controls-row">
         <SegmentedControl<'linear' | 'radial'>
           value={gradientType}
-          onChange={setGradientType}
+          onChange={updateType}
           ariaLabel="Gradient Type"
           className="padding-gradient-type-toggle"
           equalWidth
@@ -693,7 +717,7 @@ const PaddingSection = ({
         <div className={`padding-gradient-angle-group ${gradientType === 'radial' ? 'is-disabled' : ''}`}>
           <AngleKnob
             value={gradientAngle}
-            onChange={setGradientAngle}
+            onChange={updateAngle}
             disabled={gradientType === 'radial'}
             size={32}
           />
@@ -704,9 +728,9 @@ const PaddingSection = ({
             disabled={gradientType === 'radial'}
             onChange={(e) => {
               const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10);
-              if (!isNaN(val)) setGradientAngle(((val % 360) + 360) % 360);
+              if (!isNaN(val)) updateAngle(((val % 360) + 360) % 360);
             }}
-            onKeyDown={(e) => handleSteppedNumericKeyDown(e, (v) => setGradientAngle(parseInt(v, 10)))}
+            onKeyDown={(e) => handleSteppedNumericKeyDown(e, (v) => updateAngle(parseInt(v, 10)))}
           />
         </div>
       </div>
@@ -809,7 +833,7 @@ const PaddingSection = ({
           >
             <div className="padding-color-panel">
               <div className="padding-color-list">
-                <AnimatePresence initial={false} mode="popLayout">
+                <AnimatePresence initial={false}>
                   {colors.map((color, idx) => renderColorRow(color, idx))}
                 </AnimatePresence>
               </div>

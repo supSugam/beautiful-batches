@@ -1,6 +1,8 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { usePointerDrag } from '../hooks/usePointerDrag';
 import type { EditorCropCoordinates } from '../../../types/app';
+import useStore from '../../../store/useStore';
+import { MonitorCheck } from 'lucide-react';
 
 /**
  * CropOverlay — interactive crop zone rendered as positioned DOM elements
@@ -66,15 +68,16 @@ const CropOverlay = ({
   contentRect = null,
   contentGuideStatus,
 }: CropOverlayProps) => {
-  // ── ALL hooks must be called unconditionally (before any early return) ──
+  const selectedId = useStore((state) => state.selectedId);
+  const cropData = useStore((state) => state.cropData);
+
+  const currentRegion = selectedId ? cropData.get(selectedId)?.detectionRegion : null;
 
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const activeHandle = useRef<string | null>(null);
   const startCropRef = useRef<EditorCropCoordinates | null>(null);
 
-  // Keep displayScale in a ref so drag callbacks always see the latest value
-  // without needing to be in the dependency array
   const displayScaleRef = useRef(1);
   const cropRef = useRef(crop);
   const onCropMoveRef = useRef(onCropMove);
@@ -84,7 +87,6 @@ const CropOverlay = ({
   const onDragEndRef = useRef(onDragEnd);
   const isPinchingRef = useRef(isPinching);
 
-  // Keep refs up to date each render
   cropRef.current = crop;
   onCropMoveRef.current = onCropMove;
   onPanImageRef.current = onPanImage;
@@ -100,7 +102,7 @@ const CropOverlay = ({
       startCropRef.current = { ...cropRef.current };
       onDragStartRef.current?.();
     },
-    onMove: ({ deltaX, deltaY, totalDeltaX, totalDeltaY, altKey, ctrlKey, metaKey, shiftKey }) => {
+    onMove: ({ deltaX, deltaY, totalDeltaX, totalDeltaY, ctrlKey, metaKey, shiftKey }) => {
       if (isPinchingRef.current) return;
       if (zoom > 1.0001) {
         onPanImageRef.current?.(deltaX, deltaY);
@@ -114,7 +116,6 @@ const CropOverlay = ({
     onMoveEnd: () => {
       setIsDragging(false);
       startCropRef.current = null;
-      onDragEndRef.current?.();
     },
   });
 
@@ -162,73 +163,45 @@ const CropOverlay = ({
         target.addEventListener('pointercancel', handleUp);
       },
     };
-  }, []); // stable — uses only refs
-
-  // ── Early return AFTER all hooks ──────────────────────
+  }, []);
 
   if (!fitLayout || fitLayout.displayW <= 0) return null;
 
   const { scale, offsetX, offsetY, displayW, displayH } = fitLayout;
-  const interactionScale = scale;
+  displayScaleRef.current = scale;
 
-  // Update ref for drag callbacks
-  displayScaleRef.current = interactionScale;
-
-  // Keep crop UI in fit-layout coordinates so wheel/pinch zoom affects the
-  // image only, not the crop frame geometry.
   const screenX = offsetX + crop.x * scale;
   const screenY = offsetY + crop.y * scale;
   const screenW = crop.w * scale;
   const screenH = crop.h * scale;
 
-  const isActive = isDragging || isResizing;
+  // AI ROI Screen Coords
+  let roiScreenX = 0, roiScreenY = 0, roiScreenW = 0, roiScreenH = 0;
+  if (currentRegion) {
+    roiScreenW = (currentRegion.x2 - currentRegion.x1) * displayW;
+    roiScreenH = (currentRegion.y2 - currentRegion.y1) * displayH;
+    roiScreenX = offsetX + currentRegion.x1 * displayW;
+    roiScreenY = offsetY + currentRegion.y1 * displayH;
+  }
 
+  const isActive = isDragging || isResizing;
   const containerWidth = displayW + offsetX * 2;
   const containerHeight = displayH + offsetY * 2;
-  const overlayLeft = 0;
-  const overlayTop = 0;
-  const overlayRight = containerWidth;
-  const overlayBottom = containerHeight;
 
-  const cropLeft = Math.max(overlayLeft, Math.min(screenX, overlayRight));
-  const cropTop = Math.max(overlayTop, Math.min(screenY, overlayBottom));
-  const cropRight = Math.max(cropLeft, Math.min(screenX + screenW, overlayRight));
-  const cropBottom = Math.max(cropTop, Math.min(screenY + screenH, overlayBottom));
+  const cropLeft = Math.max(0, Math.min(screenX, containerWidth));
+  const cropTop = Math.max(0, Math.min(screenY, containerHeight));
+  const cropRight = Math.max(cropLeft, Math.min(screenX + screenW, containerWidth));
+  const cropBottom = Math.max(cropTop, Math.min(screenY + screenH, containerHeight));
   const cropWidth = cropRight - cropLeft;
   const cropHeight = cropBottom - cropTop;
 
-  // Short CSS transition on dim overlays only (not the crop box itself)
   const DIM_TRANSITION = isActive ? 'none' : 'all 0.15s ease';
 
   const dimRects = [
-    {
-      key: 'top',
-      left: overlayLeft,
-      top: overlayTop,
-      width: containerWidth,
-      height: Math.max(0, cropTop - overlayTop),
-    },
-    {
-      key: 'left',
-      left: overlayLeft,
-      top: cropTop,
-      width: Math.max(0, cropLeft - overlayLeft),
-      height: cropHeight,
-    },
-    {
-      key: 'right',
-      left: cropRight,
-      top: cropTop,
-      width: Math.max(0, overlayRight - cropRight),
-      height: cropHeight,
-    },
-    {
-      key: 'bottom',
-      left: overlayLeft,
-      top: cropBottom,
-      width: containerWidth,
-      height: Math.max(0, overlayBottom - cropBottom),
-    },
+    { key: 'top', left: 0, top: 0, width: containerWidth, height: cropTop },
+    { key: 'left', left: 0, top: cropTop, width: cropLeft, height: cropHeight },
+    { key: 'right', left: cropRight, top: cropTop, width: containerWidth - cropRight, height: cropHeight },
+    { key: 'bottom', left: 0, top: cropBottom, width: containerWidth, height: containerHeight - cropBottom },
   ];
 
   return (
@@ -244,7 +217,6 @@ const CropOverlay = ({
         zIndex: 5,
       }}
     >
-      {/* Dim overlay outside crop */}
       {dimRects.map((rect) => {
         if (rect.width <= 0 || rect.height <= 0) return null;
         return (
@@ -265,99 +237,39 @@ const CropOverlay = ({
         );
       })}
 
-      {/* Center guide lines */}
+      {/* Guide lines */}
       <div
-        className={`center-guide-line center-guide-line--vertical ${
-          centerStatus?.horizontal
-            ? 'visible snapped'
-            : isActive
-              ? 'visible hint'
-              : ''
-        }`}
-        style={{
-          top: offsetY,
-          height: displayH,
-          left: offsetX + displayW / 2,
-        }}
+        className={`center-guide-line center-guide-line--vertical ${centerStatus?.horizontal ? 'visible snapped' : (isActive ? 'visible hint' : '')}`}
+        style={{ top: offsetY, height: displayH, left: offsetX + displayW / 2 }}
       />
       <div
-        className={`center-guide-line center-guide-line--horizontal ${
-          centerStatus?.vertical
-            ? 'visible snapped'
-            : isActive
-              ? 'visible hint'
-              : ''
-        }`}
-        style={{
-          left: offsetX,
-          width: displayW,
-          top: offsetY + displayH / 2,
-        }}
+        className={`center-guide-line center-guide-line--horizontal ${centerStatus?.vertical ? 'visible snapped' : (isActive ? 'visible hint' : '')}`}
+        style={{ left: offsetX, width: displayW, top: offsetY + displayH / 2 }}
       />
 
-      {/* Padding/content boundary guide lines */}
+      {/* Content guides */}
       {contentRect && contentRect.w > 0 && contentRect.h > 0 && (
         <>
           <div
-            className={`padding-guide-line padding-guide-line--vertical ${
-              contentGuideStatus?.left
-                ? 'visible snapped'
-                : isActive
-                  ? 'visible hint'
-                  : ''
-            }`}
-            style={{
-              top: offsetY,
-              height: displayH,
-              left: offsetX + contentRect.x * scale,
-            }}
+            className={`padding-guide-line padding-guide-line--vertical ${contentGuideStatus?.left ? 'visible snapped' : (isActive ? 'visible hint' : '')}`}
+            style={{ top: offsetY, height: displayH, left: offsetX + contentRect.x * scale }}
           />
           <div
-            className={`padding-guide-line padding-guide-line--vertical ${
-              contentGuideStatus?.right
-                ? 'visible snapped'
-                : isActive
-                  ? 'visible hint'
-                  : ''
-            }`}
-            style={{
-              top: offsetY,
-              height: displayH,
-              left: offsetX + (contentRect.x + contentRect.w) * scale,
-            }}
+            className={`padding-guide-line padding-guide-line--vertical ${contentGuideStatus?.right ? 'visible snapped' : (isActive ? 'visible hint' : '')}`}
+            style={{ top: offsetY, height: displayH, left: offsetX + (contentRect.x + contentRect.w) * scale }}
           />
           <div
-            className={`padding-guide-line padding-guide-line--horizontal ${
-              contentGuideStatus?.top
-                ? 'visible snapped'
-                : isActive
-                  ? 'visible hint'
-                  : ''
-            }`}
-            style={{
-              left: offsetX,
-              width: displayW,
-              top: offsetY + contentRect.y * scale,
-            }}
+            className={`padding-guide-line padding-guide-line--horizontal ${contentGuideStatus?.top ? 'visible snapped' : (isActive ? 'visible hint' : '')}`}
+            style={{ left: offsetX, width: displayW, top: offsetY + contentRect.y * scale }}
           />
           <div
-            className={`padding-guide-line padding-guide-line--horizontal ${
-              contentGuideStatus?.bottom
-                ? 'visible snapped'
-                : isActive
-                  ? 'visible hint'
-                  : ''
-            }`}
-            style={{
-              left: offsetX,
-              width: displayW,
-              top: offsetY + (contentRect.y + contentRect.h) * scale,
-            }}
+            className={`padding-guide-line padding-guide-line--horizontal ${contentGuideStatus?.bottom ? 'visible snapped' : (isActive ? 'visible hint' : '')}`}
+            style={{ left: offsetX, width: displayW, top: offsetY + (contentRect.y + contentRect.h) * scale }}
           />
         </>
       )}
 
-      {/* Crop selection box */}
+      {/* Crop Box */}
       <div
         className={`crop-selection ${isActive ? 'crop-selection--active' : ''}`}
         style={{
@@ -372,10 +284,7 @@ const CropOverlay = ({
         }}
         {...dragHandlers}
       >
-        {/* Border */}
         <div className="crop-selection-border" />
-
-        {/* Rule-of-thirds grid (visible during drag/resize) */}
         {isActive && (
           <div className="crop-grid">
             <div className="crop-grid-line crop-grid-h1" />
@@ -384,32 +293,41 @@ const CropOverlay = ({
             <div className="crop-grid-line crop-grid-v2" />
           </div>
         )}
-
-        {/* Corner brackets */}
         <div className="crop-bracket crop-bracket-tl" />
         <div className="crop-bracket crop-bracket-tr" />
         <div className="crop-bracket crop-bracket-bl" />
         <div className="crop-bracket crop-bracket-br" />
 
-        {/* Resize handles */}
-        {HANDLES.map(({ id, cursor, style }) => {
-          const isEdge = id.length === 1;
-          return (
-            <div
-              key={id}
-              className={`crop-handle crop-handle-${id} ${isEdge ? 'crop-handle-edge' : 'crop-handle-corner'}`}
-              style={{
-                position: 'absolute',
-                cursor,
-                ...style,
-                touchAction: 'none',
-                pointerEvents: 'auto',
-              }}
-              {...makeResizeHandler(id)}
-            />
-          );
-        })}
+        {HANDLES.map(({ id, cursor, style }) => (
+          <div
+            key={id}
+            className={`crop-handle crop-handle-${id} ${id.length === 1 ? 'crop-handle-edge' : 'crop-handle-corner'}`}
+            style={{ position: 'absolute', cursor, ...style, touchAction: 'none', pointerEvents: 'auto' }}
+            {...makeResizeHandler(id)}
+          />
+        ))}
       </div>
+
+      {/* ROI Indicator */}
+      {currentRegion && (
+        <div 
+          className="roi-indicator-box"
+          style={{
+            position: 'absolute',
+            left: roiScreenX,
+            top: roiScreenY,
+            width: roiScreenW,
+            height: roiScreenH,
+            pointerEvents: 'none',
+            zIndex: 10
+          }}
+        >
+          <div className="roi-indicator-label">
+            <MonitorCheck size={10} />
+            AI Detection Area
+          </div>
+        </div>
+      )}
     </div>
   );
 };

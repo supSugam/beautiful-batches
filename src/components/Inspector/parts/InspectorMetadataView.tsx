@@ -285,12 +285,7 @@ const InspectorMetadataView = ({ image }: InspectorMetadataViewProps) => {
   const [query, setQuery] = useState('');
   const [embeddedMetadata, setEmbeddedMetadata] = useState<EmbeddedMetadataEntry[]>([]);
   const [copiedEmbeddedId, setCopiedEmbeddedId] = useState<string | null>(null);
-  const previewHostRef = useRef<HTMLDivElement | null>(null);
   const copyFeedbackTimerRef = useRef<number>(0);
-  const [previewSize, setPreviewSize] = useState<{ width: number; height: number }>({
-    width: 0,
-    height: 0,
-  });
   const normalizedQuery = query.trim().toLowerCase();
   const imageRatio = useMemo(
     () =>
@@ -405,54 +400,7 @@ const InspectorMetadataView = ({ image }: InspectorMetadataViewProps) => {
     setCopiedEmbeddedId(null);
   }, [image?.id]);
 
-  useEffect(() => {
-    const host = previewHostRef.current;
-    if (!host) return undefined;
 
-    const computeSize = (hostWidth: number, hostHeight: number) => {
-      const safeHostWidth = Math.max(0, Math.floor(hostWidth));
-      if (safeHostWidth <= 0) {
-        setPreviewSize({ width: 0, height: 0 });
-        return;
-      }
-      const safeHostHeight = Math.max(0, Math.floor(hostHeight));
-
-      const viewportHeight =
-        typeof window !== 'undefined' ? Math.max(1, window.innerHeight || 1) : 900;
-      const maxHeight = Math.min(
-        780,
-        Math.round(viewportHeight * 0.68),
-        safeHostHeight > 0 ? safeHostHeight : Number.POSITIVE_INFINITY,
-      );
-      const minHeight = Math.min(220, maxHeight);
-
-      let nextHeight = safeHostWidth / imageRatio;
-      nextHeight = Math.max(minHeight, Math.min(maxHeight, nextHeight));
-      let nextWidth = nextHeight * imageRatio;
-
-      if (nextWidth > safeHostWidth) {
-        nextWidth = safeHostWidth;
-        nextHeight = nextWidth / imageRatio;
-      }
-
-      setPreviewSize({
-        width: Math.max(1, Math.round(nextWidth)),
-        height: Math.max(1, Math.round(nextHeight)),
-      });
-    };
-
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      computeSize(entry.contentRect.width, entry.contentRect.height);
-    });
-    observer.observe(host);
-
-    const rect = host.getBoundingClientRect();
-    computeSize(rect.width, rect.height);
-
-    return () => observer.disconnect();
-  }, [imageRatio]);
 
   useEffect(() => {
     return () => {
@@ -506,30 +454,7 @@ const InspectorMetadataView = ({ image }: InspectorMetadataViewProps) => {
   };
 
   return (
-    <div className="inspector-view-layout">
-      <section className="inspector-view-preview-card">
-        <div ref={previewHostRef} className="inspector-view-preview-host">
-          <div
-            className="inspector-view-preview-shell"
-            style={
-              previewSize.width > 0 && previewSize.height > 0
-                ? {
-                    width: `${previewSize.width}px`,
-                    height: `${previewSize.height}px`,
-                  }
-                : undefined
-            }
-          >
-            <img
-              src={image.objectUrl}
-              alt={image.name}
-              className="inspector-view-preview-image"
-              draggable={false}
-            />
-          </div>
-        </div>
-      </section>
-
+    <>
       <section className="inspector-view-meta-card">
         <div className="inspector-view-meta-head">
           <h3>Metadata</h3>
@@ -656,7 +581,7 @@ const InspectorMetadataView = ({ image }: InspectorMetadataViewProps) => {
           </div>
         )}
       </section>
-    </div>
+    </>
   );
 };
 

@@ -7,7 +7,6 @@ import {
   Eraser,
   FolderOpen,
   FolderPlus,
-  Image as ImageIcon,
   ListChecks,
   Loader2,
   Trash2,
@@ -113,6 +112,8 @@ type FolderExplorerProps = {
   selectedFolderPaths?: Set<string>;
   onSetFolderSelectionMode?: (value: boolean) => void;
   onSetSelectedFolderPaths?: (paths: Set<string>) => void;
+  isVirtualBatch: boolean;
+  virtualBatchName: string;
 };
 
 const FolderExplorer = ({
@@ -133,12 +134,15 @@ const FolderExplorer = ({
   selectedFolderPaths = new Set<string>(),
   onSetFolderSelectionMode,
   onSetSelectedFolderPaths,
+  isVirtualBatch,
+  virtualBatchName,
 }: FolderExplorerProps) => {
   const images = useStore((state) => state.images);
   const sessionModifiedAt = useStore((state) => state.sessionModifiedAt);
 
   const editedFolderPaths = useMemo(() => {
     const next = new Set<string>();
+    if (isVirtualBatch) return next; // Batch is temporary
     if (!Array.isArray(images) || images.length === 0) return next;
     if (!(sessionModifiedAt instanceof Map) || sessionModifiedAt.size === 0) {
       return next;
@@ -426,7 +430,14 @@ const FolderExplorer = ({
       >
         <div className="folder-explorer-header">
           <span className="folder-explorer-header-title">
-            <span>Explorer</span>
+            {isVirtualBatch ? (
+              <span className="folder-explorer-batch-label">
+                <span className="batch-dot" />
+                {virtualBatchName}
+              </span>
+            ) : (
+              <span>Explorer</span>
+            )}
             <AnimatePresence initial={false}>
               {folderSelectionMode && (
                 <motion.span
@@ -466,25 +477,18 @@ const FolderExplorer = ({
         </div>
 
         <div className="folder-explorer-list" role="tree">
-          <button
-            type="button"
-            role="treeitem"
-            className={`folder-item ${activeFolderPath === ALL_FOLDERS_VALUE ? 'active' : ''} ${folderSelectionMode ? 'is-disabled' : ''}`}
-            onClick={() => {
-              if (folderSelectionMode) return;
-              onSelectFolder(ALL_FOLDERS_VALUE);
-            }}
-          >
-            <span className="folder-item-label">
-              <ImageIcon size={13} />
-              <span className="folder-item-name">All Images</span>
-            </span>
-          </button>
-
+          {isVirtualBatch && (
+            <div className="virtual-batch-info">
+              <p>
+                This is a temporary batch. Link folders from your system to add
+                them permanently to the explorer.
+              </p>
+            </div>
+          )}
           <div className="folder-explorer-virtual-list">
             <Virtuoso
               style={{ height: '100%' }}
-              totalCount={visibleFolders.length}
+              totalCount={isVirtualBatch ? 0 : visibleFolders.length}
               overscan={240}
               itemContent={(index) => {
                 const folder = visibleFolders[index];
