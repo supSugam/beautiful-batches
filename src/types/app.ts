@@ -125,6 +125,7 @@ export interface FolderNode {
   name: string;
   depth: number;
   count: number;
+  totalCount: number;
   expandable?: boolean;
 }
 

@@ -217,6 +217,7 @@ function App() {
     rootNames,
     addImages,
     clearImages,
+    deleteImage,
     expandedPaths,
     toggleExpandedPath,
     setExpandedPaths,
@@ -227,6 +228,8 @@ function App() {
     virtualBatchName,
     setSingleEditMode,
     setVirtualBatchMode,
+    showExcluded,
+    setShowExcluded,
     addToast,
   } = useStore();
 
@@ -735,6 +738,7 @@ function App() {
               name: getFolderNameFromPath(normalizedFolderPath),
               depth: normalizedFolderPath.split('/').filter(Boolean).length - 1,
               count: 0,
+              totalCount: 0,
               expandable: children.length > 0,
             },
             ...children,
@@ -830,6 +834,7 @@ function App() {
       name,
       depth: 0,
       count: 0,
+      totalCount: 0,
       expandable: true,
     }));
     mergeTreeNodes(rootNodes, { pruneToRoots: uniqueRoots });
@@ -850,25 +855,38 @@ function App() {
   ]);
 
   const effectiveFolderNodes = useMemo(() => {
-    const countsByPath = new Map<string, number>();
+    const countsByPath = new Map<string, { count: number, totalCount: number }>();
     folderNodes.forEach((node) => {
-      countsByPath.set(normalizePath(node.path), Math.max(0, node.count || 0));
+      countsByPath.set(normalizePath(node.path), {
+        count: Math.max(0, node.count || 0),
+        totalCount: Math.max(0, node.totalCount || 0),
+      });
     });
 
-    if (treeFolderNodes.length > 0) {
-      return treeFolderNodes.map((node) => ({
+    const mergeNode = (node: FolderNode) => {
+      const stats = countsByPath.get(normalizePath(node.path));
+      return {
         ...node,
-        count: countsByPath.get(normalizePath(node.path)) ?? node.count,
-      }));
+        count: stats?.count ?? node.count,
+        totalCount: stats?.totalCount ?? node.totalCount ?? node.count, // Fallback to count if totalCount missing
+      };
+    };
+
+    if (treeFolderNodes.length > 0) {
+      return treeFolderNodes.map(mergeNode);
     }
 
-    return effectiveRootNames.map((name) => ({
-      path: name,
-      name,
-      depth: 0,
-      count: countsByPath.get(normalizePath(name)) ?? 0,
-      expandable: true,
-    }));
+    return effectiveRootNames.map((name) => {
+      const stats = countsByPath.get(normalizePath(name));
+      return {
+        path: name,
+        name,
+        depth: 0,
+        count: stats?.count ?? 0,
+        totalCount: stats?.totalCount ?? 0,
+        expandable: true,
+      };
+    });
   }, [effectiveRootNames, folderNodes, treeFolderNodes]);
 
 
@@ -890,17 +908,24 @@ function App() {
       return images;
     }
 
+    let base: GalleryImage[];
     if (activeFolderPath === ALL_FOLDERS_VALUE) {
-      return images.filter((img) => !excludedById.has(img.id));
+      base = images;
+    } else {
+      const prefix = `${activeFolderPath}/`;
+      base = images.filter((image) => {
+        const relativePath = normalizePath(image.relativePath);
+        if (!relativePath.startsWith(prefix)) return false;
+        const remainder = relativePath.substring(prefix.length);
+        return !remainder.includes('/');
+      });
     }
-    const prefix = `${activeFolderPath}/`;
-    return images.filter((image) => {
-      const relativePath = normalizePath(image.relativePath);
-      if (!relativePath.startsWith(prefix)) return false;
-      const remainder = relativePath.substring(prefix.length);
-      return !remainder.includes('/');
-    });
-  }, [activeFolderPath, images, isSingleEditMode, isVirtualBatch]);
+
+    if (showExcluded) {
+      return base;
+    }
+    return base.filter((img) => !excludedById.has(img.id));
+  }, [activeFolderPath, images, isSingleEditMode, isVirtualBatch, showExcluded, excludedById]);
 
   const visibleImages = useMemo(() => {
     const next = scopedImages.map((image, originalIndex) => ({
@@ -1046,6 +1071,25 @@ function App() {
     () => visibleImages.filter((image) => !excludedById.has(image.id)),
     [excludedById, visibleImages],
   );
+
+  const { consideredCount, totalCount } = useMemo(() => {
+    if (isSingleEditMode || isVirtualBatch) {
+      return { consideredCount: images.length, totalCount: images.length };
+    }
+
+    if (activeFolderPath === ALL_FOLDERS_VALUE) {
+      const total = images.length;
+      const considered = images.filter((img) => !excludedById.has(img.id)).length;
+      return { consideredCount: considered, totalCount: total };
+    }
+
+    const node = folderNodes.find((n) => normalizePath(n.path) === normalizePath(activeFolderPath));
+    if (node) {
+      return { consideredCount: node.count, totalCount: node.totalCount };
+    }
+
+    return { consideredCount: 0, totalCount: 0 };
+  }, [activeFolderPath, images, excludedById, folderNodes, isSingleEditMode, isVirtualBatch]);
 
   const loadImagesForFolderPath = useCallback(
     async (
@@ -1535,6 +1579,47 @@ function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+
+      const target = event.target as HTMLElement | null;
+      const tagName = String(target?.tagName || '').toLowerCase();
+      if (
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (!selectedId) return;
+
+      event.preventDefault();
+
+      // Find next ID before deleting to provide smooth navigation
+      const currentIndex = navigableVisibleImages.findIndex(
+        (img) => img.id === selectedId,
+      );
+      let nextId: string | null = null;
+      if (currentIndex !== -1) {
+        if (currentIndex < navigableVisibleImages.length - 1) {
+          nextId = navigableVisibleImages[currentIndex + 1].id;
+        } else if (currentIndex > 0) {
+          nextId = navigableVisibleImages[currentIndex - 1].id;
+        }
+      }
+
+      deleteImage(selectedId);
+      if (nextId) {
+        setSelectedId(nextId);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [deleteImage, navigableVisibleImages, selectedId, setSelectedId]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
@@ -2045,6 +2130,10 @@ function App() {
         onOpenWatermarkSettings={() => openSettings('engine')}
         inspectorMode={inspectorMode}
         onSetInspectorMode={setInspectorMode}
+        showExcluded={showExcluded}
+        setShowExcluded={setShowExcluded}
+        consideredCount={consideredCount}
+        totalCount={totalCount}
       />
 
       <MainLayout
@@ -2067,6 +2156,7 @@ function App() {
         explorerOpen={explorerOpen}
         folderNodes={effectiveFolderNodes}
         activeFolderPath={activeFolderPath}
+        showExcluded={showExcluded}
         onSelectFolder={handleSelectFolder}
         totalImageCount={images.length}
         onResetFolderFilter={() => setActiveFolderPath(ALL_FOLDERS_VALUE)}

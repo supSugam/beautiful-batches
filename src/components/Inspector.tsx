@@ -175,11 +175,17 @@ const InspectorEditSession = ({
         event.stopPropagation();
         logic.navigatePrev();
       }
+
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        event.stopPropagation();
+        onDelete(image.id);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [hasNext, hasPrev, logic.navigateNext, logic.navigatePrev]);
+  }, [hasNext, hasPrev, image.id, logic.navigateNext, logic.navigatePrev, onClose, onDelete]);
 
   return (
     <>
@@ -198,7 +204,6 @@ const InspectorEditSession = ({
         }}
         onDelete={() => {
           onDelete(image.id);
-          onClose();
         }}
         hasPrev={hasPrev}
         hasNext={hasNext}
@@ -344,6 +349,7 @@ type InspectorViewSessionProps = {
   onPrev: () => void;
   hasNext: boolean;
   hasPrev: boolean;
+  onDelete: (id: string) => void;
 };
 
 const InspectorViewSession = ({
@@ -353,6 +359,7 @@ const InspectorViewSession = ({
   onPrev,
   hasNext,
   hasPrev,
+  onDelete,
 }: InspectorViewSessionProps) => {
   const cropState = useStore((state) => state.cropData.get(image.id));
   const logic = useInspectorLogic({
@@ -419,11 +426,17 @@ const InspectorViewSession = ({
         event.stopPropagation();
         logic.navigatePrev();
       }
+
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        event.stopPropagation();
+        onDelete(image.id);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [hasNext, hasPrev, logic.navigateNext, logic.navigatePrev]);
+  }, [hasNext, hasPrev, image.id, logic.navigateNext, logic.navigatePrev, onClose, onDelete]);
 
   return (
     <>
@@ -510,6 +523,7 @@ export const Inspector = ({
           onPrev={onPrev}
           hasNext={hasNext}
           hasPrev={hasPrev}
+          onDelete={onDelete}
         />
       ) : (
         <InspectorEditSession

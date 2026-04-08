@@ -17,6 +17,7 @@ import {
   Minus,
   Square,
   RefreshCw,
+  Filter,
 } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import useStore from '../../store/useStore';
@@ -102,6 +103,10 @@ type ToolbarProps = {
   onOpenWatermarkSettings: () => void;
   inspectorMode: InspectorMode;
   onSetInspectorMode: (mode: InspectorMode) => void;
+  showExcluded: boolean;
+  setShowExcluded: (value: boolean) => void;
+  consideredCount: number;
+  totalCount: number;
 };
 
 const Toolbar = ({
@@ -120,6 +125,10 @@ const Toolbar = ({
   onOpenWatermarkSettings,
   inspectorMode,
   onSetInspectorMode,
+  showExcluded,
+  setShowExcluded,
+  consideredCount,
+  totalCount,
 }: ToolbarProps) => {
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -281,6 +290,12 @@ const Toolbar = ({
         >
           <span className="toolbar-folder-path">{folderPathLabel}</span>
         </button>
+
+        <div className="toolbar-folder-stats" title={`${consideredCount} images included / ${totalCount} total images in this view`}>
+          <span className="stats-considered">{consideredCount}</span>
+          <span className="stats-divider">/</span>
+          <span className="stats-total">{totalCount}</span>
+        </div>
       </div>
 
       <div className="toolbar-section toolbar-controls">
@@ -371,6 +386,17 @@ const Toolbar = ({
             <RefreshCw size={14} className="indicator-pulse" />
           </button>
         )}
+
+        <button
+          type="button"
+          className={`toolbar-mode-icon-btn ${showExcluded ? 'is-active' : ''}`}
+          onClick={() => setShowExcluded(!showExcluded)}
+          title={showExcluded ? 'Hide excluded images' : 'Show excluded images'}
+          aria-label={showExcluded ? 'Hide excluded images' : 'Show excluded images'}
+          aria-pressed={showExcluded}
+        >
+          <Filter size={15} className={showExcluded ? '' : 'toolbar-dim-more'} />
+        </button>
 
         <button
           type="button"

@@ -1329,3 +1329,68 @@
   align-items: center;
   gap: 12px;
 }
+
+/* AI Captioning Error Card */
+.wsm-error-card {
+  margin-top: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(255, 77, 79, 0.08);
+  border: 1px solid rgba(255, 77, 79, 0.2);
+  border-radius: var(--radius-ui);
+  position: relative;
+  animation: slide-up 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.wsm-error-icon {
+  color: #ff4d4f;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.wsm-error-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.wsm-error-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #ff4d4f;
+  margin-bottom: 2px;
+}
+
+.wsm-error-message {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.wsm-error-dismiss {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px;
+  color: var(--text-muted);
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wsm-error-dismiss:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--text-bright);
+}
+
+@keyframes slide-up {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}

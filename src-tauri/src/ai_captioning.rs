@@ -88,7 +88,10 @@ async fn call_gemini(model: String, api_key: String, prompt: String, b64: String
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| e.to_string())?;
     let res = client.post(url)
         .json(&body)
         .send()
@@ -132,7 +135,10 @@ async fn call_openai(model: String, api_key: String, prompt: String, b64: String
         "max_tokens": 500
     });
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| e.to_string())?;
     let res = client.post(url)
         .header("Authorization", format!("Bearer {}", api_key))
         .json(&body)
@@ -178,7 +184,10 @@ async fn call_anthropic(model: String, api_key: String, prompt: String, b64: Str
         ]
     });
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| e.to_string())?;
     let res = client.post(url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
@@ -224,7 +233,10 @@ async fn call_openrouter(model: String, api_key: String, prompt: String, b64: St
         "max_tokens": 500
     });
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| e.to_string())?;
     let res = client.post(url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "https://github.com/beautiful-batches")
@@ -299,8 +311,11 @@ async fn call_custom(
         }
     }
     
-    let client_builder = reqwest::Client::builder();
-    let client = client_builder.default_headers(headers).build().map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .default_headers(headers)
+        .build()
+        .map_err(|e| e.to_string())?;
     
     let res = client.post(&endpoint)
         .json(&body_json)

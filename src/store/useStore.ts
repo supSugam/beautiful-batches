@@ -211,7 +211,8 @@ const isImageDirectlyInFolder = (
 };
 
 const buildFolderNodes = (
-  images: GalleryImage[],
+  allImages: GalleryImage[],
+  excludedById: Map<string, boolean>,
   rootNames: string[],
 ): FolderNode[] => {
   const folders = new Map<string, FolderNode>();
@@ -225,27 +226,37 @@ const buildFolderNodes = (
       name,
       depth: 0,
       count: 0,
+      totalCount: 0,
     });
   });
 
-  images.forEach((image) => {
+  allImages.forEach((image) => {
+    const isExcluded = excludedById.has(image.id);
     const relativePath = normalizePath(image?.relativePath);
     const parts = relativePath.split('/').filter(Boolean);
+
+    const updateFolder = (path: string, name: string, depth: number) => {
+      const existing = folders.get(path);
+      if (existing) {
+        existing.totalCount += 1;
+        if (!isExcluded) {
+          existing.count += 1;
+        }
+      } else {
+        folders.set(path, {
+          path,
+          name,
+          depth,
+          count: isExcluded ? 0 : 1,
+          totalCount: 1,
+        });
+      }
+    };
+
     if (parts.length < 2) {
       if (parts.length === 1) {
         // Just a root image
-        const path = parts[0];
-        const existing = folders.get(path);
-        if (existing) {
-          existing.count += 1;
-        } else {
-          folders.set(path, {
-            path,
-            name: path,
-            depth: 0,
-            count: 1,
-          });
-        }
+        updateFolder(parts[0], parts[0], 0);
       }
       return;
     }
@@ -253,17 +264,7 @@ const buildFolderNodes = (
     const directoryParts = parts.slice(0, -1);
     for (let index = 0; index < directoryParts.length; index += 1) {
       const path = directoryParts.slice(0, index + 1).join('/');
-      const existing = folders.get(path);
-      if (existing) {
-        existing.count += 1;
-        continue;
-      }
-      folders.set(path, {
-        path,
-        name: directoryParts[index],
-        depth: index,
-        count: 1,
-      });
+      updateFolder(path, directoryParts[index], index);
     }
   });
 
@@ -482,6 +483,7 @@ export interface UseStoreState {
   images: GalleryImage[];
   cropData: Map<string, CropEntry>;
   captionById: Map<string, string>;
+  captionErrorById: Map<string, string>;
   excludedById: Map<string, boolean>;
   sessionModifiedAt: Map<string, number>;
   folderLastModified: Map<string, number>;
@@ -496,6 +498,8 @@ export interface UseStoreState {
   explorerWidth: number;
   sortOption: SortOption;
   rootNames: string[];
+  showExcluded: boolean;
+  setShowExcluded: (showExcluded: boolean) => void;
   setImages: (images: RawUploadImage[], rootNames?: string[]) => Promise<void>;
   addImages: (
     newImages: RawUploadImage[],
@@ -518,6 +522,8 @@ export interface UseStoreState {
     options?: ApplyCropToImagesOptions,
   ) => void;
   setCaptionForImage: (id: string, caption: string) => void;
+  setCaptionError: (id: string, error: string) => void;
+  clearCaptionError: (id: string) => void;
   resetCaptionForImage: (id: string) => void;
   applyPersistedImageDrafts: (payload: PersistedDraftPayload) => void;
   setRowHeight: (rowHeight: number) => void;
@@ -756,6 +762,7 @@ const useStore = create<UseStoreState>()(
     images: [] as GalleryImage[],
     cropData: new Map<string, CropEntry>(),
     captionById: new Map<string, string>(),
+    captionErrorById: new Map<string, string>(),
     excludedById: new Map<string, boolean>(),
     sessionModifiedAt: new Map<string, number>(),
     folderLastModified: new Map<string, number>(),
@@ -763,6 +770,9 @@ const useStore = create<UseStoreState>()(
     folderNodes: [] as FolderNode[],
     rootNames: [] as string[],
     selectedId: null as string | null,
+    showExcluded: false,
+
+    setShowExcluded: (showExcluded) => set({ showExcluded }),
 
     // --- UI Settings ---
     rowHeight: 250,
@@ -896,7 +906,7 @@ const useStore = create<UseStoreState>()(
           return {
             images: [],
             rootNames: nextRootNames,
-            folderNodes: buildFolderNodes([], nextRootNames),
+            folderNodes: buildFolderNodes([], state.excludedById, nextRootNames),
             selectedId: null,
           };
         });
@@ -913,7 +923,7 @@ const useStore = create<UseStoreState>()(
         return {
           images: nextImages,
           rootNames: nextRootNames,
-          folderNodes: buildFolderNodes(nextImages, nextRootNames),
+          folderNodes: buildFolderNodes(nextImages, state.excludedById, nextRootNames),
           selectedId: nextImages.some((img) => img.id === state.selectedId)
             ? state.selectedId
             : null,
@@ -942,7 +952,7 @@ const useStore = create<UseStoreState>()(
             );
             return {
               rootNames: nextRootNames,
-              folderNodes: buildFolderNodes(state.images, nextRootNames),
+              folderNodes: buildFolderNodes(state.images, state.excludedById, nextRootNames),
               isSingleEditMode: false,
               isVirtualBatch: false,
               virtualBatchName: null,
@@ -988,7 +998,7 @@ const useStore = create<UseStoreState>()(
             );
             return {
               rootNames: nextRootNames,
-              folderNodes: buildFolderNodes(state.images, nextRootNames),
+              folderNodes: buildFolderNodes(state.images, state.excludedById, nextRootNames),
               isSingleEditMode: false,
               isVirtualBatch: false,
               virtualBatchName: null,
@@ -1061,7 +1071,7 @@ const useStore = create<UseStoreState>()(
           return {
             images: nextImages,
             rootNames: nextRootNames,
-            folderNodes: buildFolderNodes(nextImages, nextRootNames),
+            folderNodes: buildFolderNodes(nextImages, state.excludedById, nextRootNames),
           };
         }
 
@@ -1079,7 +1089,7 @@ const useStore = create<UseStoreState>()(
         return {
           images: nextImages,
           rootNames: nextRootNames,
-          folderNodes: buildFolderNodes(nextImages, nextRootNames),
+          folderNodes: buildFolderNodes(nextImages, state.excludedById, nextRootNames),
           cropData: nextCropData,
           captionById: nextCaptionById,
           sessionModifiedAt: nextSessionModifiedAt,
@@ -1117,12 +1127,12 @@ const useStore = create<UseStoreState>()(
         const nextSessionModifiedAt = new Map<string, number>(
           state.sessionModifiedAt,
         );
-        nextSessionModifiedAt.set(id, getNowTs());
 
         return {
           excludedById: nextExcludedById,
           folderNodes: buildFolderNodes(
-            state.images.filter((img) => !nextExcludedById.has(img.id)),
+            state.images,
+            nextExcludedById,
             state.rootNames,
           ),
           sessionModifiedAt: nextSessionModifiedAt,
@@ -1162,7 +1172,8 @@ const useStore = create<UseStoreState>()(
         return {
           excludedById: nextExcludedById,
           folderNodes: buildFolderNodes(
-            state.images.filter((img) => !nextExcludedById.has(img.id)),
+            state.images,
+            nextExcludedById,
             state.rootNames,
           ),
           sessionModifiedAt: nextSessionModifiedAt,
@@ -1181,6 +1192,7 @@ const useStore = create<UseStoreState>()(
         images: [],
         folderNodes: [],
         rootNames: [],
+        showExcluded: false,
         cropData: new Map<string, CropEntry>(),
         captionById: new Map<string, string>(),
         excludedById: new Map<string, boolean>(),
@@ -1246,7 +1258,7 @@ const useStore = create<UseStoreState>()(
         return {
           images: nextImages,
           rootNames: nextRootNames,
-          folderNodes: buildFolderNodes(nextImages, nextRootNames),
+          folderNodes: buildFolderNodes(nextImages, state.excludedById, nextRootNames),
           cropData: nextCropData,
           captionById: nextCaptionById,
           sessionModifiedAt: nextSessionModifiedAt,
@@ -1308,7 +1320,8 @@ const useStore = create<UseStoreState>()(
           captionById: nextCaptionById,
           excludedById: nextExcludedById,
           folderNodes: buildFolderNodes(
-            state.images.filter((img) => !nextExcludedById.has(img.id)),
+            state.images,
+            nextExcludedById,
             state.rootNames,
           ),
           sessionModifiedAt: nextSessionModifiedAt,
@@ -1669,8 +1682,8 @@ const useStore = create<UseStoreState>()(
 
           // Run heavy physical edits
           if (opsToRun.length > 0 && absolutePath) {
-            const history: string[] = [];
-            const ops: Array<'watermark' | 'background'> = [];
+            const history = [...(cropState?.sourceEditHistory || [])];
+            const ops = [...(cropState?.sourceEditOps || [])] as Array<'watermark' | 'background'>;
             
             for (let opIdx = 0; opIdx < opsToRun.length; opIdx++) {
               const op = opsToRun[opIdx];
@@ -1736,30 +1749,54 @@ const useStore = create<UseStoreState>()(
 
           // Run AI Captioning
           if (shouldRunAi && absolutePath) {
-            try {
-              setProcessingState({ 
-                current: currentCount, 
-                statusText: `Generating caption for ${filename}...` 
-              });
-              await yieldToMainThread();
+            const existingCaption = get().captionById.get(id);
+            if (existingCaption && existingCaption.trim().length > 0) {
+              console.log(`Skipping AI caption for ${filename} - already has caption.`);
+            } else {
+              let lastError = null;
+              let success = false;
+              
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  setProcessingState({ 
+                    current: currentCount, 
+                    statusText: attempt > 1 
+                      ? `Generating caption for ${filename} (Attempt ${attempt}/3)...`
+                      : `Generating caption for ${filename}...` 
+                  });
+                  await yieldToMainThread();
 
-              const result = await invoke<string>('generate_ai_caption', {
-                imagePath: absolutePath,
-                provider: captioningSettings.provider,
-                model: 'model' in providerSettings ? providerSettings.model : '',
-                apiKey: providerSettings.apiKey,
-                systemPrompt: captioningSettings.systemPrompt,
-              });
+                  const result = await invoke<string>('generate_ai_caption', {
+                    imagePath: absolutePath,
+                    provider: captioningSettings.provider,
+                    model: 'model' in providerSettings ? providerSettings.model : '',
+                    apiKey: providerSettings.apiKey,
+                    systemPrompt: captioningSettings.systemPrompt,
+                    customEndpoint: 'endpoint' in providerSettings ? (providerSettings as any).endpoint : '',
+                    customBodyTemplate: 'customBodyTemplate' in providerSettings ? (providerSettings as any).customBodyTemplate : '',
+                  });
 
-              if (result) {
-                get().setCaptionForImage(id, result);
+                  if (result) {
+                    get().setCaptionForImage(id, result);
+                    get().clearCaptionError(id);
+                    success = true;
+                    break;
+                  }
+                } catch (e) {
+                  lastError = e;
+                  console.warn(`AI caption attempt ${attempt} failed for ${id}:`, e);
+                  // Small backoff before retry
+                  if (attempt < 3) await new Promise(r => setTimeout(r, 1000));
+                }
+              }
+
+              if (!success) {
+                console.error(`Failed bulk AI caption for ${id} after 3 attempts:`, lastError);
+                get().setCaptionError(id, String(lastError || 'Unknown error'));
               }
 
               // Apply RPM delay to avoid rate limits
-              // Small delay of 800ms between calls
               await new Promise(r => setTimeout(r, 800));
-            } catch (e) {
-              console.error(`Failed bulk AI caption for ${id}:`, e);
             }
           }
 
@@ -1805,7 +1842,15 @@ const useStore = create<UseStoreState>()(
         }
 
         const nextCaptionById = new Map<string, string>(state.captionById);
-        nextCaptionById.set(id, nextCaption);
+        const nextCaptionErrorById = new Map<string, string>(state.captionErrorById);
+
+        if (nextCaption.length > 0) {
+          nextCaptionById.set(id, nextCaption);
+          // Auto-clear error when a successful caption is set
+          nextCaptionErrorById.delete(id);
+        } else {
+          nextCaptionById.delete(id);
+        }
 
         const image = state.images.find((img) => img.id === id);
         const entry = state.cropData.get(id);
@@ -1837,8 +1882,26 @@ const useStore = create<UseStoreState>()(
 
         return {
           captionById: nextCaptionById,
+          captionErrorById: nextCaptionErrorById,
           sessionModifiedAt: nextSessionModifiedAt,
         };
+      });
+    },
+
+    setCaptionError: (id: string, error: string) => {
+      set((state) => {
+        const nextCaptionErrorById = new Map<string, string>(state.captionErrorById);
+        nextCaptionErrorById.set(id, error);
+        return { captionErrorById: nextCaptionErrorById };
+      });
+    },
+
+    clearCaptionError: (id: string) => {
+      set((state) => {
+        if (!state.captionErrorById.has(id)) return {};
+        const nextCaptionErrorById = new Map<string, string>(state.captionErrorById);
+        nextCaptionErrorById.delete(id);
+        return { captionErrorById: nextCaptionErrorById };
       });
     },
 
@@ -1848,6 +1911,9 @@ const useStore = create<UseStoreState>()(
 
         const nextCaptionById = new Map<string, string>(state.captionById);
         nextCaptionById.delete(id);
+
+        const nextCaptionErrorById = new Map<string, string>(state.captionErrorById);
+        nextCaptionErrorById.delete(id);
 
         const image = state.images.find((img) => img.id === id);
         const entry = state.cropData.get(id);
@@ -1860,7 +1926,6 @@ const useStore = create<UseStoreState>()(
             nextSessionModifiedAt = new Map<string, number>(
               state.sessionModifiedAt,
             );
-            nextSessionModifiedAt.set(id, getNowTs());
           }
         } else if (wasMarkedModified) {
           nextSessionModifiedAt = new Map<string, number>(
@@ -1871,6 +1936,7 @@ const useStore = create<UseStoreState>()(
 
         return {
           captionById: nextCaptionById,
+          captionErrorById: nextCaptionErrorById,
           sessionModifiedAt: nextSessionModifiedAt,
         };
       });
@@ -1943,7 +2009,8 @@ const useStore = create<UseStoreState>()(
           captionById: nextCaptionById,
           excludedById: nextExcludedById,
           folderNodes: buildFolderNodes(
-            state.images.filter((img) => !nextExcludedById.has(img.id)),
+            state.images,
+            nextExcludedById,
             state.rootNames,
           ),
           sessionModifiedAt: nextSessionModifiedAt,
@@ -2044,7 +2111,7 @@ const useStore = create<UseStoreState>()(
 
         return {
           images: finalImages,
-          folderNodes: buildFolderNodes(finalImages, state.rootNames),
+          folderNodes: buildFolderNodes(finalImages, state.excludedById, state.rootNames),
           selectedId: finalImages.some((img) => img.id === state.selectedId)
             ? state.selectedId
             : null,

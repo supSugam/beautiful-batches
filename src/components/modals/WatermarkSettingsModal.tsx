@@ -30,6 +30,7 @@ import {
   GitBranch,
   Calendar,
   Hash,
+  AlertCircle,
 } from 'lucide-react';
 import useStore, { SettingsTab } from '../../store/useStore';
 import { WatermarkSidecarStatus, WatermarkRegion } from '../../types/app';
@@ -380,6 +381,10 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
   const setCaptioningSettings = useStore((state) => state.setCaptioningSettings);
   const updateProviderSettings = useStore((state) => state.updateProviderSettings);
   const addToast = useStore((state) => state.addToast);
+  const captionError = useStore(
+    useCallback((state) => (selectedId ? state.captionErrorById.get(selectedId) : null), [selectedId]),
+  );
+  const clearCaptionError = useStore((state) => state.clearCaptionError);
   const [logsCopied, setLogsCopied] = useState(false);
   const [customApiTab, setCustomApiTab] = useState<'prompt' | 'payload' | 'response'>('prompt');
   const [jsonError, setJsonError] = useState<string | null>(null);
@@ -1912,6 +1917,30 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
                           />
                         </div>
                       </section>
+
+                      {captionError && (
+                        <motion.div 
+                          className="wsm-error-card"
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                        >
+                          <div className="wsm-error-icon">
+                            <AlertCircle size={16} />
+                          </div>
+                          <div className="wsm-error-info">
+                            <div className="wsm-error-title">AI Captioning Failed</div>
+                            <div className="wsm-error-message">{captionError}</div>
+                          </div>
+                          <button 
+                            className="wsm-error-dismiss"
+                            onClick={() => selectedId && clearCaptionError(selectedId)}
+                            title="Dismiss error"
+                          >
+                            <X size={14} />
+                          </button>
+                        </motion.div>
+                      )}
                     </div>
                   </div>
                 </div>

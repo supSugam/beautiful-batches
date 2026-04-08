@@ -39,6 +39,7 @@ type MainLayoutProps = {
   explorerOpen: boolean;
   folderNodes: FolderNode[];
   activeFolderPath: string;
+  showExcluded: boolean;
   onSelectFolder: (path: string) => void;
   totalImageCount: number;
   onResetFolderFilter: () => void;
@@ -79,6 +80,7 @@ const MainLayout = ({
   explorerOpen,
   folderNodes,
   activeFolderPath,
+  showExcluded,
   onSelectFolder,
   totalImageCount,
   onResetFolderFilter,

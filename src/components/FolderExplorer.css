@@ -238,8 +238,8 @@
   font-weight: 400;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
-  margin-left: 8px;
-  max-width: 48px;
+  margin-left: auto;
+  max-width: 80px;
   overflow: hidden;
   white-space: nowrap;
   letter-spacing: 0.02em;
@@ -255,6 +255,22 @@
     margin-left 0.24s ease,
     padding 0.24s ease,
     border-color 0.24s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.folder-item-count-pill .stats-considered {
+  color: #fff;
+  font-weight: 600;
+}
+
+.folder-item-count-pill .stats-divider {
+  opacity: 0.3;
+}
+
+.folder-item-count-pill .stats-total {
+  opacity: 0.6;
 }
 
 .folder-item-count-pill.is-hidden {

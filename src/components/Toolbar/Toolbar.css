@@ -164,6 +164,37 @@
   cursor: default;
 }
 
+.toolbar-folder-stats {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: help;
+  user-select: none;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  margin-left: 0.25rem;
+  flex-shrink: 0;
+}
+
+.stats-considered {
+  color: #fff;
+  font-weight: 500;
+}
+
+.stats-divider {
+  opacity: 0.3;
+  margin: 0 1px;
+}
+
+.stats-total {
+  opacity: 0.8;
+}
+
 .toolbar-divider {
   width: 1px;
   height: 24px;
@@ -337,6 +368,10 @@
 .toolbar-mode-icon-btn:active {
   transform: scale(0.95);
   background: rgba(255, 255, 255, 0.06);
+}
+
+.toolbar-dim-more {
+  opacity: 0.35 !important;
 }
 
 /* Control Groups */

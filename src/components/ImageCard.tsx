@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { Check, RotateCcw, X } from 'lucide-react';
+import { AlertCircle, Check, RotateCcw, X } from 'lucide-react';
 import useStore from '../store/useStore';
 import { normalizeStoredCoordinates } from '../utils/cropCoordinates';
 import {
@@ -65,6 +65,9 @@ export const ImageCard = memo(
     const cropState = useStore(
       useCallback((state) => state.cropData.get(image.id), [image.id]),
     );
+    const hasCaptionError = useStore(
+      useCallback((state) => state.captionErrorById.has(image.id), [image.id]),
+    );
 
     const transforms = cropState?.transforms || {
       rotate: 0,
@@ -87,9 +90,9 @@ export const ImageCard = memo(
     };
 
     const handleSelect = useCallback(() => {
-      if (excluded || selected) return;
+      if (selected) return;
       onSelect(image.id);
-    }, [excluded, image.id, onSelect, selected]);
+    }, [image.id, onSelect, selected]);
 
     // Live Crop Visuals
     const coords = normalizeStoredCoordinates(cropState?.coordinates);
@@ -308,6 +311,12 @@ export const ImageCard = memo(
             {selected && (
               <div className="selection-badge">
                 <Check size={12} />
+              </div>
+            )}
+
+            {hasCaptionError && (
+              <div className="error-badge" title="AI captioning failed">
+                <AlertCircle size={12} />
               </div>
             )}
           </div>

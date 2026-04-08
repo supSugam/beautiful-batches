@@ -370,6 +370,11 @@ const FolderExplorer = ({
               <FolderOpen size={13} />
               <span className="folder-item-name">{folder.name}</span>
             </span>
+            <span className={`folder-item-count-pill ${folder.totalCount === 0 ? 'is-hidden' : ''}`}>
+              <span className="stats-considered">{folder.count}</span>
+              <span className="stats-divider">/</span>
+              <span className="stats-total">{folder.totalCount}</span>
+            </span>
           </span>
         </button>
         {hasActionButtons && (
