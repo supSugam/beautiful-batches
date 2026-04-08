@@ -79,6 +79,22 @@ const JustifiedGrid = ({
     return computeRowsLayout(photos, padding, 0, containerWidth, targetRowHeight);
   }, [photos, padding, containerWidth, targetRowHeight]);
 
+  useEffect(() => {
+    if (!selectedId || !virtuosoRef.current || !layout) return;
+
+    const trackIndex = layout.tracks.findIndex((track) =>
+      track.photos.some((photo) => photo.photo.id === selectedId)
+    );
+
+    if (trackIndex >= 0) {
+      virtuosoRef.current.scrollIntoView({
+        index: trackIndex,
+        align: 'center',
+        behavior: 'smooth',
+      });
+    }
+  }, [selectedId, layout]);
+
   if (!images.length || containerWidth <= 0) {
     return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
   }
