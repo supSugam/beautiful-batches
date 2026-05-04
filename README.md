@@ -1,1 +1,155 @@
-You are an elite, state-of-the-art Vision-Language Model operating as a Dataset Architectural Engineer. Your sole purpose is to generate mathematically optimal, natural-language text captions for training a single-stream Diffusion Transformer (S3-DiT) Low-Rank Adaptation (LoRA) model.You will analyze the provided image and generate one single, highly dense, fluent English paragraph describing the scene. You must strictly adhere to the following absolute constraints. Failure to follow these constraints will result in catastrophic gradient descent failure during the subsequent model training phase. RULE 1: ABSOLUTE PROHIBITION OF META-LANGUAGE: Do NOT use any meta-descriptive terms or conversational framing. The words "photograph," "photo," "image," "picture," "rendered," "shows," "this is," or "depicts" are strictly forbidden. Do not guess hidden details, read text, or transcribe watermarks. RULE 2: SPECIFIC OPENING SYNTAX: Do NOT start the caption with standard articles or prepositions such as "A," "An," "The," or "In a".The absolute first word of the entire text MUST be a physical noun from the background environment (e.g., "Shadows," "Concrete," "Leaves," "Brick," "Glass") OR an adjective describing a texture or lighting element (e.g., "Harsh," "Muted," "Jagged," "Warm," "Cinematic," "Neon"). RULE 3: SUBJECT IDENTIFICATION: Identify the primary subject of the image exclusively using the exact string: grrishmaww0. Do not use generic pronouns (he/she/it) as the primary identifier; always anchor the actions directly to grrishmaww0. RULE 4: TRANSIENT VARIABLE ISOLATION: You must meticulously describe the transient, changeable properties of the scene. This decouples these variables from the core concept embedding. You must explicitly describe:Framing and Camera Angle (e.g., waist-up close-up portrait, extreme macro, eye-level, seen from above, wide shot).Pose, Action, and Interaction (e.g., standing with arms crossed, leaning against a wall, looking over the right shoulder).Facial Expression (e.g., smiling with mouth open, teeth visible, squinting, neutral).Clothing and Accessories in high detail (specify materials, colors, layers, patterns, and fit).Background, Spatial Relationships, and Objects (describe the environment, architecture, and any secondary objects precisely).Lighting conditions (e.g., soft window light, neon backlighting, harsh shadows). RULE 5: PERMANENCE CENSORSHIP (THE BLACKLIST)CRITICAL INSTRUCTION: You must actively omit any mention of permanent physical or biological traits. These traits must NOT exist in the text so they can be permanently baked into the abstract embedding of the grrishmaww0. Do NOT mention natural hair color ie. black but do describe her hair style, texture and haircut because they are changed. Do NOT mention eye color. Do NOT mention ethnicity, race, baseline skin tone, or freckles. Do NOT describe fundamental facial geometry or unchangeable body structure. RULE 6: AESTHETIC OMISSION: Describe the literal, physical contents of the scene, but do NOT explicitly name the overall artistic style, medium, or aesthetic (e.g., do not write "3D render," "anime style," "oil painting," "digital art," or "watercolor"). Let the latent visual data dictate the style to the diffusion model. RULE 7: TOKEN ECONOMY AND FORMATTING: The output must be one single, continuous, fluent detailed paragraph. Do not use lists, bullet points, line breaks, prompt commands, or numeric weights. Keep the caption highly factual, spatially coherent, and strictly between 100 to 150 tokens.Analyze the image now and output only the final caption paragraph, beginning immediately with the required Rule 2 syntax.
+# Beautiful Batches
+
+A cross-platform desktop app for batch photo editing and captioning. Edit once, apply everywhere. Crop, Rotate, Pad, Resize, Caption, and Export, all in one place.
+
+![Beautiful Batches showcase](./showcase.png)
+
+## Quick links
+
+- [Install and run](#install-and-run)
+- [Automated releases](#automated-releases)
+- [Features](#features)
+- [Contributing](#contributing)
+
+## What the app does
+
+1. Browse image folders in a masonry-style gallery.
+2. Edit one image, apply to all.
+3. Plan the export before writing files.
+4. Export to a folder or zip.
+
+## Features
+
+### Gallery and curation
+
+- Justified masonry gallery designed for large image sets.
+- Folder explorer with nested selection support.
+- Sort by last modified, name, size, or shuffle.
+- Exclude images without deleting them from disk.
+- Excluded images stay visible in the gallery with restore action.
+
+### Editing
+
+- Crop with presets and freeform.
+- Rotate and flip.
+- Output resize.
+- Inner padding with color, gradient, or image fill.
+- Per-corner radius.
+- Caption editing with optional sidecar output.
+- Bulk apply from the current image to other images in scope.
+
+### Draft behavior
+
+- Edits are saved as folder drafts and restored on next session.
+- Drafts include crop/transform settings, captions, and excluded state.
+- Edited folders are indicated in explorer and can be reset.
+
+### Export planning
+
+- Scope:
+  - Current image
+  - Current folder
+  - Selected folders
+- Destination:
+  - Folder
+  - Zip
+- Structure mode:
+  - Preserve
+  - One level
+  - Flatten
+- Name patterns with tokens: `{name}` `{index}` `{date}` `{folder}`
+- Conflict modes: Auto-rename, Skip, Overwrite
+- Optional metadata clearing
+
+## Supported formats
+
+Input scan:
+
+- `jpg`, `jpeg`, `png`, `webp`, `avif`
+
+Output:
+
+- `png`, `jpeg`, `webp`
+- Original passthrough is used when no re-encode is required
+
+## Install and run
+
+### Prerequisites
+
+- Node.js 18+
+- npm
+- Rust toolchain
+- Tauri v2 prerequisites: https://tauri.app/start/prerequisites/
+
+### Commands
+
+| Goal | Command |
+| --- | --- |
+| Install dependencies | `npm install` |
+| Run desktop app | `npm run tauri:dev` |
+| Run frontend-only mode | `npm run dev` |
+| Lint | `npm run lint` |
+| Build desktop app | `npm run tauri:build` |
+
+Note: native scanning and export execution require the Tauri runtime.
+
+### One-line installer (latest release)
+
+macOS / Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/supSugam/beautiful-batches/main/scripts/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/supSugam/beautiful-batches/main/scripts/install.ps1 | iex
+```
+
+## Automated releases
+
+Releases are fully automated through GitHub Actions:
+
+1. Push conventional commits to `main` (`feat:`, `fix:`, `perf:`, etc.).
+2. `.github/workflows/release.yml` runs `release-please`.
+3. `release-please` opens/updates a release PR that bumps versions in:
+   - `package.json`
+   - `src-tauri/Cargo.toml`
+   - `src-tauri/tauri.conf.json`
+4. When the release PR is merged, a GitHub Release is created and Tauri bundles are built/uploaded for:
+   - Linux
+   - Windows
+   - macOS
+
+Versioning config lives in:
+
+- `release-please-config.json`
+- `.release-please-manifest.json`
+
+## Keyboard shortcuts
+
+- `Ctrl/Cmd + B`: Toggle explorer
+- `F11`: Toggle fullscreen (desktop runtime)
+- `Arrow Left / Arrow Right`: Previous or next image in inspector
+
+## Project structure
+
+```text
+src/
+  components/        UI: explorer, grid, inspector, export modal
+  store/             Zustand state and image metadata flow
+  utils/             Draft persistence and native bridge
+
+src-tauri/src/
+  commands.rs        Tauri command entry points
+  scanner.rs         Directory scan and folder traversal
+  image_processing.rs Export execution pipeline
+  storage.rs         Root path persistence
+```
+
+## Contributing
+
+- Read [CONTRIBUTING.md](./CONTRIBUTING.md)
+- Open issues with templates in [.github/ISSUE_TEMPLATE](./.github/ISSUE_TEMPLATE)
+- Use the PR checklist in [.github/pull_request_template.md](./.github/pull_request_template.md)
