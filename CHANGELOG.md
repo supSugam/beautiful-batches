@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.6.0](https://github.com/supSugam/beautiful-batches/compare/v0.5.0...v0.6.0) (2026-05-04)
+
+
+### Features
+
+* Add a tabbed interface to the Watermark Settings Modal, separating AI engine settings from a new tips and shortcuts section. ([38cefac](https://github.com/supSugam/beautiful-batches/commit/38cefacea2aff40a0d34f909f788e79b0e610cb8))
+* add auto-scroll to selected photo in JustifiedGrid using Virtuoso reference ([458840d](https://github.com/supSugam/beautiful-batches/commit/458840d72bfed2d6a2812fdf27a5a5e37684b652))
+* add caption support, network configuration for AI services, and image status indicators ([074c819](https://github.com/supSugam/beautiful-batches/commit/074c8192613509e6d1faf8291b4b3b2a6d986112))
+* Enhance Bulk Apply and Export Resize sections with new options and animations ([194b9d6](https://github.com/supSugam/beautiful-batches/commit/194b9d6fbfb8a9a4b2e2005d5576cab8a993f2f0))
+* Enhance SourceEditSection with reset functionality and UI improvements ([7918359](https://github.com/supSugam/beautiful-batches/commit/791835915967ce781354761133a96173d9a6927f))
+* enhance watermark model status reporting, bridge readiness, and model size verification ([c28b599](https://github.com/supSugam/beautiful-batches/commit/c28b5990ef57336268b9b0aa926c07dcbc6be4b0))
+* Extend CropEntry type to support source edit history tracking ([7918359](https://github.com/supSugam/beautiful-batches/commit/791835915967ce781354761133a96173d9a6927f))
+* implement AI captioning error tracking, add 90s request timeout, and include excluded images toggle in folder explorer ([28dbf3e](https://github.com/supSugam/beautiful-batches/commit/28dbf3e6f7dfdcfbfaadbdf18413c93d59217b28))
+* implement folder picking and clickable tokens for export path and name patterns, and adjust empty destination path handling ([d68d096](https://github.com/supSugam/beautiful-batches/commit/d68d0964e03df836f6890eb1fb210fffa580ad44))
+* Introduce new UI components, enhance Inspector sections with improved interactions, and update backend image processing capabilities ([b24c854](https://github.com/supSugam/beautiful-batches/commit/b24c85410ba4939653f5b61ffd843edb517f4bdf))
+* optimize image rotation for 90-degree increments and prevent clipping with dynamic canvas sizing. ([ba013ac](https://github.com/supSugam/beautiful-batches/commit/ba013ac45ef6a23ad3b12c18200b720de3aa0aff))
+* Refactor padding handling in Inspector components ([3fae977](https://github.com/supSugam/beautiful-batches/commit/3fae977ebacab48c1190b71791501329978f3fbd))
+* regional watermark detection, custom api for captioning, ui fixes. ([3c353aa](https://github.com/supSugam/beautiful-batches/commit/3c353aa8c68d9ba2d974ec42ae0bb53ac0b34025))
+* Update WatermarkSettingsModal with hardware diagnostics and improved model management ([7918359](https://github.com/supSugam/beautiful-batches/commit/791835915967ce781354761133a96173d9a6927f))
+
+
+### Bug Fixes
+
+* Ensure proper state management in useStore for last used hardware ([7918359](https://github.com/supSugam/beautiful-batches/commit/791835915967ce781354761133a96173d9a6927f))
+* robust command detection and dependency check ([39726f6](https://github.com/supSugam/beautiful-batches/commit/39726f61ccc53b7ed762a23c62f632059cafd6ed))
+* Validate and normalize persisted draft data ([7918359](https://github.com/supSugam/beautiful-batches/commit/791835915967ce781354761133a96173d9a6927f))
+
 ## [0.5.0](https://github.com/supSugam/beautiful-batches/compare/v0.4.0...v0.5.0) (2026-02-24)
 
 
