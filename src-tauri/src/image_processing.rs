@@ -3,12 +3,14 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufWriter, Cursor, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use image::imageops::{self, overlay, FilterType};
 use image::{codecs, DynamicImage, GenericImageView, ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
 use imageproc::geometric_transformations::{rotate_about_center, Interpolation};
+use rayon::prelude::*;
 use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
@@ -206,17 +208,9 @@ pub fn process_bulk_export(
                 let target_width = output_width_raw.round().max(1.0) as u32;
                 let (source_width, source_height) = image.dimensions();
                 if source_width > 0 && source_height > 0 {
-                    let ratio = source_width as f64 / source_height as f64;
+                    let ratio = crop_entry.aspect.unwrap_or_else(|| source_width as f64 / source_height as f64);
                     let target_height = (target_width as f64 / ratio).round().max(1.0) as u32;
                     image = image.resize_exact(target_width, target_height, FilterType::Lanczos3);
-
-                    if target_width < source_width {
-                        image = DynamicImage::ImageRgba8(imageops::unsharpen(
-                            &image.to_rgba8(),
-                            1.0,
-                            3,
-                        ));
-                    }
                 }
             }
         }
@@ -1164,14 +1158,9 @@ fn apply_resize_only(mut image: DynamicImage, crop: &CropConfig) -> DynamicImage
             let target_width = output_width_raw.round().max(1.0) as u32;
             let (source_width, source_height) = image.dimensions();
             if source_width > 0 && source_height > 0 {
-                let ratio = source_width as f64 / source_height as f64;
+                let ratio = crop.aspect.unwrap_or_else(|| source_width as f64 / source_height as f64);
                 let target_height = (target_width as f64 / ratio).round().max(1.0) as u32;
                 image = image.resize_exact(target_width, target_height, FilterType::Lanczos3);
-
-                if target_width < source_width {
-                    image =
-                        DynamicImage::ImageRgba8(imageops::unsharpen(&image.to_rgba8(), 1.0, 3));
-                }
             }
         }
     }
@@ -1521,7 +1510,9 @@ fn normalize_caption_text(value: &str) -> String {
     value.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+#[allow(dead_code)]
 fn prepare_export_item(
+
     item: &ExecuteExportPlanItem,
     include_captions: bool,
     quality: u8,
@@ -1631,9 +1622,17 @@ pub fn execute_export_plan(
     let mut caption_written_count = 0usize;
     let mut failed_count = 0usize;
     let mut used_paths = HashSet::<String>::new();
-    let mut decoded_assets = HashMap::<String, RgbaImage>::new();
 
-    let destination_path = match destination_mode {
+    // ── Phase 1: Sequential path resolution ──────────────────────────
+    // Resolve output paths and captions sequentially (needs &mut used_paths).
+    // This is very fast compared to image processing.
+    struct ResolvedItem {
+        index: usize,
+        relative_output_path: PathBuf,
+        caption_text: Option<String>,
+    }
+
+    let folder_root_for_conflict = match destination_mode {
         DestinationMode::Folder => {
             fs::create_dir_all(&destination_root).map_err(|error| {
                 format!(
@@ -1641,26 +1640,137 @@ pub fn execute_export_plan(
                     destination_root.display()
                 )
             })?;
+            Some(destination_root.clone())
+        }
+        DestinationMode::Zip => {
+            // No folder root on disk for zips
+            None
+        }
+    };
 
+    let mut resolved_items: Vec<ResolvedItem> = Vec::with_capacity(request.items.len());
+
+    for (index, item) in request.items.iter().enumerate() {
+        if item.skip.unwrap_or(false) {
+            skipped_count += 1;
+            continue;
+        }
+
+        let normalized_relative_path = match normalize_relative_output_path(&item.output_path) {
+            Ok(path) => path,
+            Err(error) => {
+                failed_count += 1;
+                push_warning(&mut warnings, format!("Failed to resolve path for {}: {error}", item.image_id));
+                continue;
+            }
+        };
+
+        let caption_text = if include_captions {
+            item.caption
+                .as_deref()
+                .map(normalize_caption_text)
+                .filter(|value| !value.trim().is_empty())
+        } else {
+            None
+        };
+        let needs_caption = caption_text.is_some();
+
+        let Some(final_relative_path) = resolve_conflict_path(
+            &normalized_relative_path,
+            needs_caption,
+            conflict_mode,
+            &mut used_paths,
+            folder_root_for_conflict.as_deref(),
+        ) else {
+            skipped_count += 1;
+            continue;
+        };
+
+        resolved_items.push(ResolvedItem {
+            index,
+            relative_output_path: final_relative_path,
+            caption_text,
+        });
+    }
+
+    // ── Phase 2: Parallel image processing ───────────────────────────
+    // This is the CPU-intensive phase: decode → transform → crop → pad → resize → encode.
+    // Uses Rayon par_iter for multi-core speedup.
+    let decoded_assets_mutex = Mutex::new(HashMap::<String, RgbaImage>::new());
+
+    let processed_results: Vec<(usize, Result<PreparedExportItem, String>)> = resolved_items
+        .par_iter()
+        .map(|resolved| {
+            let item = &request.items[resolved.index];
+            let crop = item.crop.clone().unwrap_or_default();
+            let desired_format = infer_encoded_format_from_path(&resolved.relative_output_path);
+
+            let source_bytes = match load_source_bytes(item) {
+                Ok(bytes) => bytes,
+                Err(error) => return (resolved.index, Err(error)),
+            };
+
+            let source_dimensions = match read_image_dimensions(&source_bytes) {
+                Ok(dims) => dims,
+                Err(error) => return (resolved.index, Err(error)),
+            };
+
+            let has_changes = has_visual_changes(&crop, source_dimensions.0, source_dimensions.1);
+
+            let source_format = item
+                .source_name
+                .as_deref()
+                .and_then(infer_output_format_from_name)
+                .or_else(|| infer_output_format_from_name(&item.source_path));
+            let can_passthrough_original =
+                !clear_metadata && !has_changes && source_format == Some(desired_format.key());
+
+            let image_bytes = if can_passthrough_original {
+                source_bytes
+            } else {
+                let image = match image::load_from_memory(&source_bytes) {
+                    Ok(img) => img,
+                    Err(error) => return (resolved.index, Err(format!("Failed to decode source image {}: {error}", item.image_id))),
+                };
+
+                let image = apply_primary_edits(image, &crop);
+                let image = apply_crop_only(image, &crop);
+
+                // Lock decoded_assets only when needed for padding
+                let image = {
+                    let mut assets = decoded_assets_mutex.lock().unwrap();
+                    match apply_inner_padding_and_corner(image, &crop, &request.padding_image_assets, &mut assets) {
+                        Ok(img) => img,
+                        Err(error) => return (resolved.index, Err(error)),
+                    }
+                };
+
+                let image = apply_resize_only(image, &crop);
+                match encode_image_for_format(&image, desired_format, quality) {
+                    Ok(bytes) => bytes,
+                    Err(error) => return (resolved.index, Err(error)),
+                }
+            };
+
+            (resolved.index, Ok(PreparedExportItem {
+                relative_output_path: resolved.relative_output_path.clone(),
+                image_bytes,
+                caption_text: resolved.caption_text.clone(),
+            }))
+        })
+        .collect();
+
+    // ── Phase 3: Sequential write ────────────────────────────────────
+    // Write processed results to disk/zip in order.
+    let destination_path = match destination_mode {
+        DestinationMode::Folder => {
             let mut sink = ExportSink::Folder {
                 root: destination_root.clone(),
             };
 
-            for item in &request.items {
-                match prepare_export_item(
-                    item,
-                    include_captions,
-                    quality,
-                    clear_metadata,
-                    conflict_mode,
-                    Some(&destination_root),
-                    &mut used_paths,
-                    &request.padding_image_assets,
-                    &mut decoded_assets,
-                    None,
-                    false,
-                ) {
-                    Ok(Some(prepared)) => {
+            for (_index, result) in processed_results {
+                match result {
+                    Ok(prepared) => {
                         if let Err(error) =
                             sink.write_entry(&prepared.relative_output_path, &prepared.image_bytes)
                         {
@@ -1693,15 +1803,9 @@ pub fn execute_export_plan(
                             }
                         }
                     }
-                    Ok(None) => {
-                        skipped_count += 1;
-                    }
                     Err(error) => {
                         failed_count += 1;
-                        push_warning(
-                            &mut warnings,
-                            format!("Failed to process {}: {error}", item.image_id),
-                        );
+                        push_warning(&mut warnings, format!("Failed to process image: {error}"));
                     }
                 }
             }
@@ -1755,21 +1859,9 @@ pub fn execute_export_plan(
                 writer: zip::ZipWriter::new(BufWriter::new(zip_file)),
             };
 
-            for item in &request.items {
-                match prepare_export_item(
-                    item,
-                    include_captions,
-                    quality,
-                    clear_metadata,
-                    conflict_mode,
-                    None,
-                    &mut used_paths,
-                    &request.padding_image_assets,
-                    &mut decoded_assets,
-                    None,
-                    false,
-                ) {
-                    Ok(Some(prepared)) => {
+            for (_index, result) in processed_results {
+                match result {
+                    Ok(prepared) => {
                         if let Err(error) =
                             sink.write_entry(&prepared.relative_output_path, &prepared.image_bytes)
                         {
@@ -1802,15 +1894,9 @@ pub fn execute_export_plan(
                             }
                         }
                     }
-                    Ok(None) => {
-                        skipped_count += 1;
-                    }
                     Err(error) => {
                         failed_count += 1;
-                        push_warning(
-                            &mut warnings,
-                            format!("Failed to process {}: {error}", item.image_id),
-                        );
+                        push_warning(&mut warnings, format!("Failed to process image: {error}"));
                     }
                 }
             }
@@ -1829,3 +1915,4 @@ pub fn execute_export_plan(
         warnings,
     })
 }
+

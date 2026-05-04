@@ -167,6 +167,7 @@ fn main() {
             commands::save_secure_api_key,
             commands::get_secure_api_key,
             commands::get_git_info,
+            commands::copy_files_to_directory,
             clipboard::read_clipboard_image,
             clipboard::has_clipboard_image,
         ])

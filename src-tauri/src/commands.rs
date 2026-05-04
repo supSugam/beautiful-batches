@@ -959,6 +959,7 @@ pub async fn generate_ai_caption(
     custom_body_template: Option<String>,
     custom_headers: Option<String>,
     response_field: Option<String>,
+    timeout: Option<u64>,
 ) -> Result<crate::ai_captioning::CaptionResult, String> {
     crate::ai_captioning::generate(crate::ai_captioning::CaptionRequest {
         image_path,
@@ -970,6 +971,7 @@ pub async fn generate_ai_caption(
         custom_body_template,
         custom_headers,
         response_field,
+        timeout,
     })
     .await
 }
@@ -996,4 +998,33 @@ pub async fn get_secure_api_key(provider: String) -> Result<String, String> {
         Err(keyring::Error::NoEntry) => Ok("".to_string()),
         Err(e) => Err(e.to_string()),
     }
+}
+#[tauri::command]
+pub async fn copy_files_to_directory(
+    source_paths: Vec<String>,
+    target_directory: String,
+) -> Result<Vec<String>, String> {
+    use std::path::Path;
+    let target_dir = Path::new(&target_directory);
+    if !target_dir.is_dir() {
+        return Err(format!("Target directory does not exist: {}", target_directory));
+    }
+
+    let mut copied = Vec::new();
+    for src in source_paths {
+        let src_path = Path::new(&src);
+        if !src_path.is_file() {
+            continue;
+        }
+        if let Some(filename) = src_path.file_name() {
+            let dst_path = target_dir.join(filename);
+            if let Err(e) = std::fs::copy(src_path, &dst_path) {
+                eprintln!("Failed to copy file: {}", e);
+                return Err(format!("Failed to copy file: {}", e));
+            } else {
+                copied.push(dst_path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    Ok(copied)
 }

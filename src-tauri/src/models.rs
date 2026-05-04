@@ -27,6 +27,7 @@ pub struct CropConfig {
     pub original_name: Option<String>,
     pub coordinates: Option<StoredCoordinates>,
     pub transforms: Option<TransformConfig>,
+    pub aspect: Option<f64>,
     pub output_width: Option<f64>,
     pub padding: Option<Value>,
     pub corner_radius: Option<Value>,
@@ -130,6 +131,7 @@ pub struct NativeScannedImage {
     pub last_modified: u64,
     pub width: u32,
     pub height: u32,
+    pub caption: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

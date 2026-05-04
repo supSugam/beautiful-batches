@@ -1613,6 +1613,28 @@
 
 .caption-input-shell {
   position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.caption-input-shell::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 10px;
+  height: 10px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='22' y1='12' x2='12' y2='22'%3E%3C/line%3E%3Cline x1='22' y1='2' x2='2' y2='22'%3E%3C/line%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+  opacity: 0.2;
+  pointer-events: none;
+  z-index: 5;
+  transition: opacity 0.2s;
+}
+
+.caption-input-shell:hover::after {
+  opacity: 0.45;
 }
 
 .caption-textarea {
@@ -1635,6 +1657,15 @@
   padding: 11px 44px 11px 12px;
   outline: none;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.caption-textarea::-webkit-resizer {
+  display: none;
+  background: transparent !important;
+}
+
+.caption-textarea::-webkit-scrollbar-corner {
+  background: transparent !important;
 }
 
 .caption-textarea:focus {
@@ -1734,6 +1765,17 @@
 .caption-magic-btn.active {
   color: #9ba9ff;
   opacity: 1;
+}
+
+.caption-magic-btn.queued {
+  color: #fbbf24;
+  opacity: 0.8;
+  animation: captionSparklePulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes captionSparklePulse {
+  0%, 100% { opacity: 0.9; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.95); }
 }
 
 .caption-magic-btn.active .caption-sparkle-core {
@@ -2094,6 +2136,7 @@
   background: transparent;
 }
 
+/* Premium Context Menu - Globally Available */
 .premium-context-menu {
   position: fixed;
   z-index: 10001;
@@ -2134,6 +2177,7 @@
   text-align: left;
   transition: all 0.15s ease;
   width: 100%;
+  color: var(--text);
 }
 
 .premium-context-menu .menu-item:hover {

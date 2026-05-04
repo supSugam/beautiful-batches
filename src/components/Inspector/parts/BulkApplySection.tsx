@@ -4,14 +4,12 @@ import { ArrowLeftCircle, ArrowRightCircle, Zap, ChevronDown, Sparkles, Copy } f
 import type { ApplyCropToImagesOptions } from '../../../types/app';
 import SegmentedControl from '../../common/SegmentedControl';
 
-type BulkApplySectionProps = {
+export type BulkApplySectionProps = {
   onApplyTo: (
     target: 'prev' | 'rest' | 'all',
     options?: ApplyCropToImagesOptions,
   ) => void;
   showSectionLabel?: boolean;
-  canIncludeWatermarkRemoval?: boolean;
-  canIncludeBackgroundRemoval?: boolean;
 };
 
 const REVEAL_SECTION_TRANSITION = { duration: 0.22, ease: 'easeOut' } as const;
@@ -20,8 +18,6 @@ const PIN_TO_BOTTOM_MS = 260;
 const BulkApplySection = ({
   onApplyTo,
   showSectionLabel = true,
-  canIncludeWatermarkRemoval = false,
-  canIncludeBackgroundRemoval = false,
 }: BulkApplySectionProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -35,6 +31,7 @@ const BulkApplySection = ({
   const [includeTransforms, setIncludeTransforms] = useState(true);
   const [includeCropState, setIncludeCropState] = useState(true);
   const [includeUiTweaks, setIncludeUiTweaks] = useState(true);
+  const [includeExportResize, setIncludeExportResize] = useState(true);
   const [includeWatermarkRemoval, setIncludeWatermarkRemoval] = useState(false);
   const [includeBackgroundRemoval, setIncludeBackgroundRemoval] = useState(false);
   const [includeDetectionRegion, setIncludeDetectionRegion] = useState(true);
@@ -173,12 +170,9 @@ const BulkApplySection = ({
       includeTransforms,
       includeCropState,
       includeUiTweaks,
-      includeWatermarkRemoval: canIncludeWatermarkRemoval
-        ? includeWatermarkRemoval
-        : false,
-      includeBackgroundRemoval: canIncludeBackgroundRemoval
-        ? includeBackgroundRemoval
-        : false,
+      includeExportResize,
+      includeWatermarkRemoval,
+      includeBackgroundRemoval,
       includeDetectionRegion,
     });
 
@@ -328,7 +322,7 @@ const BulkApplySection = ({
 
                 <div
                   className="metadata-toggle-row bulk-caption-switch-row clickable-row"
-                  title="Apply Padding, Corner Radius, and Export Limits"
+                  title="Apply Padding, Corner Radius, and Colors"
                   onClick={() => setIncludeUiTweaks(!includeUiTweaks)}
                   style={{ cursor: 'pointer' }}
                 >
@@ -340,6 +334,40 @@ const BulkApplySection = ({
                       checked={includeUiTweaks}
                       onChange={(event) => setIncludeUiTweaks(event.target.checked)}
                       aria-label="Include UI tweaks in bulk apply"
+                    />
+                    <span className="metadata-checkbox-indicator" aria-hidden="true">
+                      <svg
+                        className="metadata-checkbox-mark"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        style={{ transform: 'scale(1.2)' }}
+                      >
+                        <path
+                          className="metadata-checkbox-mark-path"
+                          d="M5 12l4.5 4.5L19 7"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </span>
+                  </label>
+                </div>
+
+                <div
+                  className="metadata-toggle-row bulk-caption-switch-row clickable-row"
+                  title="Apply Export Resize dimensions"
+                  onClick={() => setIncludeExportResize(!includeExportResize)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <span className="metadata-toggle-label">Include Export Resize</span>
+                  <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="metadata-checkbox-input"
+                      checked={includeExportResize}
+                      onChange={(event) => setIncludeExportResize(event.target.checked)}
+                      aria-label="Include export resize in bulk apply"
                     />
                     <span className="metadata-checkbox-indicator" aria-hidden="true">
                       <svg
@@ -394,85 +422,81 @@ const BulkApplySection = ({
                   </label>
                 </div>
 
-                {canIncludeWatermarkRemoval && (
-                  <div
-                    className="metadata-toggle-row bulk-caption-switch-row clickable-row"
-                    title="Apply watermark removal to the selected images (runs the AI per image)"
-                    onClick={() => setIncludeWatermarkRemoval(!includeWatermarkRemoval)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <span className="metadata-toggle-label">
-                      Include Watermark Removal
+                <div
+                  className="metadata-toggle-row bulk-caption-switch-row clickable-row"
+                  title="Apply watermark removal. If not used on current image, it will be RESET on targets."
+                  onClick={() => setIncludeWatermarkRemoval(!includeWatermarkRemoval)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <span className="metadata-toggle-label">
+                    Include Watermark Removal
+                  </span>
+                  <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="metadata-checkbox-input"
+                      checked={includeWatermarkRemoval}
+                      onChange={(event) =>
+                        setIncludeWatermarkRemoval(event.target.checked)
+                      }
+                      aria-label="Include watermark removal in bulk apply"
+                    />
+                    <span className="metadata-checkbox-indicator" aria-hidden="true">
+                      <svg
+                        className="metadata-checkbox-mark"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        style={{ transform: 'scale(1.2)' }}
+                      >
+                        <path
+                          className="metadata-checkbox-mark-path"
+                          d="M5 12l4.5 4.5L19 7"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
                     </span>
-                    <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        className="metadata-checkbox-input"
-                        checked={includeWatermarkRemoval}
-                        onChange={(event) =>
-                          setIncludeWatermarkRemoval(event.target.checked)
-                        }
-                        aria-label="Include watermark removal in bulk apply"
-                      />
-                      <span className="metadata-checkbox-indicator" aria-hidden="true">
-                        <svg
-                          className="metadata-checkbox-mark"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          style={{ transform: 'scale(1.2)' }}
-                        >
-                          <path
-                            className="metadata-checkbox-mark-path"
-                            d="M5 12l4.5 4.5L19 7"
-                            strokeWidth="2.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
-                    </label>
-                  </div>
-                )}
+                  </label>
+                </div>
 
-                {canIncludeBackgroundRemoval && (
-                  <div
-                    className="metadata-toggle-row bulk-caption-switch-row clickable-row"
-                    title="Apply background removal to the selected images (runs rembg per image)"
-                    onClick={() => setIncludeBackgroundRemoval(!includeBackgroundRemoval)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <span className="metadata-toggle-label">
-                      Include Background Removal
+                <div
+                  className="metadata-toggle-row bulk-caption-switch-row clickable-row"
+                  title="Apply background removal. If not used on current image, it will be RESET on targets."
+                  onClick={() => setIncludeBackgroundRemoval(!includeBackgroundRemoval)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <span className="metadata-toggle-label">
+                    Include Background Removal
+                  </span>
+                  <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="metadata-checkbox-input"
+                      checked={includeBackgroundRemoval}
+                      onChange={(event) =>
+                        setIncludeBackgroundRemoval(event.target.checked)
+                      }
+                      aria-label="Include background removal in bulk apply"
+                    />
+                    <span className="metadata-checkbox-indicator" aria-hidden="true">
+                      <svg
+                        className="metadata-checkbox-mark"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        style={{ transform: 'scale(1.2)' }}
+                      >
+                        <path
+                          className="metadata-checkbox-mark-path"
+                          d="M5 12l4.5 4.5L19 7"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
                     </span>
-                    <label className="metadata-checkbox-row" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        className="metadata-checkbox-input"
-                        checked={includeBackgroundRemoval}
-                        onChange={(event) =>
-                          setIncludeBackgroundRemoval(event.target.checked)
-                        }
-                        aria-label="Include background removal in bulk apply"
-                      />
-                      <span className="metadata-checkbox-indicator" aria-hidden="true">
-                        <svg
-                          className="metadata-checkbox-mark"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          style={{ transform: 'scale(1.2)' }}
-                        >
-                          <path
-                            className="metadata-checkbox-mark-path"
-                            d="M5 12l4.5 4.5L19 7"
-                            strokeWidth="2.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
-                    </label>
-                  </div>
-                )}
+                  </label>
+                </div>
 
                 <div
                   className="metadata-toggle-row bulk-caption-switch-row clickable-row"

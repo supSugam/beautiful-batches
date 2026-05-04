@@ -296,3 +296,107 @@ input[type='number']::-webkit-inner-spin-button {
   from { max-height: 0; opacity: 0; }
   to { max-height: 300px; opacity: 1; }
 }
+
+/* Premium Context Menu - Globally Available */
+.premium-context-menu {
+  position: fixed;
+  z-index: 10001;
+  min-width: 220px;
+  background: rgba(20, 20, 25, 0.9);
+  backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 
+    0 12px 40px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: auto;
+}
+
+.premium-context-menu .menu-header {
+  padding: 8px 12px 4px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.premium-context-menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  width: 100%;
+  color: var(--text);
+}
+
+.premium-context-menu .menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.premium-context-menu .menu-item:active {
+  background: rgba(255, 255, 255, 0.12);
+  transform: scale(0.98);
+}
+
+.premium-context-menu .menu-item--danger {
+  margin-top: 4px;
+  position: relative;
+}
+
+.premium-context-menu .menu-item--danger::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 8px;
+  right: 8px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.premium-context-menu .menu-item--danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.premium-context-menu .menu-icon {
+  flex-shrink: 0;
+}
+
+.premium-context-menu .menu-icon.text-primary {
+  color: var(--accent);
+}
+
+.premium-context-menu .menu-icon.text-glow {
+  color: #fbbf24;
+  filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.4));
+}
+
+.premium-context-menu .menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.premium-context-menu .menu-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+  line-height: 1.2;
+}
+
+.premium-context-menu .menu-sub {
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.2;
+}

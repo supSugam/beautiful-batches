@@ -14,6 +14,7 @@ pub struct CaptionRequest {
     pub custom_body_template: Option<String>,
     pub custom_headers: Option<String>,
     pub response_field: Option<String>,
+    pub timeout: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -26,7 +27,7 @@ pub struct CaptionResult {
 pub async fn generate(req: CaptionRequest) -> Result<CaptionResult, String> {
     // If empty, supply a 1x1 placeholder PNG for testing
     let (bytes, mime_type) = if req.image_path.trim().is_empty() {
-        use base64::{engine::general_purpose, Engine as _};
+
         let b = general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
             .unwrap_or_default();
         (b, "image/png")
@@ -47,20 +48,21 @@ pub async fn generate(req: CaptionRequest) -> Result<CaptionResult, String> {
         (b, m)
     };
 
-    use base64::{engine::general_purpose, Engine as _};
+
     let b64 = general_purpose::STANDARD.encode(bytes);
+    let timeout = req.timeout.unwrap_or(180);
 
     match req.provider.as_str() {
-        "google" => call_gemini(req.model, req.api_key, req.system_prompt, b64, mime_type).await.map(|c| CaptionResult { caption: c, raw_request: None, raw_response: None }),
-        "openai" => call_openai(req.model, req.api_key, req.system_prompt, b64, mime_type).await.map(|c| CaptionResult { caption: c, raw_request: None, raw_response: None }),
-        "anthropic" => call_anthropic(req.model, req.api_key, req.system_prompt, b64, mime_type).await.map(|c| CaptionResult { caption: c, raw_request: None, raw_response: None }),
-        "openrouter" => call_openrouter(req.model, req.api_key, req.system_prompt, b64, mime_type).await.map(|c| CaptionResult { caption: c, raw_request: None, raw_response: None }),
-        "custom" => call_custom(req.model, req.api_key, req.system_prompt, b64, mime_type, req.endpoint, req.custom_body_template, req.custom_headers, req.response_field).await,
+        "google" => call_gemini(req.model, req.api_key, req.system_prompt, b64, mime_type, timeout).await.map(|c| CaptionResult { caption: c, raw_request: None, raw_response: None }),
+        "openai" => call_openai(req.model, req.api_key, req.system_prompt, b64, mime_type, timeout).await.map(|c| CaptionResult { caption: c, raw_request: None, raw_response: None }),
+        "anthropic" => call_anthropic(req.model, req.api_key, req.system_prompt, b64, mime_type, timeout).await.map(|c| CaptionResult { caption: c, raw_request: None, raw_response: None }),
+        "openrouter" => call_openrouter(req.model, req.api_key, req.system_prompt, b64, mime_type, timeout).await.map(|c| CaptionResult { caption: c, raw_request: None, raw_response: None }),
+        "custom" => call_custom(req.model, req.api_key, req.system_prompt, b64, mime_type, req.endpoint, req.custom_body_template, req.custom_headers, req.response_field, timeout).await,
         _ => Err(format!("Unsupported provider: {}", req.provider)),
     }
 }
 
-async fn call_gemini(model: String, api_key: String, prompt: String, b64: String, mime_type: &str) -> Result<String, String> {
+async fn call_gemini(model: String, api_key: String, prompt: String, b64: String, mime_type: &str, timeout: u64) -> Result<String, String> {
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
         model, api_key
@@ -89,7 +91,7 @@ async fn call_gemini(model: String, api_key: String, prompt: String, b64: String
     });
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
+        .timeout(std::time::Duration::from_secs(timeout))
         .build()
         .map_err(|e| e.to_string())?;
     let res = client.post(url)
@@ -110,7 +112,7 @@ async fn call_gemini(model: String, api_key: String, prompt: String, b64: String
         .ok_or_else(|| format!("Invalid response from Gemini: {:?}", json))
 }
 
-async fn call_openai(model: String, api_key: String, prompt: String, b64: String, mime_type: &str) -> Result<String, String> {
+async fn call_openai(model: String, api_key: String, prompt: String, b64: String, mime_type: &str, timeout: u64) -> Result<String, String> {
     let url = "https://api.openai.com/v1/chat/completions";
 
     let body = json!({
@@ -136,7 +138,7 @@ async fn call_openai(model: String, api_key: String, prompt: String, b64: String
     });
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
+        .timeout(std::time::Duration::from_secs(timeout))
         .build()
         .map_err(|e| e.to_string())?;
     let res = client.post(url)
@@ -157,7 +159,7 @@ async fn call_openai(model: String, api_key: String, prompt: String, b64: String
         .ok_or_else(|| format!("Invalid response from OpenAI: {:?}", json))
 }
 
-async fn call_anthropic(model: String, api_key: String, prompt: String, b64: String, mime_type: &str) -> Result<String, String> {
+async fn call_anthropic(model: String, api_key: String, prompt: String, b64: String, mime_type: &str, timeout: u64) -> Result<String, String> {
     let url = "https://api.anthropic.com/v1/messages";
 
     let body = json!({
@@ -185,7 +187,7 @@ async fn call_anthropic(model: String, api_key: String, prompt: String, b64: Str
     });
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
+        .timeout(std::time::Duration::from_secs(timeout))
         .build()
         .map_err(|e| e.to_string())?;
     let res = client.post(url)
@@ -208,7 +210,7 @@ async fn call_anthropic(model: String, api_key: String, prompt: String, b64: Str
         .ok_or_else(|| format!("Invalid response from Anthropic: {:?}", json))
 }
 
-async fn call_openrouter(model: String, api_key: String, prompt: String, b64: String, mime_type: &str) -> Result<String, String> {
+async fn call_openrouter(model: String, api_key: String, prompt: String, b64: String, mime_type: &str, timeout: u64) -> Result<String, String> {
     let url = "https://openrouter.ai/api/v1/chat/completions";
 
     let body = json!({
@@ -234,7 +236,7 @@ async fn call_openrouter(model: String, api_key: String, prompt: String, b64: St
     });
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
+        .timeout(std::time::Duration::from_secs(timeout))
         .build()
         .map_err(|e| e.to_string())?;
     let res = client.post(url)
@@ -268,6 +270,7 @@ async fn call_custom(
     custom_body_template: Option<String>,
     custom_headers: Option<String>,
     response_field: Option<String>,
+    timeout: u64,
 ) -> Result<CaptionResult, String> {
     let endpoint = endpoint.ok_or_else(|| "Missing endpoint for custom API".to_string())?;
     let template = custom_body_template.unwrap_or_else(|| "{}".to_string());
@@ -312,7 +315,7 @@ async fn call_custom(
     }
     
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
+        .timeout(std::time::Duration::from_secs(timeout))
         .default_headers(headers)
         .build()
         .map_err(|e| e.to_string())?;

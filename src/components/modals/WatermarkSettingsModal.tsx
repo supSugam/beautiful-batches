@@ -1741,6 +1741,48 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
                           </div>
                         </section>
                       )}
+
+                      <section className="wsm-card">
+                        <h3>Network & Queueing</h3>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                          <label className="export-plan-field">
+                            <span>Timeout (s)</span>
+                            <input 
+                              type="number" 
+                              min={5}
+                              max={600}
+                              className="input"
+                              value={captioningSettings.timeout || 180}
+                              onChange={(e) => setCaptioningSettings({ timeout: parseInt(e.target.value) || 180 })}
+                            />
+                          </label>
+                          <label className="export-plan-field">
+                            <span>Max Retries</span>
+                            <input 
+                              type="number" 
+                              min={0}
+                              max={10}
+                              className="input"
+                              value={captioningSettings.maxAttempts || 3}
+                              onChange={(e) => setCaptioningSettings({ maxAttempts: parseInt(e.target.value) || 0 })}
+                            />
+                          </label>
+                          <label className="export-plan-field">
+                            <span>Concurrent</span>
+                            <input 
+                              type="number" 
+                              min={1}
+                              max={50}
+                              className="input"
+                              value={captioningSettings.maxConcurrentRequests || 1}
+                              onChange={(e) => setCaptioningSettings({ maxConcurrentRequests: parseInt(e.target.value) || 1 })}
+                            />
+                          </label>
+                        </div>
+                        <p className="wsm-input-hint">
+                          Attempts are only applicable for bulk operations. Concurrency limits how many API requests run at once.
+                        </p>
+                      </section>
                     </div>
 
                     {/* Right Column: Instructions / JSON Payload (custom API uses segmented control) */}

@@ -317,8 +317,11 @@ const InspectorEditSession = ({
               outputWidth={logic.outputWidth}
               handleResizeToggle={logic.handleResizeToggle}
               manualOutputWidth={logic.manualOutputWidth}
+              manualOutputHeight={logic.manualOutputHeight}
               handleOutputWidthChange={logic.handleOutputWidthChange}
               handleOutputWidthBlur={logic.handleOutputWidthBlur}
+              handleOutputHeightChange={logic.handleOutputHeightChange}
+              handleOutputHeightBlur={logic.handleOutputHeightBlur}
               aspect={logic.aspect}
               currentPixelWidth={logic.currentPixelWidth}
               currentPixelHeight={logic.currentPixelHeight}
@@ -331,8 +334,6 @@ const InspectorEditSession = ({
                   onApplyTo(target, options);
                 }}
                 showSectionLabel={false}
-                canIncludeWatermarkRemoval={canIncludeWatermarkRemoval}
-                canIncludeBackgroundRemoval={canIncludeBackgroundRemoval}
               />
             )}
           </section>
@@ -516,7 +517,6 @@ export const Inspector = ({
 
       {mode === 'view' ? (
         <InspectorViewSession
-          key={image.id}
           image={image}
           onClose={onClose}
           onNext={onNext}
@@ -527,7 +527,6 @@ export const Inspector = ({
         />
       ) : (
         <InspectorEditSession
-          key={image.id}
           image={image}
           onCropChange={onCropChange}
           onClose={onClose}

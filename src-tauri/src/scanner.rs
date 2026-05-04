@@ -79,6 +79,25 @@ fn read_image_metadata(file_path: &Path) -> Option<(u64, u64, u64, u64, u32, u32
     Some((size, accessed_at, created_at, last_modified, width, height))
 }
 
+/// Read sidecar `.txt` caption for an image file if it exists.
+fn read_sidecar_caption(image_path: &Path) -> Option<String> {
+    let mut txt_path = image_path.to_path_buf();
+    txt_path.set_extension("txt");
+    if !txt_path.exists() {
+        txt_path.set_extension("TXT");
+    }
+    
+    if txt_path.exists() && txt_path.is_file() {
+        if let Ok(content) = fs::read_to_string(&txt_path) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Scan a single root directory and return metadata for every image found.
 ///
 /// This reads only lightweight metadata + image headers (for dimensions).
@@ -123,6 +142,8 @@ pub fn scan_single_root(root_path: &Path) -> Result<NativeRootScan, String> {
             continue;
         };
 
+        let caption = read_sidecar_caption(file_path);
+
         images.push(NativeScannedImage {
             relative_path,
             file_name,
@@ -133,6 +154,7 @@ pub fn scan_single_root(root_path: &Path) -> Result<NativeRootScan, String> {
             last_modified,
             width,
             height,
+            caption,
         });
     }
 
@@ -197,6 +219,8 @@ pub fn scan_single_image_path(
         })
         .unwrap_or_else(|| "Quick Edit".to_string());
 
+    let caption = read_sidecar_caption(&canonical_file);
+
     Ok(NativeRootScan {
         root_path: normalize_path_for_ui(&canonical_parent),
         directory_name: directory_name.clone(),
@@ -210,6 +234,7 @@ pub fn scan_single_image_path(
             last_modified,
             width,
             height,
+            caption,
         }],
     })
 }
@@ -393,6 +418,8 @@ pub fn scan_folder_by_path(
             continue;
         };
 
+        let caption = read_sidecar_caption(file_path);
+
         images.push(NativeScannedImage {
             relative_path,
             file_name,
@@ -403,6 +430,7 @@ pub fn scan_folder_by_path(
             last_modified,
             width,
             height,
+            caption,
         });
     }
 
@@ -452,6 +480,8 @@ pub fn scan_multiple_paths(
             if let Some((size, accessed_at, created_at, last_modified, width, height)) =
                 read_image_metadata(&canonical_file)
             {
+                let caption = read_sidecar_caption(&canonical_file);
+
                 all_images.push(NativeScannedImage {
                     relative_path: normalize_path_for_ui(&Path::new(&root_name).join(&file_name)),
                     file_name,
@@ -462,6 +492,7 @@ pub fn scan_multiple_paths(
                     last_modified,
                     width,
                     height,
+                    caption,
                 });
             }
         }

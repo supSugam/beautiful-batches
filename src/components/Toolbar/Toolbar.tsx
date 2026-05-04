@@ -18,11 +18,18 @@ import {
   Square,
   RefreshCw,
   Filter,
+  SortAsc,
+  SortDesc,
+  LayoutGrid,
+  Crop,
+  RotateCw,
+  Wand2,
+  Layers,
 } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import useStore from '../../store/useStore';
 import type { LucideIcon } from 'lucide-react';
-import type { InspectorMode, SortOption } from '../../types/app';
+import type { ImageFilterType, InspectorMode, SortOption, SortOrder } from '../../types/app';
 import './Toolbar.css';
 
 const MIN_ROW_HEIGHT = 150;
@@ -44,33 +51,23 @@ const SORT_OPTIONS: Array<{
 }> = [
   {
     value: 'last_modified',
-    label: 'Last Modified (Newest)',
+    label: 'Last Modified',
     Icon: Clock3,
   },
   {
-    value: 'last_modified_oldest',
-    label: 'Last Modified (Oldest)',
-    Icon: Clock3,
-  },
-  {
-    value: 'name_asc',
-    label: 'Alphabet A-Z',
+    value: 'name',
+    label: 'Alphabetical',
     Icon: Type,
   },
   {
-    value: 'name_desc',
-    label: 'Alphabet Z-A',
-    Icon: Type,
-  },
-  {
-    value: 'size_desc',
-    label: 'Size Large-Small',
+    value: 'size',
+    label: 'File Size',
     Icon: Scale,
   },
   {
-    value: 'size_asc',
-    label: 'Size Small-Large',
-    Icon: Scale,
+    value: 'aspect_ratio',
+    label: 'Aspect Ratio',
+    Icon: Grid3x3,
   },
   {
     value: 'shuffle',
@@ -90,7 +87,9 @@ const truncateMiddle = (value: string, maxLength = 44): string => {
 type ToolbarProps = {
   folderName: string;
   sortOption: SortOption;
+  sortOrder: SortOrder;
   setSortOption: (option: SortOption) => void;
+  setSortOrder: (order: SortOrder) => void;
   explorerOpen: boolean;
   onToggleExplorer: () => void;
   activeFolderLabel: string;
@@ -107,12 +106,18 @@ type ToolbarProps = {
   setShowExcluded: (value: boolean) => void;
   consideredCount: number;
   totalCount: number;
+  activeFilters: Set<ImageFilterType>;
+  toggleFilter: (filter: ImageFilterType) => void;
+  clearFilters: () => void;
+  onRefreshFolder?: () => void;
 };
 
 const Toolbar = ({
   folderName,
   sortOption,
+  sortOrder,
   setSortOption,
+  setSortOrder,
   explorerOpen,
   onToggleExplorer,
   activeFolderLabel,
@@ -129,10 +134,14 @@ const Toolbar = ({
   setShowExcluded,
   consideredCount,
   totalCount,
+  activeFilters,
+  toggleFilter,
+  clearFilters,
+  onRefreshFolder,
 }: ToolbarProps) => {
-  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
+  const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
-  const sortMenuRef = useRef<HTMLDivElement | null>(null);
+  const viewMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const appWindow = getCurrentWindow();
@@ -217,17 +226,17 @@ const Toolbar = ({
   }, [localSliderFillPercent]);
 
   useEffect(() => {
-    if (!isSortMenuOpen) return undefined;
+    if (!isViewMenuOpen) return undefined;
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!sortMenuRef.current) return;
-      if (sortMenuRef.current.contains(event.target as Node)) return;
-      setIsSortMenuOpen(false);
+      if (!viewMenuRef.current) return;
+      if (viewMenuRef.current.contains(event.target as Node)) return;
+      setIsViewMenuOpen(false);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setIsSortMenuOpen(false);
+        setIsViewMenuOpen(false);
       }
     };
 
@@ -237,7 +246,7 @@ const Toolbar = ({
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isSortMenuOpen]);
+  }, [isViewMenuOpen]);
 
   const processingState = useStore((state) => state.processingState);
   const setProcessingState = useStore((state) => state.setProcessingState);
@@ -247,17 +256,6 @@ const Toolbar = ({
     <header
       data-tauri-drag-region
       className="toolbar"
-      onPointerDown={(e) => {
-        const target = e.target as HTMLElement;
-        if (
-          e.button === 0 &&
-          !target.closest('button') &&
-          !target.closest('input') &&
-          !target.closest('.toolbar-sort-wrap')
-        ) {
-          getCurrentWindow().startDragging();
-        }
-      }}
     >
       <div data-tauri-drag-region className="toolbar-section toolbar-meta">
         <button
@@ -291,6 +289,17 @@ const Toolbar = ({
           <span className="toolbar-folder-path">{folderPathLabel}</span>
         </button>
 
+        {onRefreshFolder && (
+          <button
+            type="button"
+            className="toolbar-refresh-btn"
+            title="Refresh folder contents"
+            onClick={onRefreshFolder}
+          >
+            <RefreshCw size={13} className="toolbar-dim" />
+          </button>
+        )}
+
         <div className="toolbar-folder-stats" title={`${consideredCount} images included / ${totalCount} total images in this view`}>
           <span className="stats-considered">{consideredCount}</span>
           <span className="stats-divider">/</span>
@@ -300,25 +309,58 @@ const Toolbar = ({
 
       <div className="toolbar-section toolbar-controls">
         <div
-          className={`toolbar-sort-wrap ${isSortMenuOpen ? 'is-open' : ''}`}
-          ref={sortMenuRef}
+          className={`toolbar-view-wrap ${isViewMenuOpen ? 'is-open' : ''}`}
+          ref={viewMenuRef}
         >
-          <button
-            type="button"
-            className="toolbar-sort-trigger"
-            onClick={() => setIsSortMenuOpen((prev) => !prev)}
-            title="Sort gallery"
-          >
-            <ArrowUpDown size={14} />
-            <span className="toolbar-sort-trigger-prefix">Sort</span>
-            <span className="toolbar-sort-trigger-label">
-              {activeSortOption.label}
-            </span>
-            <ChevronDown size={14} className="toolbar-sort-chevron" />
-          </button>
+          <div className="toolbar-combined-trigger-group">
+            <button
+              type="button"
+              className="toolbar-view-trigger"
+              onClick={() => setIsViewMenuOpen((prev) => !prev)}
+              onPointerDown={(e) => e.stopPropagation()}
+              title="View and sorting options"
+            >
+              <LayoutGrid size={14} className="toolbar-dim" />
+              <div className="toolbar-view-trigger-label">
+                <span className="view-trigger-prefix">View:</span>
+                <span className="view-trigger-value">{activeSortOption.label}</span>
+              </div>
+              <ChevronDown size={14} className="toolbar-sort-chevron" />
+            </button>
 
-          {isSortMenuOpen && (
-            <div className="toolbar-sort-menu" role="menu" aria-label="Sort options">
+            <button
+              type="button"
+              className="toolbar-sort-order-toggle"
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              onPointerDown={(e) => e.stopPropagation()}
+              title={`Toggle sort order: ${sortOrder === 'asc' ? 'Ascending' : 'Descending'}`}
+            >
+              {sortOrder === 'asc' ? (
+                <SortAsc size={14} />
+              ) : (
+                <SortDesc size={14} />
+              )}
+            </button>
+            <button
+              type="button"
+              className={`toolbar-view-toggle-btn ${activeFilters.size > 0 || showExcluded ? 'is-active' : ''}`}
+              onClick={() => setIsViewMenuOpen((prev) => !prev)}
+              onPointerDown={(e) => e.stopPropagation()}
+              title="Filter images"
+            >
+              <Filter
+                size={14}
+                className={activeFilters.size > 0 || showExcluded ? 'text-primary' : ''}
+              />
+              {activeFilters.size > 0 && (
+                <span className="filter-count-badge">{activeFilters.size}</span>
+              )}
+            </button>
+          </div>
+
+          {isViewMenuOpen && (
+            <div className="premium-context-menu toolbar-view-menu" role="menu">
+              <div className="menu-header">Sort By</div>
               {SORT_OPTIONS.map((option) => {
                 const isActive = option.value === sortOption;
                 const IconComponent = option.Icon;
@@ -328,26 +370,128 @@ const Toolbar = ({
                     type="button"
                     role="menuitemradio"
                     aria-checked={isActive}
-                    className={`toolbar-sort-option ${isActive ? 'is-active' : ''}`}
+                    className={`menu-item ${isActive ? 'is-active' : ''}`}
                     onClick={() => {
                       setSortOption(option.value);
-                      setIsSortMenuOpen(false);
+                      setIsViewMenuOpen(false);
                     }}
                   >
-                    <span className="toolbar-sort-option-main">
-                      <span className="toolbar-sort-option-icon">
-                        <IconComponent size={13} />
-                      </span>
-                      <span className="toolbar-sort-option-label">{option.label}</span>
-                    </span>
-                    <span className="toolbar-sort-option-state">
-                      {isActive && <Check size={13} />}
-                    </span>
+                    <IconComponent
+                      size={14}
+                      className={`menu-icon ${isActive ? 'text-primary' : ''}`}
+                    />
+                    <div className="menu-text">
+                      <span className="menu-label">{option.label}</span>
+                    </div>
+                    {isActive && <Check size={14} className="menu-check" />}
                   </button>
                 );
               })}
+
+              <div className="menu-divider" />
+              <div className="menu-header">Filters</div>
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={showExcluded}
+                className={`menu-item ${showExcluded ? 'is-active' : ''}`}
+                onClick={() => setShowExcluded(!showExcluded)}
+              >
+                <LayoutGrid
+                  size={14}
+                  className={`menu-icon ${showExcluded ? 'text-primary' : ''}`}
+                />
+                <div className="menu-text">
+                  <span className="menu-label">Show Excluded</span>
+                </div>
+                {showExcluded && <Check size={14} className="menu-check" />}
+              </button>
+              <div className="menu-divider" />
+              <div className="menu-subheader">Content Edits</div>
+              {[
+                { value: 'cropped', label: 'Cropped', Icon: Crop },
+                { value: 'transformed', label: 'Transformed', Icon: RotateCw },
+                { value: 'has_caption', label: 'Has Caption', Icon: Type },
+                { value: 'has_ai_edits', label: 'AI Edits', Icon: Wand2 },
+                { value: 'has_tweaks', label: 'UI Tweaks', Icon: Layers },
+                { value: 'has_resize', label: 'Export Resize', Icon: MaximizeIcon },
+              ].map((filter) => {
+                const isActive = activeFilters.has(filter.value as ImageFilterType);
+                const IconComponent = filter.Icon;
+                return (
+                  <button
+                    key={filter.value}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={isActive}
+                    className={`menu-item ${isActive ? 'is-active' : ''}`}
+                    onClick={() => toggleFilter(filter.value as ImageFilterType)}
+                  >
+                    <IconComponent
+                      size={14}
+                      className={`menu-icon ${isActive ? 'text-primary' : ''}`}
+                    />
+                    <div className="menu-text">
+                      <span className="menu-label">{filter.label}</span>
+                    </div>
+                    {isActive && <Check size={14} className="menu-check" />}
+                  </button>
+                );
+              })}
+              {activeFilters.size > 0 && (
+                <>
+                  <div className="menu-divider" />
+                  <button
+                    type="button"
+                    className="menu-item menu-item-danger"
+                    onClick={() => {
+                      clearFilters();
+                      setIsViewMenuOpen(false);
+                    }}
+                  >
+                    <X size={14} className="menu-icon" />
+                    <div className="menu-text">
+                      <span className="menu-label">Clear All Filters</span>
+                    </div>
+                  </button>
+                </>
+              )}
             </div>
           )}
+        </div>
+
+        <div className="toolbar-combined-trigger-group">
+          <button
+            type="button"
+            className={`toolbar-view-toggle-btn ${inspectorMode === 'view' ? 'is-active' : ''}`}
+            onClick={() =>
+              onSetInspectorMode(inspectorMode === 'edit' ? 'view' : 'edit')
+            }
+            onPointerDown={(e) => e.stopPropagation()}
+            title={
+              inspectorMode === 'edit'
+                ? 'Switch to View Mode'
+                : 'Switch to Edit Mode'
+            }
+          >
+            <Eye
+              size={14}
+              className={inspectorMode === 'view' ? 'text-primary' : ''}
+            />
+          </button>
+
+          <button
+            type="button"
+            className="toolbar-view-toggle-btn"
+            onClick={() => {
+              onOpenWatermarkSettings();
+              setIsViewMenuOpen(false);
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            title="Watermark & AI Settings"
+          >
+            <Settings size={14} />
+          </button>
         </div>
 
 
@@ -386,38 +530,6 @@ const Toolbar = ({
             <RefreshCw size={14} className="indicator-pulse" />
           </button>
         )}
-
-        <button
-          type="button"
-          className={`toolbar-mode-icon-btn ${showExcluded ? 'is-active' : ''}`}
-          onClick={() => setShowExcluded(!showExcluded)}
-          title={showExcluded ? 'Hide excluded images' : 'Show excluded images'}
-          aria-label={showExcluded ? 'Hide excluded images' : 'Show excluded images'}
-          aria-pressed={showExcluded}
-        >
-          <Filter size={15} className={showExcluded ? '' : 'toolbar-dim-more'} />
-        </button>
-
-        <button
-          type="button"
-          className={`toolbar-mode-icon-btn ${inspectorMode === 'view' ? 'is-active' : ''}`}
-          onClick={() => onSetInspectorMode(inspectorMode === 'edit' ? 'view' : 'edit')}
-          title={inspectorMode === 'edit' ? 'Switch to View mode' : 'Switch to Edit mode'}
-          aria-label={inspectorMode === 'edit' ? 'Switch to View mode' : 'Switch to Edit mode'}
-          aria-pressed={inspectorMode === 'view'}
-        >
-          <Eye size={16} />
-        </button>
-
-        <button
-          type="button"
-          className="toolbar-mode-icon-btn"
-          onClick={onOpenWatermarkSettings}
-          title="Watermark AI Settings"
-          aria-label="Watermark AI Settings"
-        >
-          <Settings size={16} />
-        </button>
 
         <button
           type="button"

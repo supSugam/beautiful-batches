@@ -5,8 +5,11 @@ type ExportResizeSectionProps = {
   outputWidth: number | null;
   handleResizeToggle: () => void;
   manualOutputWidth: string | number;
+  manualOutputHeight: string | number;
   handleOutputWidthChange: (value: string) => void;
   handleOutputWidthBlur: () => void;
+  handleOutputHeightChange: (value: string) => void;
+  handleOutputHeightBlur: () => void;
   aspect: number | null;
   currentPixelWidth: number;
   currentPixelHeight: number;
@@ -17,8 +20,11 @@ const ExportResizeSection = ({
   outputWidth,
   handleResizeToggle,
   manualOutputWidth,
+  manualOutputHeight,
   handleOutputWidthChange,
   handleOutputWidthBlur,
+  handleOutputHeightChange,
+  handleOutputHeightBlur,
   aspect,
   currentPixelWidth,
   currentPixelHeight,
@@ -229,16 +235,19 @@ const ExportResizeSection = ({
             <div className="dim-link-icon">
               <span style={{ fontSize: 10, opacity: 0.5 }}>×</span>
             </div>
-            <div className="dim-input-group disabled">
+            <div className="dim-input-group">
               <label>H</label>
               <input
                 type="number"
-                disabled
                 value={(() => {
+                  if (manualOutputHeight !== '') return manualOutputHeight;
                   const ratio = aspect || currentPixelWidth / currentPixelHeight;
                   const w = outputWidth ?? 0;
                   return Math.round(w / ratio) || 0;
                 })()}
+                onChange={(e) => handleOutputHeightChange(e.target.value)}
+                onBlur={handleOutputHeightBlur}
+                onKeyDown={(e) => e.stopPropagation()}
               />
             </div>
           </div>

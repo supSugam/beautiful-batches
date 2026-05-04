@@ -1,13 +1,21 @@
+export type SortOrder = 'asc' | 'desc';
+
 export type SortOption =
   | 'last_modified'
-  | 'last_modified_oldest'
-  | 'name_asc'
-  | 'name_desc'
-  | 'size_desc'
-  | 'size_asc'
+  | 'name'
+  | 'size'
+  | 'aspect_ratio'
   | 'shuffle';
 
 export type InspectorMode = 'edit' | 'view';
+
+export type ImageFilterType =
+  | 'cropped'
+  | 'transformed'
+  | 'has_caption'
+  | 'has_ai_edits'
+  | 'has_tweaks'
+  | 'has_resize';
 
 export type ExportFormat = 'png' | 'jpeg' | 'webp';
 
@@ -103,6 +111,8 @@ export interface RawUploadImage {
   nativeCreatedAt?: number;
   /** Last modified timestamp in milliseconds from native scan metadata. */
   nativeLastModifiedAt?: number;
+  /** Pre-loaded sidecar caption if available. */
+  caption?: string;
 }
 
 export interface GalleryImage extends RawUploadImage {
@@ -246,6 +256,8 @@ export type ProcessingStatus = {
   estimatedTimeRemaining?: number; // In milliseconds
 };
 
+export type CaptioningStatus = 'queued' | 'processing';
+
 export interface AiProviderSettings {
   model: string;
   apiKey: string;
@@ -266,6 +278,9 @@ export interface CaptioningSettings {
     lastResponse: string;
   };
   systemPrompt: string;
+  timeout?: number;
+  maxAttempts?: number;
+  maxConcurrentRequests?: number;
 }
 
 export type ToastType = 'info' | 'success' | 'error' | 'warning';
@@ -286,6 +301,7 @@ export interface ApplyCropToImagesOptions {
   includeWatermarkRemoval?: boolean;
   includeBackgroundRemoval?: boolean;
   includeDetectionRegion?: boolean;
+  includeExportResize?: boolean;
 }
 
 export interface NativeScannedImage {
@@ -298,6 +314,7 @@ export interface NativeScannedImage {
   last_modified: number;
   width: number;
   height: number;
+  caption?: string;
 }
 
 export interface NativeRootScan {

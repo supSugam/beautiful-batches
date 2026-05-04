@@ -23,6 +23,7 @@ import {
 import { DropZone } from './components/DropZone';
 import Toolbar from './components/Toolbar/Toolbar';
 import MainLayout from './layouts/MainLayout';
+import CommandPalette from './components/CommandPalette';
 import { DropOverlay, type DropRegion } from './components/common/DropOverlay';
 
 interface DragContext {
@@ -51,6 +52,7 @@ import type {
   DirectoryRoot,
   FolderNode,
   GalleryImage,
+  ImageFilterType,
   InspectorMode,
   NativeRootScan,
   RawUploadImage,
@@ -209,6 +211,7 @@ function App() {
     explorerWidth,
     setExplorerWidth,
     sortOption,
+    sortOrder,
     setSortOption,
     applyPersistedImageDrafts,
     clearDraftsForFolder,
@@ -230,6 +233,9 @@ function App() {
     setVirtualBatchMode,
     showExcluded,
     setShowExcluded,
+    activeFilters,
+    toggleFilter,
+    clearFilters,
     addToast,
   } = useStore();
 
@@ -333,6 +339,7 @@ function App() {
   const [directoryRootsVersion, setDirectoryRootsVersion] = useState(0);
   const loadedTreePathsRef = useRef<Set<string>>(new Set());
   const loadingTreePathsRef = useRef<Set<string>>(new Set());
+  const activeFolderAbsolutePathRef = useRef<string>('');
 
   const handlePastedImages = useCallback(
     async (pastedImages: RawUploadImage[]) => {
@@ -904,10 +911,6 @@ function App() {
   }, [addImages, folderNodes.length, images.length, launchContextResolved, quickEditMode]);
 
   const scopedImages = useMemo(() => {
-    if (isSingleEditMode || isVirtualBatch) {
-      return images;
-    }
-
     let base: GalleryImage[];
     if (activeFolderPath === ALL_FOLDERS_VALUE) {
       base = images;
@@ -922,10 +925,54 @@ function App() {
     }
 
     if (showExcluded) {
+      // already base
+    } else {
+      base = base.filter((img) => !excludedById.has(img.id));
+    }
+
+    if (activeFilters.size === 0) {
       return base;
     }
-    return base.filter((img) => !excludedById.has(img.id));
-  }, [activeFolderPath, images, isSingleEditMode, isVirtualBatch, showExcluded, excludedById]);
+
+    return base.filter((image) => {
+      const entry = cropData.get(image.id);
+      const caption = captionById.get(image.id);
+
+      return Array.from(activeFilters).every((filter) => {
+        switch (filter) {
+          case 'cropped': {
+            const coords = entry?.coordinates;
+            if (!coords) return false;
+            // Check if it's not the default full-image crop
+            const isDefault =
+              Math.abs(coords.left) < 0.1 &&
+              Math.abs(coords.top) < 0.1 &&
+              Math.abs(coords.width - image.naturalWidth) < 0.1 &&
+              Math.abs(coords.height - image.naturalHeight) < 0.1;
+            return !isDefault;
+          }
+          case 'transformed': {
+            const rotate = entry?.transforms?.rotate || 0;
+            const flip = entry?.transforms?.flip || { horizontal: false, vertical: false };
+            return rotate !== 0 || flip.horizontal || flip.vertical;
+          }
+          case 'has_caption':
+            return !!caption;
+          case 'has_ai_edits':
+            return (entry?.sourceEditHistory?.length || 0) > 0;
+          case 'has_tweaks': {
+            const hasPadding = entry?.padding && (typeof entry.padding === 'string' || (entry.padding.top > 0 || entry.padding.right > 0 || entry.padding.bottom > 0 || entry.padding.left > 0));
+            const hasRadius = entry?.cornerRadius && (typeof entry.cornerRadius === 'string' || (entry.cornerRadius.topLeft > 0 || entry.cornerRadius.topRight > 0 || entry.cornerRadius.bottomRight > 0 || entry.cornerRadius.bottomLeft > 0));
+            return !!(hasPadding || hasRadius);
+          }
+          case 'has_resize':
+            return (entry?.outputWidth || 0) > 0;
+          default:
+            return true;
+        }
+      });
+    });
+  }, [activeFolderPath, images, isSingleEditMode, isVirtualBatch, showExcluded, excludedById, activeFilters, cropData, captionById]);
 
   const visibleImages = useMemo(() => {
     const next = scopedImages.map((image, originalIndex) => ({
@@ -937,43 +984,26 @@ function App() {
       const a = entryA.image;
       const b = entryB.image;
 
-      if (sortOption === 'name_asc') {
+      if (sortOption === 'name') {
         const byName = nameCollator.compare(a.name || '', b.name || '');
-        if (byName !== 0) return byName;
-      } else if (sortOption === 'name_desc') {
-        const byName = nameCollator.compare(b.name || '', a.name || '');
-        if (byName !== 0) return byName;
-      } else if (sortOption === 'size_desc') {
-        const bySize = (b.sourceSize || 0) - (a.sourceSize || 0);
-        if (bySize !== 0) return bySize;
-      } else if (sortOption === 'size_asc') {
+        if (byName !== 0) return sortOrder === 'asc' ? byName : -byName;
+      } else if (sortOption === 'size') {
         const bySize = (a.sourceSize || 0) - (b.sourceSize || 0);
-        if (bySize !== 0) return bySize;
+        if (bySize !== 0) return sortOrder === 'asc' ? bySize : -bySize;
+      } else if (sortOption === 'aspect_ratio') {
+        const byRatio = (a.naturalRatio || 0) - (b.naturalRatio || 0);
+        if (byRatio !== 0) return sortOrder === 'asc' ? byRatio : -byRatio;
+      } else if (sortOption === 'last_modified') {
+        const currentModTimes = useStore.getState().sessionModifiedAt;
+        const byModifiedA = getEffectiveModifiedTimestamp(a, currentModTimes);
+        const byModifiedB = getEffectiveModifiedTimestamp(b, currentModTimes);
+        const byModified = byModifiedA - byModifiedB;
+        if (byModified !== 0) return sortOrder === 'asc' ? byModified : -byModified;
       } else if (sortOption === 'shuffle') {
         const byShuffle =
           getShuffleScore(a.id || a.relativePath || a.name || '', shuffleSeed) -
           getShuffleScore(b.id || b.relativePath || b.name || '', shuffleSeed);
         if (byShuffle !== 0) return byShuffle;
-      } else if (
-        sortOption === 'last_modified_oldest' ||
-        sortOption === 'last_modified'
-      ) {
-        // Read the current modification times directly.
-        // We do *not* subscribe to sessionModifiedAt in App.tsx because it
-        // causes the entire gallery to re-render synchronously 60x a second
-        // when dragging padding/rotation sliders.
-        const currentModTimes = useStore.getState().sessionModifiedAt;
-
-        const byModifiedA = getEffectiveModifiedTimestamp(a, currentModTimes);
-        const byModifiedB = getEffectiveModifiedTimestamp(b, currentModTimes);
-
-        if (sortOption === 'last_modified_oldest') {
-          const byModified = byModifiedA - byModifiedB;
-          if (byModified !== 0) return byModified;
-        } else {
-          const byModified = byModifiedB - byModifiedA;
-          if (byModified !== 0) return byModified;
-        }
       }
 
       const byPath = nameCollator.compare(
@@ -989,7 +1019,7 @@ function App() {
     });
 
     return next.map((entry) => entry.image);
-  }, [scopedImages, shuffleSeed, sortOption]); // Deliberately omitting sessionModifiedAt to avoid lag
+  }, [scopedImages, shuffleSeed, sortOption, sortOrder]); // Deliberately omitting sessionModifiedAt to avoid lag
 
   const navigableVisibleImages = useMemo(
     () => visibleImages.filter((image) => !excludedById.has(image.id)),
@@ -1094,7 +1124,7 @@ function App() {
   const loadImagesForFolderPath = useCallback(
     async (
       folderPath: string,
-      options: { append?: boolean; recursive?: boolean } = {},
+      options: { append?: boolean; recursive?: boolean; bypassCache?: boolean } = {},
     ) => {
       const append = Boolean(options.append);
       const recursive = Boolean(options.recursive);
@@ -1123,7 +1153,7 @@ function App() {
           const storedLastModified = useStore.getState().folderLastModified.get(normalizedFolderPath) || 0;
           
           // If we already verified it in this session AND the disk hasn't changed, skip.
-          if (isVerifiedInSession && diskLastModified > 0 && diskLastModified <= storedLastModified) {
+          if (!options.bypassCache && isVerifiedInSession && diskLastModified > 0 && diskLastModified <= storedLastModified) {
             return;
           }
 
@@ -1206,6 +1236,11 @@ function App() {
   const handleLoadMoreActiveFolder = useCallback(() => {
     if (!activeFolderPath || activeFolderPath === ALL_FOLDERS_VALUE) return;
     void loadImagesForFolderPath(activeFolderPath, { append: true });
+  }, [activeFolderPath, loadImagesForFolderPath]);
+
+  const handleRefreshFolder = useCallback(() => {
+    if (!activeFolderPath || activeFolderPath === ALL_FOLDERS_VALUE) return;
+    void loadImagesForFolderPath(activeFolderPath, { bypassCache: true });
   }, [activeFolderPath, loadImagesForFolderPath]);
 
   const handleToggleExpand = useCallback(
@@ -1668,7 +1703,25 @@ function App() {
             );
             const hasDirectory = dirChecks.some((isDir) => isDir);
 
-            if (region === 'add' || (hasDirectory && region !== 'single' && region !== 'batch')) {
+            if (region === 'add') {
+              const targetDir = activeFolderAbsolutePathRef.current;
+              if (targetDir && targetDir.trim().length > 0) {
+                try {
+                  await invoke('copy_files_to_directory', {
+                    sourcePaths: paths,
+                    targetDirectory: targetDir,
+                  });
+                  useStore.getState().updateFolderLastModified(activeFolderPath, 0);
+                  await loadImagesForFolderPath(activeFolderPath, { append: false });
+                  addToast('Images copied to active folder', 'success');
+                } catch (err) {
+                  console.error('Failed to copy files:', err);
+                  addToast('Failed to copy files to active folder', 'error');
+                }
+              } else {
+                addToast('No active folder selected to copy into', 'error');
+              }
+            } else if (hasDirectory && region !== 'single' && region !== 'batch') {
               const scan = await invoke<NativeRootScan>('scan_paths', {
                 paths,
               });
@@ -1778,6 +1831,10 @@ function App() {
     const rootPathWithoutTrailingSlash = normalizedRootPath.replace(/\/+$/, '');
     return `${rootPathWithoutTrailingSlash}/${folderTail}`;
   }, [activeFolderPath, directoryRootsVersion, resolveRootForFolderPath]);
+
+  useEffect(() => {
+    activeFolderAbsolutePathRef.current = activeFolderAbsolutePath;
+  }, [activeFolderAbsolutePath]);
 
   const canOpenActiveFolderPath = useMemo(
     () =>
@@ -2117,7 +2174,9 @@ function App() {
       <Toolbar
         folderName={folderName}
         sortOption={sortOption}
-        setSortOption={handleSetSortOption}
+        sortOrder={sortOrder}
+        setSortOption={setSortOption}
+        setSortOrder={useStore.getState().setSortOrder}
         explorerOpen={explorerOpen}
         onToggleExplorer={() => setExplorerOpen((previous) => !previous)}
         activeFolderLabel={activeFolderLabel}
@@ -2134,6 +2193,10 @@ function App() {
         setShowExcluded={setShowExcluded}
         consideredCount={consideredCount}
         totalCount={totalCount}
+        activeFilters={activeFilters}
+        toggleFilter={toggleFilter}
+        clearFilters={clearFilters}
+        onRefreshFolder={activeFolderPath !== ALL_FOLDERS_VALUE ? handleRefreshFolder : undefined}
       />
 
       <MainLayout
@@ -2232,6 +2295,7 @@ function App() {
 
       <ProcessingOverlay />
       <ToastContainer />
+      <CommandPalette />
       <DropOverlay
         isVisible={isDragging}
         onRegionChange={setDropRegion}
@@ -2241,6 +2305,6 @@ function App() {
 
     </div>
   );
-}
+};
 
 export default App;

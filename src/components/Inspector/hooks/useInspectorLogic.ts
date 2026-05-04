@@ -173,6 +173,14 @@ export function useInspectorLogic({
     setManualH('');
   }, []);
 
+  // Reset manual inputs when image changes
+  useEffect(() => {
+    setManualW('');
+    setManualH('');
+    setManualOutputWidth('');
+    setManualOutputHeight('');
+  }, [imageId]);
+
   // ── Aspect ratio handling ───────────────────────────────
   const handleAspectClick = useCallback(
     (value: number | null) => {
@@ -364,7 +372,7 @@ export function useInspectorLogic({
         imagePath: image.absolutePath,
         maxBboxPercent: 10.0,
         autoUnload: useStore.getState().autoUnload,
-        detectionRegion: useStore.getState().detectionRegion,
+        detectionRegion: cropState?.detectionRegion || null,
       });
       console.log('Result received, updating history. Hardware used:', result.deviceUsed);
       if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);
@@ -420,6 +428,7 @@ export function useInspectorLogic({
     cropState?.outputWidth ?? null,
   );
   const [manualOutputWidth, setManualOutputWidth] = useState('');
+  const [manualOutputHeight, setManualOutputHeight] = useState('');
 
   useEffect(() => {
     setOutputWidth(cropState?.outputWidth ?? null);
@@ -429,6 +438,7 @@ export function useInspectorLogic({
     const nextValue = outputWidth ? null : currentPixelWidth;
     setOutputWidth(nextValue);
     setManualOutputWidth('');
+    setManualOutputHeight('');
     if (imageId) {
       onCropChange?.(imageId, {
         ...cropStateRef.current,
@@ -440,6 +450,7 @@ export function useInspectorLogic({
   const handleOutputWidthChange = useCallback(
     (value: string) => {
       setManualOutputWidth(value);
+      setManualOutputHeight('');
       const numValue = parseInt(value, 10);
       if (Number.isFinite(numValue) && numValue > 0) {
         setOutputWidth(numValue);
@@ -454,8 +465,34 @@ export function useInspectorLogic({
     [imageId, onCropChange],
   );
 
+  const handleOutputHeightChange = useCallback(
+    (value: string) => {
+      setManualOutputHeight(value);
+      setManualOutputWidth('');
+      const numValue = parseInt(value, 10);
+      if (Number.isFinite(numValue) && numValue > 0) {
+        const ratio = editor.aspect || currentPixelWidth / currentPixelHeight;
+        const newW = Math.round(numValue * ratio);
+        setOutputWidth(newW);
+        if (imageId) {
+          onCropChange?.(imageId, {
+            ...cropStateRef.current,
+            outputWidth: newW,
+          });
+        }
+      }
+    },
+    [imageId, onCropChange, editor.aspect, currentPixelWidth, currentPixelHeight],
+  );
+
   const handleOutputWidthBlur = useCallback(() => {
     setManualOutputWidth('');
+    setManualOutputHeight('');
+  }, []);
+
+  const handleOutputHeightBlur = useCallback(() => {
+    setManualOutputWidth('');
+    setManualOutputHeight('');
   }, []);
 
   // ── Padding & Corner Radius (string format: "T R B L") ──
@@ -686,9 +723,12 @@ export function useInspectorLogic({
     // Output width
     outputWidth,
     manualOutputWidth,
+    manualOutputHeight,
     handleResizeToggle,
     handleOutputWidthChange,
     handleOutputWidthBlur,
+    handleOutputHeightChange,
+    handleOutputHeightBlur,
 
     // Navigation & actions
     navigateNext,

@@ -1,6 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React from 'react';
 import { Settings, Sparkles } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
 import useStore from '../../../store/useStore';
 
 type CaptionSectionProps = {
@@ -42,30 +41,29 @@ const CaptionSection = ({
     (state) => state.captionById.get(imageId) ?? '',
   );
   const setCaptionForImage = useStore((state) => state.setCaptionForImage);
-  const updateProviderSettings = useStore((state) => state.updateProviderSettings);
   const addToast = useStore((state) => state.addToast);
 
-  const [isProcessing, setIsProcessing] = useState(false);
-  const magicTimerRef = useRef<number | null>(null);
-
-  useEffect(
-    () => () => {
-      if (magicTimerRef.current) {
-        window.clearTimeout(magicTimerRef.current);
-        magicTimerRef.current = null;
-      }
-    },
-    [],
-  );
+  const captioningStatus = useStore((state) => state.captioningStatusById.get(imageId));
+  const isProcessing = captioningStatus === 'processing';
+  const isQueued = captioningStatus === 'queued';
+  
+  const enqueueCaptionRequest = useStore((state) => state.enqueueCaptionRequest);
+  const cancelCaptionRequest = useStore((state) => state.cancelCaptionRequest);
 
   const captioningSettings = useStore((state) => state.captioningSettings);
   const openSettings = useStore((state) => state.openSettings);
 
-  const handleMagicCaption = async () => {
-    if (isProcessing || !imageAbsolutePath) return;
+  const handleMagicCaption = () => {
+    if (!imageAbsolutePath) return;
+    if (isProcessing) return;
+
+    if (isQueued) {
+      cancelCaptionRequest(imageId);
+      return;
+    }
 
     const providerSettings = captioningSettings[captioningSettings.provider];
-    if (captioningSettings.provider !== 'custom' && !providerSettings.apiKey) {
+    if (captioningSettings.provider !== 'custom' && !('apiKey' in providerSettings && providerSettings.apiKey)) {
       addToast(`Please configure API key for ${captioningSettings.provider}`, 'warning');
       openSettings('captioning');
       return;
@@ -77,43 +75,8 @@ const CaptionSection = ({
       return;
     }
 
-    setIsProcessing(true);
-    try {
-      const result = await invoke<{ caption: string; raw_response?: string }>('generate_ai_caption', {
-        imagePath: imageAbsolutePath,
-        provider: captioningSettings.provider,
-        model: 'model' in providerSettings ? providerSettings.model : '',
-        apiKey: providerSettings.apiKey,
-        systemPrompt: captioningSettings.systemPrompt,
-        ...(captioningSettings.provider === 'custom' ? {
-          endpoint: captioningSettings.custom.endpoint,
-          customBodyTemplate: captioningSettings.custom.customBodyTemplate,
-          customHeaders: captioningSettings.custom.customHeaders,
-          responseField: captioningSettings.custom.responseField,
-        } : {})
-      });
-      if (result?.caption) {
-        setCaptionForImage(imageId, result.caption);
-        if (captioningSettings.provider === 'custom' && result.raw_response) {
-          updateProviderSettings('custom', { lastResponse: result.raw_response });
-        }
-        addToast('Caption generated successfully!', 'success');
-      }
-    } catch (error) {
-      console.error('Failed to generate AI caption:', error);
-      addToast(String(error) || 'Failed to generate AI caption', 'error');
-    } finally {
-      setIsProcessing(false);
-    }
+    enqueueCaptionRequest(imageId, imageAbsolutePath);
   };
-
-  useEffect(() => {
-    setIsProcessing(false);
-    if (magicTimerRef.current) {
-      window.clearTimeout(magicTimerRef.current);
-      magicTimerRef.current = null;
-    }
-  }, [imageId]);
 
   const caption = captionOverride;
   const outcomeLabel = hasCaptionOverride && captionOverride.length > 0
@@ -145,13 +108,13 @@ const CaptionSection = ({
         />
         <button
           type="button"
-          className={`caption-magic-btn ${isProcessing ? 'active' : ''}`}
+          className={`caption-magic-btn ${isProcessing ? 'active' : ''} ${isQueued ? 'queued' : ''}`}
           onClick={handleMagicCaption}
           disabled={isProcessing}
-          title={isProcessing ? 'Generating...' : 'Caption assist'}
+          title={isProcessing ? 'Generating...' : isQueued ? 'Queued (Click to cancel)' : 'Caption assist'}
           aria-label="Caption assist"
         >
-          <SparkleGlyph active={isProcessing} />
+          <SparkleGlyph active={isProcessing || isQueued} />
         </button>
       </div>
       <div className="caption-meta-row">

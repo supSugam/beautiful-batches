@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { AlertCircle, Check, RotateCcw, X } from 'lucide-react';
+import { AlertCircle, Check, Crop, Layers, Maximize, RotateCcw, RotateCw, Type, Wand2, X } from 'lucide-react';
 import useStore from '../store/useStore';
 import { normalizeStoredCoordinates } from '../utils/cropCoordinates';
 import {
@@ -67,6 +67,9 @@ export const ImageCard = memo(
     );
     const hasCaptionError = useStore(
       useCallback((state) => state.captionErrorById.has(image.id), [image.id]),
+    );
+    const hasCaption = useStore(
+      useCallback((state) => state.captionById.has(image.id), [image.id]),
     );
 
     const transforms = cropState?.transforms || {
@@ -204,6 +207,44 @@ export const ImageCard = memo(
       return `${image.thumbnailUrl}${separator}thumbSize=${safeThumbSize}`;
     }, [cropState?.sourceEditHistory, cropState?.sourceEditHistoryIndex, image.objectUrl, image.thumbnailUrl, thumbnailSize]);
 
+    const indicators = useMemo(() => {
+      const flags = {
+        cropped: false,
+        transformed: false,
+        hasCaption: false,
+        hasAiEdits: false,
+        hasTweaks: false,
+        hasResize: false,
+      };
+
+      if (cropState) {
+        if (coords) {
+          const isDefault =
+            Math.abs(coords.left) < 0.1 &&
+            Math.abs(coords.top) < 0.1 &&
+            Math.abs(coords.width - image.naturalWidth) < 1 &&
+            Math.abs(coords.height - image.naturalHeight) < 1;
+          flags.cropped = !isDefault;
+        }
+        flags.transformed =
+          (Number(cropState.transforms?.rotate) || 0) !== 0 ||
+          !!cropState.transforms?.flip?.horizontal ||
+          !!cropState.transforms?.flip?.vertical;
+        flags.hasAiEdits = (cropState.sourceEditHistory?.length || 0) > 0;
+        flags.hasResize = (Number(cropState.outputWidth) || 0) > 0;
+        
+        const pad = previewPadding;
+        flags.hasTweaks = 
+          pad.top > 0 || pad.right > 0 || pad.bottom > 0 || pad.left > 0 ||
+          previewCornerRadius.topLeft > 0 || previewCornerRadius.topRight > 0 ||
+          previewCornerRadius.bottomRight > 0 || previewCornerRadius.bottomLeft > 0;
+      }
+
+      flags.hasCaption = hasCaption;
+
+      return flags;
+    }, [cropState, coords, image.naturalWidth, image.naturalHeight, hasCaption, previewPadding, previewCornerRadius]);
+
     return (
       <div
         className={`image-card ${selected ? 'selected' : ''} ${excluded ? 'is-excluded' : ''} ${isLoaded ? 'is-loaded' : ''}`}
@@ -319,6 +360,39 @@ export const ImageCard = memo(
                 <AlertCircle size={12} />
               </div>
             )}
+
+            <div className="card-indicators">
+              {indicators.cropped && (
+                <div className="indicator-pill" title="Has custom crop">
+                  <Crop size={10} />
+                </div>
+              )}
+              {indicators.transformed && (
+                <div className="indicator-pill" title="Has transforms (rotate/flip)">
+                  <RotateCw size={10} />
+                </div>
+              )}
+              {indicators.hasCaption && (
+                <div className="indicator-pill" title="Has caption">
+                  <Type size={10} />
+                </div>
+              )}
+              {indicators.hasAiEdits && (
+                <div className="indicator-pill" title="Has AI edits (watermark/bg removal)">
+                  <Wand2 size={10} />
+                </div>
+              )}
+              {indicators.hasTweaks && (
+                <div className="indicator-pill" title="Has UI tweaks (padding/radius)">
+                  <Layers size={10} />
+                </div>
+              )}
+              {indicators.hasResize && (
+                <div className="indicator-pill" title="Has export resize">
+                  <Maximize size={10} />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

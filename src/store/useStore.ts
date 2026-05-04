@@ -15,13 +15,16 @@ import type {
   ExportFormat,
   FolderNode,
   GalleryImage,
+  ImageFilterType,
   PaddingValues,
   ProcessingStatus,
   RawUploadImage,
   SortOption,
+  SortOrder,
   StoredCoordinates,
   AiProviderSettings,
   CaptioningSettings,
+  CaptioningStatus,
   WatermarkSidecarStatus,
   WatermarkRegion,
   Toast,
@@ -497,9 +500,13 @@ export interface UseStoreState {
   inspectorWidth: number;
   explorerWidth: number;
   sortOption: SortOption;
+  sortOrder: SortOrder;
   rootNames: string[];
   showExcluded: boolean;
   setShowExcluded: (showExcluded: boolean) => void;
+  activeFilters: Set<ImageFilterType>;
+  toggleFilter: (filter: ImageFilterType) => void;
+  clearFilters: () => void;
   setImages: (images: RawUploadImage[], rootNames?: string[]) => Promise<void>;
   addImages: (
     newImages: RawUploadImage[],
@@ -533,6 +540,7 @@ export interface UseStoreState {
   setInspectorWidth: (inspectorWidth: number) => void;
   setExplorerWidth: (explorerWidth: number) => void;
   setSortOption: (sortOption: SortOption) => void;
+  setSortOrder: (sortOrder: SortOrder) => void;
   updateFolderLastModified: (path: string, lastModified: number) => void;
   refreshImagesForFolder: (
     folderPath: string,
@@ -541,6 +549,9 @@ export interface UseStoreState {
   expandedPaths: Set<string>;
   toggleExpandedPath: (path: string) => void;
   setExpandedPaths: (paths: Set<string>) => void;
+  isCommandPaletteOpen: boolean;
+  setIsCommandPaletteOpen: (open: boolean) => void;
+  findAndReplaceCaptions: (find: string, replace: string, scope: 'all' | 'current') => void;
   lastUsedHardware: string | null;
   setLastUsedHardware: (hardware: string | null) => void;
   autoUnload: boolean;
@@ -567,6 +578,9 @@ export interface UseStoreState {
   virtualBatchName: string | null;
   setSingleEditMode: (active: boolean) => void;
   setVirtualBatchMode: (active: boolean, name?: string | null) => void;
+  captioningStatusById: Map<string, CaptioningStatus>;
+  enqueueCaptionRequest: (imageId: string, imageAbsolutePath: string) => void;
+  cancelCaptionRequest: (imageId: string) => void;
 }
 
 export type SettingsTab = 'engine' | 'captioning' | 'tips';
@@ -578,6 +592,65 @@ const useStore = create<UseStoreState>()(
   const queuedMetadataIds = new Set<string>();
   const inFlightMetadataIds = new Set<string>();
   let metadataWorkerRunning = false;
+
+  const captionQueue: Array<{ id: string; path: string }> = [];
+  const activeCaptionRequests = new Set<string>();
+
+  const processCaptionQueue = async () => {
+    const maxConcurrent = get().captioningSettings.maxConcurrentRequests || 1;
+    if (activeCaptionRequests.size >= maxConcurrent) return;
+
+    const nextItem = captionQueue.shift();
+    if (!nextItem) return;
+
+    activeCaptionRequests.add(nextItem.id);
+    
+    // Update status to processing
+    const currentStatus = get().captioningStatusById;
+    const nextStatus = new Map(currentStatus);
+    nextStatus.set(nextItem.id, 'processing');
+    set({ captioningStatusById: nextStatus });
+
+    const captioningSettings = get().captioningSettings;
+    const providerSettings = captioningSettings[captioningSettings.provider];
+    
+    try {
+      const result = await invoke<{ caption: string; raw_response?: string }>('generate_ai_caption', {
+        imagePath: nextItem.path,
+        provider: captioningSettings.provider,
+        model: 'model' in providerSettings ? providerSettings.model : '',
+        apiKey: 'apiKey' in providerSettings ? providerSettings.apiKey : '',
+        systemPrompt: captioningSettings.systemPrompt,
+        ...(captioningSettings.provider === 'custom' ? {
+          endpoint: captioningSettings.custom.endpoint,
+          customBodyTemplate: captioningSettings.custom.customBodyTemplate,
+          customHeaders: captioningSettings.custom.customHeaders,
+          responseField: captioningSettings.custom.responseField,
+        } : {}),
+        timeout: captioningSettings.timeout || 180,
+      });
+
+      if (result?.caption) {
+        get().setCaptionForImage(nextItem.id, result.caption);
+        if (captioningSettings.provider === 'custom' && result.raw_response) {
+          get().updateProviderSettings('custom', { lastResponse: result.raw_response });
+        }
+        get().addToast('Caption generated successfully!', 'success');
+      }
+    } catch (error) {
+      console.error('Failed to generate AI caption for', nextItem.id, error);
+      get().addToast(String(error) || 'Failed to generate AI caption', 'error');
+    } finally {
+      activeCaptionRequests.delete(nextItem.id);
+      
+      const updatedStatus = new Map(get().captioningStatusById);
+      updatedStatus.delete(nextItem.id);
+      set({ captioningStatusById: updatedStatus });
+
+      // Run again
+      processCaptionQueue();
+    }
+  };
 
   const resetPendingMetadataQueue = () => {
     metadataQueue.length = 0;
@@ -771,8 +844,22 @@ const useStore = create<UseStoreState>()(
     rootNames: [] as string[],
     selectedId: null as string | null,
     showExcluded: false,
+    activeFilters: new Set<ImageFilterType>(),
 
     setShowExcluded: (showExcluded) => set({ showExcluded }),
+
+    toggleFilter: (filter) =>
+      set((state) => {
+        const next = new Set(state.activeFilters);
+        if (next.has(filter)) {
+          next.delete(filter);
+        } else {
+          next.add(filter);
+        }
+        return { activeFilters: next };
+      }),
+
+    clearFilters: () => set({ activeFilters: new Set() }),
 
     // --- UI Settings ---
     rowHeight: 250,
@@ -782,6 +869,7 @@ const useStore = create<UseStoreState>()(
     inspectorWidth: getDefaultInspectorWidth(),
     explorerWidth: getDefaultExplorerWidth(),
     sortOption: 'last_modified',
+    sortOrder: 'desc',
     expandedPaths: new Set<string>(),
     lastUsedHardware: null as string | null,
     autoUnload: true,
@@ -828,12 +916,45 @@ const useStore = create<UseStoreState>()(
       },
       systemPrompt:
         'Generate a concise and accurate caption for this image. Focus on the main subject and key details.',
+      timeout: 180,
+      maxAttempts: 3,
     },
 
     toasts: [] as Toast[],
     isSingleEditMode: false,
     isVirtualBatch: false,
     virtualBatchName: null as string | null,
+
+    captioningStatusById: new Map<string, CaptioningStatus>(),
+
+    enqueueCaptionRequest: (imageId: string, imageAbsolutePath: string) => {
+      // Don't enqueue if it's already queued or processing
+      if (get().captioningStatusById.has(imageId)) return;
+      
+      const newStatus = new Map(get().captioningStatusById);
+      newStatus.set(imageId, 'queued');
+      set({ captioningStatusById: newStatus });
+
+      captionQueue.push({ id: imageId, path: imageAbsolutePath });
+      
+      // Attempt to process queue
+      processCaptionQueue();
+    },
+
+    cancelCaptionRequest: (imageId: string) => {
+      // If it's already processing, we can't really cancel the Tauri side easily,
+      // but we can remove it from the queue if it's just queued.
+      const status = get().captioningStatusById.get(imageId);
+      if (status === 'queued') {
+        const index = captionQueue.findIndex(item => item.id === imageId);
+        if (index !== -1) {
+          captionQueue.splice(index, 1);
+        }
+        const newStatus = new Map(get().captioningStatusById);
+        newStatus.delete(imageId);
+        set({ captioningStatusById: newStatus });
+      }
+    },
 
     setSingleEditMode: (active: boolean) =>
       set({
@@ -1080,6 +1201,14 @@ const useStore = create<UseStoreState>()(
         const nextSessionModifiedAt = new Map<string, number>(
           state.sessionModifiedAt,
         );
+
+        // Pre-populate captions from sidecar text files if provided
+        validNew.forEach((img) => {
+          if (img.caption && img.caption.trim()) {
+            nextCaptionById.set(img.id, img.caption.trim());
+          }
+        });
+
         staleIds.forEach((id) => {
           nextCropData.delete(id);
           nextCaptionById.delete(id);
@@ -1430,12 +1559,9 @@ const useStore = create<UseStoreState>()(
       const sourceOps = Array.isArray(sourceData?.sourceEditOps)
         ? (sourceData.sourceEditOps as Array<'watermark' | 'background'>)
         : [];
-      const shouldIncludeWatermarkRemoval = Boolean(
-        options?.includeWatermarkRemoval && sourceOps.includes('watermark'),
-      );
-      const shouldIncludeBackgroundRemoval = Boolean(
-        options?.includeBackgroundRemoval && sourceOps.includes('background'),
-      );
+      const shouldIncludeWatermarkRemoval = Boolean(options?.includeWatermarkRemoval);
+      const shouldIncludeBackgroundRemoval = Boolean(options?.includeBackgroundRemoval);
+
       const bulkSourceEditOpsToApply = sourceOps.filter((op) =>
         op === 'watermark' ? shouldIncludeWatermarkRemoval : shouldIncludeBackgroundRemoval,
       );
@@ -1532,11 +1658,22 @@ const useStore = create<UseStoreState>()(
             imageWidth: targetImg.naturalWidth,
             imageHeight: targetImg.naturalHeight,
           };
-          // Never copy source-edited pixels across images. Keep the target's own edit history unless
-          // a bulk edit is explicitly requested (handled asynchronously after this set()).
-          mergedEntry.sourceEditHistory = previousEntry?.sourceEditHistory;
-          mergedEntry.sourceEditHistoryIndex = previousEntry?.sourceEditHistoryIndex;
-          mergedEntry.sourceEditOps = previousEntry?.sourceEditOps;
+          // AI Source Edits Sync/Reset
+          // If the user wants to include an AI edit, and the source HAS it, we'll re-run it below (async).
+          // If the user wants to include an AI edit, and the source HAS NO it, we clear it from targets right now.
+          const shouldResetSourceEdits = 
+            (options?.includeWatermarkRemoval && !sourceOps.includes('watermark')) ||
+            (options?.includeBackgroundRemoval && !sourceOps.includes('background'));
+
+          if (shouldResetSourceEdits) {
+            mergedEntry.sourceEditHistory = [];
+            mergedEntry.sourceEditHistoryIndex = -1;
+            mergedEntry.sourceEditOps = [];
+          } else {
+            mergedEntry.sourceEditHistory = previousEntry?.sourceEditHistory;
+            mergedEntry.sourceEditHistoryIndex = previousEntry?.sourceEditHistoryIndex;
+            mergedEntry.sourceEditOps = previousEntry?.sourceEditOps;
+          }
 
           // Override Crop/Aspect State
           if (!applyCropState) {
@@ -1562,7 +1699,13 @@ const useStore = create<UseStoreState>()(
             mergedEntry.paddingFillType = previousEntry?.paddingFillType;
             mergedEntry.paddingFillValue = previousEntry?.paddingFillValue;
             mergedEntry.paddingImageUrl = previousEntry?.paddingImageUrl;
+          }
+
+          // Override Export Resize
+          if (!options?.includeExportResize) {
             mergedEntry.outputWidth = previousEntry?.outputWidth;
+          } else {
+            mergedEntry.outputWidth = sourceData.outputWidth;
           }
 
           // Override Detection Region
@@ -1646,7 +1789,7 @@ const useStore = create<UseStoreState>()(
         }
 
         const providerSettings = captioningSettings[captioningSettings.provider];
-        if (shouldApplyAiCaption && !providerSettings.apiKey) {
+        if (shouldApplyAiCaption && captioningSettings.provider !== 'custom' && !providerSettings.apiKey) {
           addToast(`Please configure API key for ${captioningSettings.provider}`, 'warning');
           setProcessingState({ isActive: false });
           return;
@@ -1753,31 +1896,36 @@ const useStore = create<UseStoreState>()(
             if (existingCaption && existingCaption.trim().length > 0) {
               console.log(`Skipping AI caption for ${filename} - already has caption.`);
             } else {
-              let lastError = null;
+              const maxAttempts = captioningSettings.maxAttempts || 3;
+              const timeout = captioningSettings.timeout || 180;
               let success = false;
+              let lastError = null;
               
-              for (let attempt = 1; attempt <= 3; attempt++) {
+              for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
                   setProcessingState({ 
                     current: currentCount, 
                     statusText: attempt > 1 
-                      ? `Generating caption for ${filename} (Attempt ${attempt}/3)...`
+                      ? `Generating caption for ${filename} (Attempt ${attempt}/${maxAttempts})...`
                       : `Generating caption for ${filename}...` 
                   });
                   await yieldToMainThread();
-
-                  const result = await invoke<string>('generate_ai_caption', {
+ 
+                  const result = await invoke<{ caption: string; raw_response?: string }>('generate_ai_caption', {
                     imagePath: absolutePath,
                     provider: captioningSettings.provider,
                     model: 'model' in providerSettings ? providerSettings.model : '',
                     apiKey: providerSettings.apiKey,
                     systemPrompt: captioningSettings.systemPrompt,
-                    customEndpoint: 'endpoint' in providerSettings ? (providerSettings as any).endpoint : '',
+                    endpoint: 'endpoint' in providerSettings ? (providerSettings as any).endpoint : '',
                     customBodyTemplate: 'customBodyTemplate' in providerSettings ? (providerSettings as any).customBodyTemplate : '',
+                    customHeaders: 'customHeaders' in providerSettings ? (providerSettings as any).customHeaders : '',
+                    responseField: 'responseField' in providerSettings ? (providerSettings as any).responseField : '',
+                    timeout,
                   });
 
-                  if (result) {
-                    get().setCaptionForImage(id, result);
+                  if (result?.caption) {
+                    get().setCaptionForImage(id, result.caption);
                     get().clearCaptionError(id);
                     success = true;
                     break;
@@ -1786,12 +1934,12 @@ const useStore = create<UseStoreState>()(
                   lastError = e;
                   console.warn(`AI caption attempt ${attempt} failed for ${id}:`, e);
                   // Small backoff before retry
-                  if (attempt < 3) await new Promise(r => setTimeout(r, 1000));
+                  if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 1000));
                 }
               }
 
               if (!success) {
-                console.error(`Failed bulk AI caption for ${id} after 3 attempts:`, lastError);
+                console.error(`Failed bulk AI caption for ${id} after ${maxAttempts} attempts:`, lastError);
                 get().setCaptionError(id, String(lastError || 'Unknown error'));
               }
 
@@ -1983,7 +2131,11 @@ const useStore = create<UseStoreState>()(
         if (captionsById) {
           Object.entries(captionsById).forEach(([id, value]) => {
             const nextCaption = String(value ?? '');
-            nextCaptionById.set(id, nextCaption);
+            const currentCaption = nextCaptionById.get(id);
+            // Don't overwrite a newly loaded sidecar caption with an empty draft
+            if (nextCaption.trim() !== '' || !currentCaption || currentCaption.trim() === '') {
+              nextCaptionById.set(id, nextCaption);
+            }
           });
         }
 
@@ -2046,17 +2198,17 @@ const useStore = create<UseStoreState>()(
     },
     setSortOption: (sortOption) =>
       set({
-        sortOption:
-          sortOption === 'last_modified' ||
-          sortOption === 'last_modified_oldest' ||
-          sortOption === 'name_asc' ||
-          sortOption === 'name_desc' ||
-          sortOption === 'size_desc' ||
-          sortOption === 'size_asc' ||
-          sortOption === 'shuffle'
-            ? sortOption
-            : 'last_modified',
+        sortOption: [
+          'last_modified',
+          'name',
+          'size',
+          'aspect_ratio',
+          'shuffle',
+        ].includes(sortOption)
+          ? sortOption
+          : 'last_modified',
       }),
+    setSortOrder: (sortOrder) => set({ sortOrder }),
     
     updateFolderLastModified: (path, lastModified) => {
       set((state) => {
@@ -2097,10 +2249,15 @@ const useStore = create<UseStoreState>()(
 
         // 2. Map existing images for quick lookup
         const imagesById = new Map(filteredCurrent.map((img) => [img.id, img] as const));
+        const nextCaptionById = new Map(state.captionById);
 
         // 3. Update existing or add new
         const finalImages = [...filteredCurrent];
         newImages.forEach((newImg) => {
+          if (newImg.caption && newImg.caption.trim()) {
+            nextCaptionById.set(newImg.id, newImg.caption.trim());
+          }
+
           if (imagesById.has(newImg.id)) {
             // Update existing image metadata if needed (though usually we trust our store's dimension cache)
             // For now, let's just keep the existing one to avoid flickering/reloading
@@ -2112,6 +2269,7 @@ const useStore = create<UseStoreState>()(
         return {
           images: finalImages,
           folderNodes: buildFolderNodes(finalImages, state.excludedById, state.rootNames),
+          captionById: nextCaptionById,
           selectedId: finalImages.some((img) => img.id === state.selectedId)
             ? state.selectedId
             : null,
@@ -2135,6 +2293,32 @@ const useStore = create<UseStoreState>()(
         return { expandedPaths: next };
       }),
     setExpandedPaths: (expandedPaths) => set({ expandedPaths }),
+    isCommandPaletteOpen: false,
+    setIsCommandPaletteOpen: (open) => set({ isCommandPaletteOpen: open }),
+    findAndReplaceCaptions: (findText, replaceText, scope) => {
+      set((state) => {
+        const nextCaptionById = new Map(state.captionById);
+        const imagesToProcess =
+          scope === 'current'
+            ? state.images.filter((img) => img.id === state.selectedId)
+            : state.images;
+
+        let changedCount = 0;
+        imagesToProcess.forEach((image) => {
+          const currentCaption = nextCaptionById.get(image.id) || '';
+          if (currentCaption.includes(findText)) {
+            const newCaption = currentCaption.split(findText).join(replaceText);
+            nextCaptionById.set(image.id, newCaption);
+            changedCount++;
+          }
+        });
+
+        if (changedCount > 0) {
+          return { captionById: nextCaptionById };
+        }
+        return state;
+      });
+    },
     settingsModal: {
       isOpen: false,
       activeTab: 'engine',

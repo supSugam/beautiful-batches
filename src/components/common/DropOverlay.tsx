@@ -139,10 +139,10 @@ export const DropOverlay: React.FC<DropOverlayProps> = ({
 
     switch (region) {
       case 'add':
-        if (isFolder) return { title: 'Import Folders', sub: `Add images from ${count} folder(s)`, icon: FolderPlus };
+        if (isFolder) return { title: 'Import Folders', sub: `Copy images from ${count} folder(s) to active folder`, icon: FolderPlus };
         return { 
-          title: isMultiple ? `Add ${count} Images` : 'Add Image', 
-          sub: 'Append to current project',
+          title: isMultiple ? `Copy ${count} Images` : 'Copy Image', 
+          sub: 'Copy to active folder',
           icon: PlusCircle 
         };
       case 'batch':

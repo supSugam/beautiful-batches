@@ -40,6 +40,7 @@ type NativeScannedImage = {
   lastModified: number;
   width: number;
   height: number;
+  caption?: string;
 };
 
 type NativeRootScan = {
@@ -145,6 +146,7 @@ const nativeScannedImageToRawUpload = (
     nativeCreatedAt: Math.max(0, Number(image.createdAt || 0) || 0) * 1000,
     nativeLastModifiedAt:
       Math.max(0, Number(image.lastModified || 0) || 0) * 1000,
+    caption: image.caption,
   };
 };
 

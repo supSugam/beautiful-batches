@@ -68,12 +68,49 @@ const DesignDropdown: React.FC<DesignDropdownProps> = ({
 
   const filteredOptions = useMemo(() => {
     if (!searchTerm) return options;
-    const lower = searchTerm.toLowerCase();
-    return options.filter((opt) => 
-      opt.label.toLowerCase().includes(lower) || 
-      opt.description?.toLowerCase().includes(lower) ||
-      opt.value.toLowerCase().includes(lower)
-    );
+    const query = searchTerm.toLowerCase();
+    const queryWords = query.split(/\s+/).filter(w => w.length > 0);
+
+    return options
+      .map((opt) => {
+        const title = opt.label.toLowerCase();
+        const desc = (opt.description || '').toLowerCase();
+        const val = opt.value.toLowerCase();
+        let score = 0;
+
+        // 1. Exact/Includes match (Highest priority)
+        if (title.includes(query) || val.includes(query)) {
+          score += 100;
+          if (title.startsWith(query)) score += 50;
+        } else if (desc.includes(query)) {
+          score += 50;
+        }
+
+        // 2. Word-based match (All words present in any order)
+        const allWordsPresent = queryWords.every(word => 
+          title.includes(word) || desc.includes(word) || val.includes(word)
+        );
+        if (allWordsPresent) score += 30;
+
+        // 3. Character-based fuzzy match (Subsequence)
+        const fuzzyMatch = (target: string, q: string) => {
+          let i = 0, j = 0;
+          while (i < target.length && j < q.length) {
+            if (target[i] === q[j]) j++;
+            i++;
+          }
+          return j === q.length;
+        };
+
+        if (score === 0 && (fuzzyMatch(title, query) || fuzzyMatch(val, query))) {
+          score += 10;
+        }
+
+        return { opt, score };
+      })
+      .filter((res) => res.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((res) => res.opt);
   }, [options, searchTerm]);
 
   useEffect(() => {
