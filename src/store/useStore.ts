@@ -864,7 +864,7 @@ const useStore = create<UseStoreState>()(
     // --- UI Settings ---
     rowHeight: 250,
     format: 'png',
-    quality: 90,
+    quality: 100,
     showAllFooters: true,
     inspectorWidth: getDefaultInspectorWidth(),
     explorerWidth: getDefaultExplorerWidth(),

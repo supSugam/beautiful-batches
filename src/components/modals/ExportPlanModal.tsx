@@ -1280,7 +1280,7 @@ const ExportPlanModal = ({
         baseFolder,
         destinationName: resolvedFolderName,
         conflictMode,
-        quality: Math.max(1, Math.min(100, Math.round(Number(quality) || 90))),
+        quality: 100,
         clearMetadata,
         includeCaptions,
         items: payloadItems,
@@ -1295,7 +1295,7 @@ const ExportPlanModal = ({
       const summary = `Export complete: ${result.writtenCount} files, ${result.captionWrittenCount} captions -> ${result.destinationPath}`;
       const firstWarning = result.warnings[0];
       setLastExportMessage(
-        firstWarning && result.failedCount === 0
+        firstWarning
           ? `${summary} (${firstWarning})`
           : summary,
       );
