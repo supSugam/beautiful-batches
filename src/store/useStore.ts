@@ -584,6 +584,8 @@ export interface UseStoreState {
   aiLogs: LogEntry[];
   addAiLog: (log: LogEntry) => void;
   clearAiLogs: () => void;
+  isEngineSettingUp: boolean;
+  setIsEngineSettingUp: (loading: boolean) => void;
 }
 
 export type SettingsTab = 'engine' | 'captioning' | 'tips';
@@ -2348,9 +2350,10 @@ const useStore = create<UseStoreState>()(
       });
     },
     clearAiLogs: () => set({ aiLogs: [] }),
+    isEngineSettingUp: false,
+    setIsEngineSettingUp: (isEngineSettingUp) => set({ isEngineSettingUp }),
     };
     },
-
   {
       name: 'beautiful-batches-settings',
       storage: createJSONStorage(() => localStorage),

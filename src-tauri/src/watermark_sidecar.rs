@@ -40,11 +40,6 @@ const BACKGROUND_REMOVAL_MODEL_REMBG: (&str, &str, &str, u64) = (
 );
 
 pub fn detect_hardware() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        return "apple".to_string();
-    }
-
     #[cfg(target_os = "windows")]
     {
         // Simple check for NVIDIA on windows via nvidia-smi
@@ -56,7 +51,7 @@ pub fn detect_hardware() -> String {
         return "windows_gpu".to_string();
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         // Check NVIDIA on Linux
         if Command::new("nvidia-smi").output().is_ok() {
@@ -69,13 +64,13 @@ pub fn detect_hardware() -> String {
         }
     }
     
-    #[cfg(not(target_os = "macos"))]
-    {
-        "cpu".to_string()
-    }
     #[cfg(target_os = "macos")]
     {
         "apple".to_string()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "cpu".to_string()
     }
 }
 

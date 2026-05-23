@@ -55,9 +55,7 @@ fn create_app_window(app: &tauri::AppHandle, label: &str) -> tauri::Result<tauri
         .title("Beautiful Batches")
         .inner_size(1440.0, 920.0)
         .resizable(true)
-        .decorations(false) // Custom titlebar logic
-        .transparent(true)
-        .shadow(true);
+        .decorations(false); // Custom titlebar logic
 
     // On Linux, the WM_CLASS / app_id is vital for grouping and icons.
     // We set it explicitly to the identifier from tauri.conf.json.

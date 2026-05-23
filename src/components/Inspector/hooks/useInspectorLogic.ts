@@ -311,31 +311,68 @@ export function useInspectorLogic({
   const canUndo = historyIndex > -1;
   const canRedo = historyIndex < processedHistory.length - 1;
 
-  const handleRemoveBackground = useCallback(async () => {
-    console.log('handleRemoveBackground triggered', { imageId, absolutePath: image.absolutePath });
-    if (!imageId || !image.absolutePath) {
-      console.warn('Missing imageId or absolutePath');
-      return;
+  const isEngineSettingUp = useStore((state) => state.isEngineSettingUp);
+  const setIsEngineSettingUp = useStore((state) => state.setIsEngineSettingUp);
+  const addAiLog = useStore((state) => state.addAiLog);
+  const addToast = useStore((state) => state.addToast);
+
+  const ensureEngineReady = useCallback(async () => {
+    if (isEngineSettingUp) {
+      addToast('AI Engine is still setting up in the background...', 'info');
+      return false;
     }
+
+    try {
+      const status = await invoke<WatermarkSidecarStatus>('get_watermark_sidecar_status');
+      if (status.dependenciesInstalled) return true;
+
+      // Setup required
+      setIsEngineSettingUp(true);
+      addToast('Initializing AI Engine in the background. This may take a few minutes...', 'info');
+      
+      // We don't await the setup here because we want it to run in the background
+      invoke('run_watermark_setup', { forceReinstall: false })
+        .then(() => {
+          addToast('AI Engine setup complete! You can now use AI features.', 'success');
+        })
+        .catch((err) => {
+          addToast(`AI Engine setup failed: ${err}`, 'error');
+        })
+        .finally(() => {
+          setIsEngineSettingUp(false);
+        });
+
+      return false;
+    } catch (e) {
+      console.error('Failed to check engine status:', e);
+      return false;
+    }
+  }, [isEngineSettingUp, setIsEngineSettingUp, addToast]);
+
+  const handleRemoveBackground = useCallback(async () => {
+    if (!imageId || !image.absolutePath) return;
+    
+    const isReady = await ensureEngineReady();
+    if (!isReady) return;
+
     setIsRemovingBackground(true);
     try {
-      console.log('Invoking remove_background_single...');
       const result = await invoke<{ imageBase64: string; deviceUsed?: string }>('remove_background_single', {
         imagePath: image.absolutePath,
         autoUnload: useStore.getState().autoUnload,
       });
-      console.log('Background removal result received, updating history. Hardware used:', result.deviceUsed);
       if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);
       setProcessedHistory((prev) => [...prev, result.imageBase64]);
       setProcessedOps((prev) => [...prev, 'background']);
       setHistoryIndex((prev) => prev + 1);
+      addToast('Background removed successfully', 'success');
     } catch (error) {
       console.error('Background removal failed:', error);
-      alert(`Background removal failed: ${error}`);
+      addToast(`Background removal failed: ${error}`, 'error');
     } finally {
       setIsRemovingBackground(false);
     }
-  }, [imageId, image.absolutePath]);
+  }, [imageId, image.absolutePath, ensureEngineReady, addToast, setLastUsedHardware]);
 
   const undoSourceEdit = useCallback(() => {
     if (canUndo) {
@@ -360,33 +397,32 @@ export function useInspectorLogic({
   const canReset = historyIndex > -1 || processedHistory.length > 0;
 
   const handleRemoveWatermarks = useCallback(async () => {
-    console.log('handleRemoveWatermarks triggered', { imageId, absolutePath: image.absolutePath });
-    if (!imageId || !image.absolutePath) {
-      console.warn('Missing imageId or absolutePath');
-      return;
-    }
+    if (!imageId || !image.absolutePath) return;
+
+    const isReady = await ensureEngineReady();
+    if (!isReady) return;
+
     setIsRemovingWatermark(true);
     try {
-      console.log('Invoking remove_watermark_single...');
       const result = await invoke<{ imageBase64: string; deviceUsed?: string }>('remove_watermark_single', {
         imagePath: image.absolutePath,
         maxBboxPercent: 10.0,
         autoUnload: useStore.getState().autoUnload,
         detectionRegion: cropState?.detectionRegion || null,
       });
-      console.log('Result received, updating history. Hardware used:', result.deviceUsed);
       if (result.deviceUsed) setLastUsedHardware(result.deviceUsed);
       // Add to history
       setProcessedHistory((prev) => [...prev, result.imageBase64]);
       setProcessedOps((prev) => [...prev, 'watermark']);
       setHistoryIndex((prev) => prev + 1);
+      addToast('Watermarks removed successfully', 'success');
     } catch (error) {
       console.error('Watermark removal failed:', error);
-      alert(`Watermark removal failed: ${error}`);
+      addToast(`Watermark removal failed: ${error}`, 'error');
     } finally {
       setIsRemovingWatermark(false);
     }
-  }, [imageId, image.absolutePath]);
+  }, [imageId, image.absolutePath, ensureEngineReady, addToast, setLastUsedHardware, cropState?.detectionRegion]);
 
   // ── Reset draft (full reset) ────────────────────────────
   const handleResetDraft = useCallback(() => {

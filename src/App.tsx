@@ -34,6 +34,7 @@ import ExportPlanModal from './components/modals/ExportPlanModal';
 import WatermarkSettingsModal from './components/modals/WatermarkSettingsModal';
 import ProcessingOverlay from './components/common/ProcessingOverlay';
 import ToastContainer from './components/common/ToastContainer';
+import ResizeHandles from './components/common/ResizeHandles';
 import useStore from './store/useStore';
 import {
   clearFolderDraft,
@@ -2302,6 +2303,8 @@ function App() {
         isProjectOpen={images.length > 0}
         dragContext={dragContext}
       />
+
+      <ResizeHandles />
 
     </div>
   );
