@@ -87,12 +87,35 @@ pub struct EnginePaths {
 impl EnginePaths {
     pub fn resolve(app: &AppHandle) -> Result<Self, String> {
         let app_data = app.path().app_data_dir()
-            .map_err(|e| format!("Failed to resolve system app data dir: {e}"))?;
+            .map_err(|e| format!("Professional FS Error: Failed to resolve system app data dir: {e}"))?;
         
         let engine = app_data.join("engine");
-        let scripts = app.path().resource_dir()
-            .map(|dir| dir.join("python"))
-            .map_err(|e| format!("Failed to resolve bundled resource directory: {e}"))?;
+        
+        // Resource resolution can be tricky in dev mode vs production.
+        // We try the standard resource dir first, then fall back to local dev path.
+        let scripts = match app.path().resource_dir() {
+            Ok(dir) => {
+                let p = dir.join("python");
+                if p.exists() { p } else {
+                    // Fallback for dev mode where resources might be in the source tree
+                    PathBuf::from("python")
+                }
+            },
+            Err(_) => PathBuf::from("python"),
+        };
+
+        // Final sanity check for scripts
+        let scripts = if scripts.exists() {
+            scripts
+        } else {
+            // Last resort: check if we are in the src-tauri folder during dev
+            let dev_path = PathBuf::from("src-tauri/python");
+            if dev_path.exists() { dev_path } else { scripts }
+        };
+
+        if !scripts.exists() {
+            return Err(format!("AI Engine Error: Python scripts not found at {}. Please check your installation.", scripts.display()));
+        }
 
         Ok(Self {
             _root: app_data,

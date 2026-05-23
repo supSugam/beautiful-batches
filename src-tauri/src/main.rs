@@ -57,19 +57,18 @@ fn create_app_window(app: &tauri::AppHandle, label: &str) -> tauri::Result<tauri
         .resizable(true)
         .decorations(false); // Custom titlebar logic
 
+    if let Some(icon) = get_app_icon() {
+        builder = builder.icon(icon.clone())?;
+    }
+
     // On Linux, the WM_CLASS / app_id is vital for grouping and icons.
-    // We set it explicitly to the identifier from tauri.conf.json.
+    // We set it to a standard lowercase string that matches common binary names.
     #[cfg(target_os = "linux")]
     {
-        // This is a common trick to ensure GNOME/Wayland links the window to the correct icon/app
-        builder = builder.window_classname("com.supSugam.beautifulbatches");
+        builder = builder.window_classname("beautiful-batches");
     }
 
     let window = builder.build()?;
-
-    if let Some(icon) = get_app_icon() {
-        let _ = window.set_icon(icon);
-    }
 
     Ok(window)
 }
@@ -91,6 +90,12 @@ fn main() {
             if let Some(icon) = get_app_icon() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_icon(icon);
+                    
+                    #[cfg(target_os = "linux")]
+                    {
+                        // In Tauri v2, setting classname on an existing window isn't directly exposed via public API easily,
+                        // but we can try to ensure the app-wide ID is set.
+                    }
                 }
             }
 
