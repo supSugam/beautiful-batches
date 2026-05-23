@@ -42,18 +42,43 @@ fn load_app_icon() -> Option<tauri::image::Image<'static>> {
     ))
 }
 
+use tauri::WebviewUrl;
+use tauri::WebviewWindowBuilder;
+
+fn create_app_window(app: &tauri::AppHandle, label: &str) -> tauri::Result<tauri::WebviewWindow> {
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+        .title("Beautiful Batches")
+        .inner_size(1440.0, 920.0)
+        .resizable(true)
+        .decorations(false) // Custom titlebar logic
+        .transparent(true)
+        .build()?;
+
+    if let Some(app_icon) = load_app_icon() {
+        let _ = window.set_icon(app_icon);
+    }
+
+    Ok(window)
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Chrome-like behavior: Each launch opens a new window in the SAME process
+            // This ensures they are grouped under one taskbar icon
+            let label = format!("main-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+            let _ = create_app_window(app, &label);
+        }))
         .setup(|app| {
             // Ensure we have a cache dir ready
             let _ = app.path().app_cache_dir();
 
+            // The main window is created via tauri.conf.json by default.
+            // We ensure it has the correct icon here.
             if let Some(app_icon) = load_app_icon() {
-                for window in app.webview_windows().values() {
-                    if let Err(err) = window.set_icon(app_icon.clone()) {
-                        eprintln!("Failed to set window icon: {err}");
-                    }
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_icon(app_icon);
                 }
             }
 
@@ -166,8 +191,8 @@ fn main() {
             commands::generate_ai_caption,
             commands::save_secure_api_key,
             commands::get_secure_api_key,
-            commands::get_git_info,
             commands::copy_files_to_directory,
+
             clipboard::read_clipboard_image,
             clipboard::has_clipboard_image,
         ])

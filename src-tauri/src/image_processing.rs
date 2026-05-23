@@ -208,7 +208,10 @@ pub fn process_bulk_export(
                 let target_width = output_width_raw.round().max(1.0) as u32;
                 let (source_width, source_height) = image.dimensions();
                 if source_width > 0 && source_height > 0 {
-                    let ratio = crop_entry.aspect.unwrap_or_else(|| source_width as f64 / source_height as f64);
+                    // Always derive ratio from the actual post-crop image dimensions.
+                    // Using the stored `aspect` can cause distortion if it drifted from
+                    // the real crop dimensions due to rounding or zoom bake-in.
+                    let ratio = source_width as f64 / source_height as f64;
                     let target_height = (target_width as f64 / ratio).round().max(1.0) as u32;
                     image = image.resize_exact(target_width, target_height, FilterType::Lanczos3);
                 }
@@ -1158,7 +1161,7 @@ fn apply_resize_only(mut image: DynamicImage, crop: &CropConfig) -> DynamicImage
             let target_width = output_width_raw.round().max(1.0) as u32;
             let (source_width, source_height) = image.dimensions();
             if source_width > 0 && source_height > 0 {
-                let ratio = crop.aspect.unwrap_or_else(|| source_width as f64 / source_height as f64);
+                let ratio = source_width as f64 / source_height as f64;
                 let target_height = (target_width as f64 / ratio).round().max(1.0) as u32;
                 image = image.resize_exact(target_width, target_height, FilterType::Lanczos3);
             }

@@ -62,38 +62,6 @@ pub fn is_directory(path: String) -> bool {
     Path::new(&path).is_dir()
 }
 
-#[tauri::command]
-pub fn get_git_info(app: AppHandle) -> serde_json::Value {
-    let repo_path = match crate::watermark_sidecar::get_repo_path(&app) {
-        Ok(p) => p,
-        Err(_) => return serde_json::json!({ "hash": "unknown", "date": "0" }),
-    };
-
-    if !repo_path.join(".git").exists() {
-        return serde_json::json!({ "hash": "unknown", "date": "0" });
-    }
-
-    let commit_hash = Command::new("git")
-        .args(&["-C", repo_path.to_str().unwrap(), "rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let commit_date = Command::new("git")
-        .args(&["-C", repo_path.to_str().unwrap(), "log", "-1", "--format=%ct"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "0".to_string());
-
-    serde_json::json!({
-        "hash": commit_hash,
-        "date": commit_date
-    })
-}
 
 fn inflate_zlib_bytes(data: &[u8]) -> Option<Vec<u8>> {
     let mut decoder = ZlibDecoder::new(data);
@@ -818,14 +786,11 @@ pub async fn load_watermark_models(
     detection_model: String,
     inpainting_model: String,
 ) -> Result<(), String> {
-    let bridge_arc = watermark_sidecar::get_or_create_bridge(&app)?;
-    let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
-
-    let response = bridge.send_command(json!({
+    let response = watermark_sidecar::send_command_with_retry(&app, json!({
         "command": "load",
         "detection_model": detection_model,
         "inpainting_model": inpainting_model
-    }), Some(&app))?;
+    }))?;
 
     if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
         return Err(err.to_string());
@@ -864,16 +829,13 @@ pub async fn remove_watermark_single(
     auto_unload: Option<bool>,
     detection_region: Option<crate::models::WatermarkRegion>,
 ) -> Result<RemoveResult, String> {
-    let bridge_arc = watermark_sidecar::ensure_bridge_ready(&app)?;
-    let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
-
-    let response = bridge.send_command(json!({
+    let response = watermark_sidecar::send_command_with_retry(&app, json!({
         "command": "process",
         "path": image_path,
         "max_bbox_percent": max_bbox_percent.unwrap_or(10.0),
         "prompt": prompt.unwrap_or_else(|| "watermark".to_string()),
         "region": detection_region.map(|r| vec![r.x1, r.y1, r.x2, r.y2])
-    }), Some(&app))?;
+    }))?;
 
     if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
         return Err(err.to_string());
@@ -902,7 +864,6 @@ pub async fn remove_watermark_single(
     };
 
     if auto_unload.unwrap_or(false) {
-        drop(bridge);
         let _ = watermark_sidecar::stop_bridge();
     }
 
@@ -915,13 +876,10 @@ pub async fn remove_background_single(
     image_path: String,
     auto_unload: Option<bool>,
 ) -> Result<RemoveResult, String> {
-    let bridge_arc = watermark_sidecar::get_or_create_bridge(&app)?;
-    let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
-
-    let response = bridge.send_command(json!({
+    let response = watermark_sidecar::send_command_with_retry(&app, json!({
         "command": "remove_bg",
         "path": image_path
-    }), Some(&app))?;
+    }))?;
 
     if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
         return Err(err.to_string());
@@ -941,7 +899,6 @@ pub async fn remove_background_single(
     };
 
     if auto_unload.unwrap_or(false) {
-        drop(bridge);
         let _ = watermark_sidecar::stop_bridge();
     }
 

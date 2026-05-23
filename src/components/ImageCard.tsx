@@ -117,7 +117,18 @@ export const ImageCard = memo(
     const cropW = hasCoords ? Number(cw) || 1 : boxW;
     const cropH = hasCoords ? Number(ch) || 1 : boxH;
 
-    const cardHeight = (width / cropW) * cropH;
+    // When outputWidth is set, the export may resize using the stored aspect ratio.
+    // Use that same ratio for the card so the preview matches the actual output.
+    const outputWidth = Number(cropState?.outputWidth) || 0;
+    const storedAspect = Number(cropState?.aspect) || 0;
+    const cropAspect = cropW / cropH;
+    // Use the stored aspect only if it's meaningful and an output resize is active,
+    // otherwise always use the actual crop dimensions as truth.
+    const effectiveCardAspect =
+      outputWidth > 0 && storedAspect > 0 && Number.isFinite(storedAspect)
+        ? storedAspect
+        : cropAspect;
+    const cardHeight = width / effectiveCardAspect;
 
     const previewPadding = clampPaddingToReference(
       cropState?.padding || EMPTY_PADDING,

@@ -9,14 +9,14 @@ import { MonitorCheck } from 'lucide-react';
  * over the editor canvas.
  */
 const HANDLES = [
-  { id: 'tl', cursor: 'nwse-resize', style: { top: -5, left: -5 } },
-  { id: 'tr', cursor: 'nesw-resize', style: { top: -5, right: -5 } },
-  { id: 'bl', cursor: 'nesw-resize', style: { bottom: -5, left: -5 } },
-  { id: 'br', cursor: 'nwse-resize', style: { bottom: -5, right: -5 } },
-  { id: 't', cursor: 'ns-resize', style: { top: -4, left: '50%', transform: 'translateX(-50%)' } },
-  { id: 'b', cursor: 'ns-resize', style: { bottom: -4, left: '50%', transform: 'translateX(-50%)' } },
-  { id: 'l', cursor: 'ew-resize', style: { left: -4, top: '50%', transform: 'translateY(-50%)' } },
-  { id: 'r', cursor: 'ew-resize', style: { right: -4, top: '50%', transform: 'translateY(-50%)' } },
+  { id: 'tl', cursor: 'nwse-resize', style: { top: -8, left: -8 } },
+  { id: 'tr', cursor: 'nesw-resize', style: { top: -8, right: -8 } },
+  { id: 'bl', cursor: 'nesw-resize', style: { bottom: -8, left: -8 } },
+  { id: 'br', cursor: 'nwse-resize', style: { bottom: -8, right: -8 } },
+  { id: 't', cursor: 'ns-resize', style: { top: -6, left: '50%', transform: 'translateX(-50%)' } },
+  { id: 'b', cursor: 'ns-resize', style: { bottom: -6, left: '50%', transform: 'translateX(-50%)' } },
+  { id: 'l', cursor: 'ew-resize', style: { left: -6, top: '50%', transform: 'translateY(-50%)' } },
+  { id: 'r', cursor: 'ew-resize', style: { right: -6, top: '50%', transform: 'translateY(-50%)' } },
 ];
 
 type FitLayout = {
@@ -195,7 +195,7 @@ const CropOverlay = ({
   const cropWidth = cropRight - cropLeft;
   const cropHeight = cropBottom - cropTop;
 
-  const DIM_TRANSITION = isActive ? 'none' : 'all 0.15s ease';
+  const DIM_TRANSITION = isActive ? 'all 0.04s linear' : 'all 0.15s ease';
 
   const dimRects = [
     { key: 'top', left: 0, top: 0, width: containerWidth, height: cropTop },
@@ -285,18 +285,23 @@ const CropOverlay = ({
         {...dragHandlers}
       >
         <div className="crop-selection-border" />
-        {isActive && (
-          <div className="crop-grid">
-            <div className="crop-grid-line crop-grid-h1" />
-            <div className="crop-grid-line crop-grid-h2" />
-            <div className="crop-grid-line crop-grid-v1" />
-            <div className="crop-grid-line crop-grid-v2" />
-          </div>
-        )}
+        <div className={`crop-grid ${isActive ? 'crop-grid--active' : ''}`}>
+          <div className="crop-grid-line crop-grid-h1" />
+          <div className="crop-grid-line crop-grid-h2" />
+          <div className="crop-grid-line crop-grid-v1" />
+          <div className="crop-grid-line crop-grid-v2" />
+        </div>
         <div className="crop-bracket crop-bracket-tl" />
         <div className="crop-bracket crop-bracket-tr" />
         <div className="crop-bracket crop-bracket-bl" />
         <div className="crop-bracket crop-bracket-br" />
+
+        {/* Crop dimension label */}
+        {isActive && screenW > 60 && (
+          <div className="crop-dimension-label">
+            {Math.round(crop.w)} × {Math.round(crop.h)}
+          </div>
+        )}
 
         {HANDLES.map(({ id, cursor, style }) => (
           <div

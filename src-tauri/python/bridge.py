@@ -1,0 +1,310 @@
+import torch
+import sys
+import json
+import base64
+import numpy as np
+import cv2
+import faulthandler
+import types
+from PIL import Image
+from io import BytesIO
+from pathlib import Path
+
+# Enable faulthandler to debug segfaults (SIGSEGV)
+faulthandler.enable()
+
+# Python 3.13 COMPATIBILITY SHIM: imghdr was removed in 3.13 but is required by iopaint/helper.py
+if "imghdr" not in sys.modules:
+    imghdr_mock = types.ModuleType("imghdr")
+    # iopaint uses imghdr.what(file, h), we mock it using PIL
+    def imghdr_what(file, h=None):
+        try:
+            if h is None and hasattr(file, 'read'):
+                h = file.read(32)
+            with Image.open(BytesIO(h) if h else file) as img:
+                fmt = img.format.lower()
+                return "jpeg" if fmt == "jpg" else fmt
+        except Exception:
+            return None
+    imghdr_mock.what = imghdr_what
+    sys.modules["imghdr"] = imghdr_mock
+
+from transformers import AutoProcessor, AutoModelForCausalLM, AutoModelForImageTextToText, AutoModel
+from iopaint.model_manager import ModelManager
+from iopaint.schema import HDStrategy, LDMSampler, InpaintRequest as Config
+
+# Add current dir to path to import remwm
+sys.path.append(str(Path(__file__).parent))
+import remwm
+
+class WatermarkBridge:
+    def __init__(self):
+        if torch.cuda.is_available():
+            self.device = "cuda"
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            self.device = "mps"
+        else:
+            self.device = "cpu"
+        self.florence_model = None
+        self.florence_processor = None
+        self.inpainting_model = None
+        self.inpainting_model_id = None
+        self.is_ready = False
+        self.rembg_session = None
+
+    def load_models(self, detection_model_id="florence-community/Florence-2-large", inpainting_model_id="lama"):
+        try:
+            # Detect if we actually need to load/change detection model
+            if self.florence_model is None or detection_model_id not in str(getattr(self.florence_model, 'config', '')):
+                print(f"Loading detection model: {detection_model_id}...", file=sys.stderr)
+                # Try native ImageTextToText first (Transformers 4.42+), fallback to CausalLM (Remote Code / Old Versions), then base AutoModel
+                try:
+                    self.florence_model = AutoModelForImageTextToText.from_pretrained(detection_model_id, trust_remote_code=True).to(self.device).eval()
+                except Exception:
+                    try:
+                        self.florence_model = AutoModelForCausalLM.from_pretrained(detection_model_id, trust_remote_code=True).to(self.device).eval()
+                    except Exception:
+                        self.florence_model = AutoModel.from_pretrained(detection_model_id, trust_remote_code=True).to(self.device).eval()
+                
+                self.florence_processor = AutoProcessor.from_pretrained(detection_model_id, trust_remote_code=True)
+
+            # Detect if we need to load/change inpainting model
+            if self.inpainting_model is None or self.inpainting_model_id != inpainting_model_id:
+                print(f"Loading inpainting model: {inpainting_model_id}...", file=sys.stderr)
+                
+                # Force registration of lama if needed
+                if inpainting_model_id == "lama":
+                    try:
+                        import iopaint.model.lama
+                        from iopaint.model_manager import models
+                        if "lama" not in models:
+                            from iopaint.model.lama import LaMa
+                            models["lama"] = LaMa
+                    except Exception as reg_err:
+                        print(f"Manual lama registration failed: {reg_err}", file=sys.stderr)
+
+                try:
+                    self.inpainting_model = ModelManager(name=inpainting_model_id, device=self.device)
+                except Exception as e:
+                    print(f"Standard ModelManager failed for {inpainting_model_id}: {e}. Retrying with direct class if possible.", file=sys.stderr)
+                    from iopaint.model_manager import models
+                    if inpainting_model_id in models:
+                        model_class = models[inpainting_model_id]
+                        self.inpainting_model = model_class(device=self.device)
+                    else:
+                        raise e
+                self.inpainting_model_id = inpainting_model_id
+
+            self.is_ready = True
+            return True
+        except Exception as e:
+            print(f"Error loading models: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            return False
+
+    def process_image(self, image_path, max_bbox_percent=10.0, detection_prompt="watermark", region=None):
+        if not self.is_ready:
+            return {"error": "Models not loaded"}
+
+        try:
+            image = Image.open(image_path).convert("RGB")
+            width, height = image.size
+            
+            # If region is provided, we crop for detection and then map back to full mask
+            if region and isinstance(region, list) and len(region) == 4:
+                rx1, ry1, rx2, ry2 = region
+                px1, py1 = int(rx1 * width), int(ry1 * height)
+                px2, py2 = int(rx2 * width), int(ry2 * height)
+                
+                # Ensure valid coordinates
+                px1, px2 = sorted([max(0, min(width, px1)), max(0, min(width, px2))])
+                py1, py2 = sorted([max(0, min(height, py1)), max(0, min(height, py2))])
+                
+                if px2 - px1 > 10 and py2 - py1 > 10:
+                    crop = image.crop((px1, py1, px2, py2))
+                    crop_mask = remwm.get_watermark_mask(
+                        crop, 
+                        self.florence_model, 
+                        self.florence_processor, 
+                        self.device, 
+                        max_bbox_percent, 
+                        detection_prompt
+                    )
+                    # Create full full-size mask
+                    mask = Image.new("L", (width, height), 0)
+                    mask.paste(crop_mask, (px1, py1))
+                else:
+                    # Region too small or invalid, fallback to full image
+                    mask = remwm.get_watermark_mask(image, self.florence_model, self.florence_processor, self.device, max_bbox_percent, detection_prompt)
+            else:
+                mask = remwm.get_watermark_mask(
+                    image, 
+                    self.florence_model, 
+                    self.florence_processor, 
+                    self.device, 
+                    max_bbox_percent, 
+                    detection_prompt
+                )
+
+            # Check if watermark was detected
+            if mask.getextrema()[1] == 0:
+                return {"status": "skipped", "message": "No watermark detected"}
+
+            # Inpaint
+            result_np = remwm.process_image_with_lama(np.array(image), np.array(mask), self.inpainting_model)
+            inpainted_pil = Image.fromarray(cv2.cvtColor(result_np, cv2.COLOR_BGR2RGB))
+
+            # CRITICAL FIX: The LaMa model subtly alters colors across the whole image
+            # when converting back and forth from tensors. We only want to apply the
+            # inpainted pixels where the watermark actually was (defined by the mask).
+            # So we composite the inpainted image ON TOP OF the original image using the mask.
+            final_pil = image.copy()
+            final_pil.paste(inpainted_pil, (0, 0), mask)
+
+            # Convert to base64 for fast preview or save to temp?
+            # For now, let's return base64
+            buffered = BytesIO()
+            final_pil.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+
+            return {
+                "status": "success",
+                "image_base64": img_str,
+                "device_used": str(self.device)
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    def remove_background(self, image_path):
+        try:
+            from rembg import remove, new_session
+            import os
+
+            # Lazy-load rembg session on first use
+            # Redirect stdout → stderr to prevent ONNX/rembg from corrupting JSON protocol
+            if self.rembg_session is None:
+                import onnxruntime as ort
+                available = ort.get_available_providers()
+                
+                # Universal provider prioritization: 
+                # CUDA (Nvidia) > ROCM (AMD dGPU) > CoreML (Apple) > DirectML (Windows) > OpenVINO (CPU/iGPU Turbo) > CPU
+                priority_list = [
+                    'CUDAExecutionProvider', 
+                    'ROCMExecutionProvider', 
+                    'CoreMLExecutionProvider', 
+                    'DirectMLExecutionProvider', 
+                    'DmlExecutionProvider', 
+                    'OpenVINOExecutionProvider', 
+                    'CPUExecutionProvider'
+                ]
+                preferred = [p for p in priority_list if p in available]
+                
+                # If we use OpenVINO, log it as Turbo Mode
+                if 'OpenVINOExecutionProvider' in preferred and preferred[0] == 'OpenVINOExecutionProvider':
+                    print("Turbo Mode Active: Using OpenVINO for high-performance inference.", file=sys.stderr)
+
+
+                print(f"Loading rembg session (first use)... Selected providers: {preferred}", file=sys.stderr)
+                old_stdout = sys.stdout
+                sys.stdout = sys.stderr
+                try:
+                    self.rembg_session = new_session('isnet-general-use', providers=preferred)
+                finally:
+                    sys.stdout = old_stdout
+                print("rembg session loaded.", file=sys.stderr)
+
+            image = Image.open(image_path).convert("RGB")
+
+            # Redirect stdout during processing too — ONNX runtime can print diagnostics
+            old_stdout = sys.stdout
+            sys.stdout = sys.stderr
+            try:
+                result = remove(image, session=self.rembg_session)
+            finally:
+                sys.stdout = old_stdout
+
+            # result is RGBA PIL Image — encode as PNG to preserve transparency
+            buffered = BytesIO()
+            result.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            
+
+
+            # Identify active provider
+            device_used = 'CPU'
+            if self.rembg_session and hasattr(self.rembg_session, 'inner_session'):
+                active_providers = self.rembg_session.inner_session.get_providers()
+                if active_providers:
+                    device_used = active_providers[0]
+
+            return {
+                "status": "success",
+                "image_base64": img_str,
+                "device_used": device_used
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+def main():
+    bridge = WatermarkBridge()
+    print(json.dumps({"status": "bridge_started"}))
+    try:
+        sys.stdout.flush()
+    except Exception:
+        return
+    
+    # Listen for commands
+    for line in sys.stdin:
+        try:
+            line = line.strip()
+            if not line: continue
+            request = json.loads(line)
+            cmd = request.get("command")
+            
+            if cmd == "load":
+                success = bridge.load_models(
+                    request.get("detection_model", "florence-community/Florence-2-large"),
+                    request.get("inpainting_model", "lama")
+                )
+                print(json.dumps({"status": "ready" if success else "error", "error": f"Failed to load models" if not success else None}))
+            
+            elif cmd == "process":
+                result = bridge.process_image(
+                    request.get("path"),
+                    request.get("max_bbox_percent", 10.0),
+                    request.get("prompt", "watermark"),
+                    region=request.get("region")
+                )
+                print(json.dumps(result))
+            
+            elif cmd == "remove_bg":
+                result = bridge.remove_background(
+                    request.get("path")
+                )
+                print(json.dumps(result))
+
+            elif cmd == "ping":
+                print(json.dumps({
+                    "status": "pong", 
+                    "is_ready": bridge.is_ready,
+                    "detection_model": "loaded" if bridge.florence_model else None,
+                    "inpainting_model": bridge.inpainting_model_id
+                }))
+                
+            try:
+                sys.stdout.flush()
+            except BrokenPipeError:
+                break
+            except Exception:
+                break
+        except Exception as e:
+            # Command processing error
+            print(json.dumps({"error": f"Bridge error: {e}"}), file=sys.stderr)
+            try:
+                sys.stdout.flush()
+            except Exception:
+                break
+
+if __name__ == "__main__":
+    main()

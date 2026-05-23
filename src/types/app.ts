@@ -209,9 +209,8 @@ export type WatermarkModelStatus = {
 
 export type WatermarkSidecarStatus = {
   pythonInstalled: boolean;
-  gitInstalled: boolean;
   uvInstalled: boolean;
-  repoCloned: boolean;
+  engineAssetsReady: boolean;
   venvExists: boolean;
   dependenciesInstalled: boolean;
   isBridgeActive: boolean;

@@ -370,10 +370,14 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [showWipeConfirm, setShowWipeConfirm] = useState(false);
   const [confirmDeleteModelId, setConfirmDeleteModelId] = useState<string | null>(null);
+  const logs = useStore((state) => state.aiLogs);
+  const addLog = useStore((state) => state.addAiLog);
+  const clearLogs = useStore((state) => state.clearAiLogs);
+
   const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [selectedDetectionId, setSelectedDetectionId] = useState('florence-2-large');
   const [selectedInpaintingId, setSelectedInpaintingId] = useState('lama');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
@@ -510,8 +514,6 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
     };
   }, []);
 
-  const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
-
   const fetchStatus = useCallback(async () => {
     try {
       const nextStatus = await invoke<WatermarkSidecarStatus>('get_watermark_sidecar_status');
@@ -519,18 +521,6 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
     } catch (error) {
       console.error('Failed to fetch sidecar status:', error);
     }
-  }, []);
-
-  useEffect(() => {
-    const fetchGitInfo = async () => {
-      try {
-        const info = await invoke<GitInfo>('get_git_info');
-        setGitInfo(info);
-      } catch (e) {
-        console.error('Failed to fetch git info:', e);
-      }
-    };
-    fetchGitInfo();
   }, []);
 
   useEffect(() => {
@@ -545,11 +535,7 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
     const setupListener = async () => {
       const unlisten = await listen<LogEntry>('watermark-setup-log', (event) => {
         if (!isMounted) return;
-        setLogs((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.message === event.payload.message && last.timestamp === event.payload.timestamp) return prev;
-          return [...prev, event.payload];
-        });
+        addLog(event.payload);
       });
       if (isMounted) unlistenFn = unlisten; else unlisten();
     };
@@ -771,7 +757,7 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
 
 
   const isFullySetup = status
-    ? status.repoCloned && status.venvExists && status.dependenciesInstalled
+    ? status.engineAssetsReady && status.venvExists && status.dependenciesInstalled
     : false;
 
   return (
@@ -897,21 +883,46 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
                   ) : (
                     <>
                       <div className="wsm-health-indicator-row">
-                        <HealthDot label="Hardware Detected" ok={true} />
                         <HealthDot
                           label="Python"
                           ok={status.pythonInstalled}
                           error={!status.pythonInstalled}
                         />
-                        <HealthDot label="Git" ok={status.gitInstalled} />
-                        <HealthDot label="uv Runtime" ok={status.uvInstalled} />
-                        <HealthDot label="Repository" ok={status.repoCloned} />
+                        <HealthDot label="Engine Assets" ok={status.engineAssetsReady} />
                         <HealthDot
                           label="Dependencies"
                           ok={status.dependenciesInstalled}
                         />
-                        <HealthDot label="Bridge" ok={status.isBridgeActive} />
+                        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Troubleshooting</span>
+                          <div 
+                            className={`wsm-toggle is-small ${showAdvanced ? 'is-active' : ''}`}
+                            onClick={() => setShowAdvanced(!showAdvanced)}
+                            role="checkbox"
+                            aria-checked={showAdvanced}
+                            tabIndex={0}
+                          >
+                            <div className="wsm-toggle-handle" />
+                          </div>
+                        </div>
                       </div>
+
+                      <AnimatePresence>
+                        {showAdvanced && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            style={{ overflow: 'hidden' }}
+                          >
+                            <div className="wsm-health-indicator-row" style={{ marginTop: 0, paddingBottom: '12px', paddingTop: '4px', borderTop: 'none' }}>
+                                <HealthDot label="uv Runtime" ok={status.uvInstalled} />
+                                <HealthDot label="Environment" ok={status.venvExists} />
+                                <HealthDot label="Bridge" ok={status.isBridgeActive} />
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                       <div className="wsm-grid">
                         {/* Left column: Health */}
                         <div className="wsm-col">
@@ -1077,25 +1088,6 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
                                     Unload Engine
                                   </button>
                                 )}
-                                <button
-                                  type="button"
-                                  className={`btn btn-sm ${status.isBridgeActive ? 'btn-secondary' : 'btn-primary'}`}
-                                  disabled={
-                                    !isFullySetup ||
-                                    isSetupRunning ||
-                                    isLoadingModels
-                                  }
-                                  onClick={handleLoadModels}
-                                >
-                                  {isLoadingModels ? (
-                                    <RefreshCcw size={13} className="spin" />
-                                  ) : (
-                                    <Cpu size={13} />
-                                  )}
-                                  {status.isBridgeActive
-                                    ? 'Reload Engine'
-                                    : 'Initialize Engine'}
-                                </button>
                               </div>
                             </div>
 
@@ -1470,7 +1462,7 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
                             <button
                               type="button"
                               className="btn btn-sm btn-ghost"
-                              onClick={() => setLogs([])}
+                              onClick={clearLogs}
                             >
                               Clear
                             </button>
@@ -1514,27 +1506,7 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
 
                 {/* Footer */}
                 <footer className="wsm-footer">
-                  <div className="wsm-footer-left">
-                    <button
-                      type="button"
-                      className={`btn btn-sm btn-ghost btn-danger-ghost wsm-wipe-btn ${showWipeConfirm ? 'is-confirming' : ''}`}
-                      onClick={handleReset}
-                    >
-                      {showWipeConfirm ? (
-                        <Check size={13} />
-                      ) : (
-                        <Trash2 size={13} />
-                      )}
-                      Wipe Engine
-                    </button>
-                  </div>
-
                   <div className="wsm-footer-status">
-                    {gitInfo ? (
-                      <span className="wsm-version-info" title={`Built from commit ${gitInfo.hash} on ${new Date(parseInt(gitInfo.date) * 1000).toLocaleString()}`}>
-                        {gitInfo.hash} • {new Date(parseInt(gitInfo.date) * 1000).toLocaleString()}
-                      </span>
-                    ) : null}
                     {!status || isFullySetup ? null : (
                       <span className="wsm-status-warn">
                         <AlertTriangle size={13} />
@@ -1544,35 +1516,66 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
                   </div>
 
                   <div className="wsm-footer-actions">
-                    {status?.repoCloned && (
+                    {showAdvanced && (
+                      <button
+                        type="button"
+                        className={`btn btn-sm btn-ghost btn-danger-ghost wsm-wipe-btn ${showWipeConfirm ? 'is-confirming' : ''}`}
+                        onClick={handleReset}
+                      >
+                        {showWipeConfirm ? (
+                          <Check size={13} />
+                        ) : (
+                          <Trash2 size={13} />
+                        )}
+                        Wipe Environment
+                      </button>
+                    )}
+
+                    {!isFullySetup ? (
                       <button
                         type="button"
                         className="btn btn-sm btn-primary"
-                        onClick={handleRestartBridge}
-                        disabled={isLoadingModels || isSetupRunning}
-                        title="Restart the AI process to apply local Python code changes"
+                        onClick={() => handleRunSetup()}
+                        disabled={isSetupRunning}
+                        title="Initialize the AI environment"
                       >
-                        {isLoadingModels ? <RefreshCcw size={13} className="spin" /> : <RefreshCcw size={13} />}
-                        Apply Changes
+                        <Download
+                          size={13}
+                          className={isSetupRunning ? 'spin' : ''}
+                        />
+                        {isSetupRunning ? 'Setting up…' : 'Install Engine'}
                       </button>
+                    ) : (
+                      <>
+                        {showAdvanced && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => handleRunSetup()}
+                            disabled={isSetupRunning}
+                            title="Repair the Python environment"
+                          >
+                            <RefreshCw size={13} className={isSetupRunning ? 'spin' : ''} />
+                            Repair Env
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className={`btn btn-sm ${status.isBridgeActive ? 'btn-secondary' : 'btn-primary'}`}
+                          onClick={status.isBridgeActive ? handleRestartBridge : handleLoadModels}
+                          disabled={isLoadingModels || isSetupRunning}
+                        >
+                          {isLoadingModels ? (
+                            <RefreshCcw size={13} className="spin" />
+                          ) : status.isBridgeActive ? (
+                            <RefreshCcw size={13} />
+                          ) : (
+                            <Cpu size={13} />
+                          )}
+                          {status.isBridgeActive ? 'Restart Engine' : 'Start Engine'}
+                        </button>
+                      </>
                     )}
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-secondary"
-                      onClick={() => handleRunSetup()}
-                      disabled={isSetupRunning}
-                      title="Pull latest engine code from GitHub"
-                    >
-                      <Download
-                        size={13}
-                        className={isSetupRunning ? 'spin' : ''}
-                      />
-                      {isSetupRunning
-                        ? 'Updating…'
-                        : status?.repoCloned
-                          ? 'Update Engine'
-                          : 'Install Engine'}
-                    </button>
                   </div>
                 </footer>
               </motion.div>

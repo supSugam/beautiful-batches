@@ -581,9 +581,17 @@ export interface UseStoreState {
   captioningStatusById: Map<string, CaptioningStatus>;
   enqueueCaptionRequest: (imageId: string, imageAbsolutePath: string) => void;
   cancelCaptionRequest: (imageId: string) => void;
+  aiLogs: LogEntry[];
+  addAiLog: (log: LogEntry) => void;
+  clearAiLogs: () => void;
 }
 
 export type SettingsTab = 'engine' | 'captioning' | 'tips';
+export type LogEntry = {
+  timestamp: number;
+  message: string;
+  isError?: boolean;
+};
 
 const useStore = create<UseStoreState>()(
   persist(
@@ -2331,8 +2339,18 @@ const useStore = create<UseStoreState>()(
       set((state) => ({
         settingsModal: { ...state.settingsModal, isOpen: false },
       })),
+    aiLogs: [],
+    addAiLog: (log) => {
+      set((state) => {
+        const last = state.aiLogs[state.aiLogs.length - 1];
+        if (last && last.message === log.message && last.timestamp === log.timestamp) return state;
+        return { aiLogs: [...state.aiLogs, log].slice(-1000) }; // Keep last 1000 lines
+      });
+    },
+    clearAiLogs: () => set({ aiLogs: [] }),
     };
-  },
+    },
+
   {
       name: 'beautiful-batches-settings',
       storage: createJSONStorage(() => localStorage),

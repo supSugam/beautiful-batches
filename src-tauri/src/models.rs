@@ -185,9 +185,8 @@ pub struct EmbeddedMetadataResult {
 #[serde(rename_all = "camelCase")]
 pub struct WatermarkSidecarStatus {
     pub python_installed: bool,
-    pub git_installed: bool,
     pub uv_installed: bool,
-    pub repo_cloned: bool,
+    pub engine_assets_ready: bool,
     pub venv_exists: bool,
     pub dependencies_installed: bool,
     pub is_bridge_active: bool,

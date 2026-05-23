@@ -9,11 +9,9 @@ use serde::Serialize;
 use crate::models::{WatermarkSidecarStatus, WatermarkModelStatus};
 
 
-const REPO_URL: &str = "https://github.com/supSugam/WatermarkRemover-AI";
-const REPO_DIR_NAME: &str = "watermark-remover-ai";
 const VENV_DIR_NAME: &str = "venv";
 
-// Bridge python script is maintained in the WatermarkRemover-AI repository directly
+// Bridge python script is bundled as a resource in the "python" directory
 
 // Model details with expected sizes for accurate detection
 const DETECTION_MODEL_BASE: (&str, &str, &str, u64) = (
@@ -74,40 +72,48 @@ pub fn detect_hardware() -> String {
     "cpu".to_string()
 }
 
-fn sidecar_base_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Failed to resolve app data dir: {error}"))?;
-    let sidecar_dir = app_data_dir.join("watermark-ai");
-    fs::create_dir_all(&sidecar_dir)
-        .map_err(|error| format!("Failed to create sidecar dir: {error}"))?;
-    Ok(sidecar_dir)
+/// Centralized path management for the AI Engine.
+/// Professionally organized under the standard OS application data directory.
+pub struct EnginePaths {
+    pub _root: PathBuf,  // The base data directory for the app
+    pub engine: PathBuf, // Base directory for AI engine components (~/root/engine)
+    pub venv: PathBuf,   // The python virtual environment (~/root/engine/venv)
+    pub models: PathBuf, // The model weights cache (~/root/engine/models)
+    pub scripts: PathBuf,// The bundled scripts (Resource path)
 }
 
-pub fn get_repo_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(sidecar_base_dir(app)?.join(REPO_DIR_NAME))
-}
+impl EnginePaths {
+    pub fn resolve(app: &AppHandle) -> Result<Self, String> {
+        let app_data = app.path().app_data_dir()
+            .map_err(|e| format!("Failed to resolve system app data dir: {e}"))?;
+        
+        let engine = app_data.join("engine");
+        let scripts = app.path().resource_dir()
+            .map(|dir| dir.join("python"))
+            .map_err(|e| format!("Failed to resolve bundled resource directory: {e}"))?;
 
-fn get_venv_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(sidecar_base_dir(app)?.join(VENV_DIR_NAME))
-}
-
-fn get_models_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = sidecar_base_dir(app)?.join("models");
-    fs::create_dir_all(&dir).map_err(|e: std::io::Error| e.to_string())?;
-    Ok(dir)
-}
-
-fn get_python_executable(app: &AppHandle) -> Result<PathBuf, String> {
-    let venv_path = get_venv_path(app)?;
-    #[cfg(target_os = "windows")]
-    {
-        Ok(venv_path.join("Scripts").join("python.exe"))
+        Ok(Self {
+            _root: app_data,
+            venv: engine.join(VENV_DIR_NAME),
+            models: engine.join("models"),
+            engine,
+            scripts,
+        })
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(venv_path.join("bin").join("python"))
+
+    pub fn ensure_dirs(&self) -> Result<(), String> {
+        fs::create_dir_all(&self.engine)
+            .map_err(|e| format!("Failed to create engine directory: {e}"))?;
+        fs::create_dir_all(&self.models)
+            .map_err(|e| format!("Failed to create models directory: {e}"))?;
+        Ok(())
+    }
+    
+    pub fn python_executable(&self) -> PathBuf {
+        #[cfg(target_os = "windows")]
+        { self.venv.join("Scripts").join("python.exe") }
+        #[cfg(not(target_os = "windows"))]
+        { self.venv.join("bin").join("python") }
     }
 }
 
@@ -122,16 +128,14 @@ fn check_command_exists(cmd: &str) -> bool {
 }
 
 /// Lightweight check if a library exists in venv site-packages
-fn check_venv_lib_exists(app: &AppHandle, lib_name: &str) -> bool {
-    let venv_path = match get_venv_path(app) { Ok(p) => p, Err(_) => return false };
-    
+fn check_venv_lib_exists(paths: &EnginePaths, lib_name: &str) -> bool {
     // Walk site-packages to find folder starting with lib_name
     #[cfg(target_os = "windows")]
-    let sp = venv_path.join("Lib").join("site-packages");
+    let sp = paths.venv.join("Lib").join("site-packages");
     #[cfg(not(target_os = "windows"))]
     let sp = {
         // On linux/mac, it's lib/python3.x/site-packages
-        let lib_dir = venv_path.join("lib");
+        let lib_dir = paths.venv.join("lib");
         if let Ok(entries) = fs::read_dir(lib_dir) {
             let mut found = None;
             for entry in entries.flatten() {
@@ -140,9 +144,9 @@ fn check_venv_lib_exists(app: &AppHandle, lib_name: &str) -> bool {
                     break;
                 }
             }
-            found.unwrap_or(venv_path.join("lib"))
+            found.unwrap_or(paths.venv.join("lib"))
         } else {
-            venv_path.join("lib")
+            paths.venv.join("lib")
         }
     };
 
@@ -207,22 +211,20 @@ fn check_model_files(models_dir: &Path, id: &str, name: &str, desc: &str, expect
 }
 
 pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
-    let repo_path = get_repo_path(app)?;
-    let python_exe = get_python_executable(app)?;
-    let models_dir = get_models_dir(app)?;
+    let paths = EnginePaths::resolve(app)?;
     
     let python_installed = check_command_exists("python3") || check_command_exists("python");
-    let git_installed = check_command_exists("git");
     let uv_installed = check_command_exists("uv");
     
-    let repo_cloned = repo_path.join(".git").exists();
+    let engine_assets_ready = paths.scripts.exists();
+    let python_exe = paths.python_executable();
     let venv_exists = python_exe.exists();
     
     // Optimized dependency check: just check for a few key markers on disk
-    let dependencies_installed = venv_exists && repo_path.exists() && 
-        (check_venv_lib_exists(app, "iopaint") || check_venv_lib_exists(app, "IOPaint")) && 
-        check_venv_lib_exists(app, "transformers") &&
-        check_venv_lib_exists(app, "rembg");
+    let dependencies_installed = venv_exists && engine_assets_ready && 
+        (check_venv_lib_exists(&paths, "iopaint") || check_venv_lib_exists(&paths, "IOPaint")) && 
+        check_venv_lib_exists(&paths, "transformers") &&
+        check_venv_lib_exists(&paths, "rembg");
 
     let mut is_bridge_active = false;
     let mut is_bridge_busy = false;
@@ -267,9 +269,8 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
 
     let status = WatermarkSidecarStatus {
         python_installed,
-        git_installed,
         uv_installed,
-        repo_cloned,
+        engine_assets_ready,
         venv_exists,
         dependencies_installed,
         is_bridge_active,
@@ -279,9 +280,9 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
         loaded_detection_model,
         loaded_inpainting_model,
         loaded_device,
-        repo_path: repo_path.to_string_lossy().to_string(),
-        python_path: python_exe.to_string_lossy().to_string(),
-        model_cache_path: models_dir.to_string_lossy().to_string(),
+        repo_path: paths.scripts.to_string_lossy().to_string(),
+        python_path: paths.python_executable().to_string_lossy().to_string(),
+        model_cache_path: paths.models.to_string_lossy().to_string(),
         hardware_type: detect_hardware(),
         ..Default::default()
     };
@@ -293,16 +294,16 @@ pub fn get_status(app: &AppHandle) -> Result<WatermarkSidecarStatus, String> {
 
     let mut final_status = status;
     final_status.detection_models = vec![
-        check_model_files(&models_dir, DETECTION_MODEL_BASE.0, DETECTION_MODEL_BASE.1, DETECTION_MODEL_BASE.2, DETECTION_MODEL_BASE.3, "detection"),
-        check_model_files(&models_dir, DETECTION_MODEL_LARGE.0, DETECTION_MODEL_LARGE.1, DETECTION_MODEL_LARGE.2, DETECTION_MODEL_LARGE.3, "detection"),
+        check_model_files(&paths.models, DETECTION_MODEL_BASE.0, DETECTION_MODEL_BASE.1, DETECTION_MODEL_BASE.2, DETECTION_MODEL_BASE.3, "detection"),
+        check_model_files(&paths.models, DETECTION_MODEL_LARGE.0, DETECTION_MODEL_LARGE.1, DETECTION_MODEL_LARGE.2, DETECTION_MODEL_LARGE.3, "detection"),
     ];
 
     final_status.inpainting_models = vec![
-        check_model_files(&models_dir, INPAINTING_MODEL_LAMA.0, INPAINTING_MODEL_LAMA.1, INPAINTING_MODEL_LAMA.2, INPAINTING_MODEL_LAMA.3, "inpainting"),
+        check_model_files(&paths.models, INPAINTING_MODEL_LAMA.0, INPAINTING_MODEL_LAMA.1, INPAINTING_MODEL_LAMA.2, INPAINTING_MODEL_LAMA.3, "inpainting"),
     ];
 
     final_status.background_removal_models = vec![
-        check_model_files(&models_dir, BACKGROUND_REMOVAL_MODEL_REMBG.0, BACKGROUND_REMOVAL_MODEL_REMBG.1, BACKGROUND_REMOVAL_MODEL_REMBG.2, BACKGROUND_REMOVAL_MODEL_REMBG.3, "background_removal"),
+        check_model_files(&paths.models, BACKGROUND_REMOVAL_MODEL_REMBG.0, BACKGROUND_REMOVAL_MODEL_REMBG.1, BACKGROUND_REMOVAL_MODEL_REMBG.2, BACKGROUND_REMOVAL_MODEL_REMBG.3, "background_removal"),
     ];
 
     final_status.total_size_bytes = final_status.detection_models.iter().map(|m| m.size_bytes).sum::<u64>()
@@ -354,43 +355,76 @@ pub static LAST_STATUS: Mutex<Option<WatermarkSidecarStatus>> = Mutex::new(None)
 
 impl WatermarkBridgeRuntime {
     pub fn new(app: &AppHandle) -> Result<Self, String> {
-        let repo_path = get_repo_path(app)?;
-        let python_exe = get_python_executable(app)?;
-        let models_dir = get_models_dir(app)?;
+        let paths = EnginePaths::resolve(app)?;
+        let python_exe = paths.python_executable();
 
         if !python_exe.exists() {
             return Err("Python environment not found. Please run setup first.".to_string());
         }
 
-        // bridge.py lives in the cloned WatermarkRemover-AI repo (fetched via git pull in setup)
-        let bridge_script = repo_path.join("bridge.py");
+        // bridge.py lives in the bundled python resource directory
+        let bridge_script = paths.scripts.join("bridge.py");
 
         if !bridge_script.exists() {
-            return Err("bridge.py not found in repository. Please run setup to clone/update the repo.".to_string());
+            return Err("bridge.py not found in bundled resources. Please check your installation.".to_string());
         }
 
-        let mut child = Command::new(python_exe)
-            .arg(&bridge_script)
-            .env("HF_HOME", &models_dir)
-            .env("XDG_CACHE_HOME", &models_dir)
-            .env("TORCH_HOME", &models_dir)
-            .env("U2NET_HOME", &models_dir)
+        let mut cmd = Command::new(&python_exe);
+        cmd.arg(&bridge_script)
+            .env("HF_HOME", &paths.models)
+            .env("XDG_CACHE_HOME", &paths.models)
+            .env("TORCH_HOME", &paths.models)
+            .env("U2NET_HOME", &paths.models)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .current_dir(&repo_path)
-            .spawn()
+            .stderr(Stdio::piped())
+            .current_dir(&paths.scripts);
+
+        emit_log(app, &format!("Launching AI Engine: {} {}", python_exe.display(), bridge_script.display()), false);
+
+        let mut child = cmd.spawn()
             .map_err(|e| format!("Failed to spawn bridge: {e}"))?;
 
         let stdin = child.stdin.take().ok_or("Failed to open stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
+        let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
+        
+        // Start streaming stderr IMMEDIATELY to catch early crash logs
+        let app_clone = app.clone();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                let lower_line = line.to_lowercase();
+                
+                // Detect log level to avoid scaring the user with "ERROR" for everything
+                let is_true_error = lower_line.contains("error") || 
+                                   lower_line.contains("exception") || 
+                                   lower_line.contains("traceback") ||
+                                   lower_line.contains("failed");
+                
+                let is_warning = lower_line.contains("warning") || lower_line.contains("deprecated");
+                
+                // Format the prefix based on content
+                let prefix = if is_true_error { "[bridge-err]" } 
+                            else if is_warning { "[bridge-warn]" }
+                            else { "[bridge-info]" };
+
+                emit_log(&app_clone, &format!("{} {}", prefix, line), is_true_error);
+            }
+        });
+
         let mut reader = BufReader::new(stdout);
 
-        // Read the startup message: {"status": "bridge_started"}
-        // Our deployed bridge.py always prints this. Wait up to 30s for Python to import.
+        // Read the startup message with a shorter timeout or better error reporting
         let mut startup_line = String::new();
-        reader.read_line(&mut startup_line)
-            .map_err(|e| format!("Bridge failed to start (no startup message): {e}"))?;
+        if let Err(e) = reader.read_line(&mut startup_line) {
+             return Err(format!("Bridge failed to start: {e}. Check 'Engine Streams' for details."));
+        }
+
+        if startup_line.trim().is_empty() {
+             return Err("Bridge closed immediately without output. This usually indicates a Segfault or missing library. Check logs.".to_string());
+        }
+
         eprintln!("[watermark-bridge] startup: {}", startup_line.trim());
 
         Ok(Self { 
@@ -405,10 +439,50 @@ impl WatermarkBridgeRuntime {
         })
     }
 
+    pub fn is_alive(&mut self, app: &AppHandle) -> bool {
+        match self._child.try_wait() {
+            Ok(None) => true, // Still running
+            Ok(Some(status)) => {
+                let reason = if let Some(code) = status.code() {
+                    format!("exited with code {code}")
+                } else {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        if let Some(signal) = status.signal() {
+                            format!("terminated by signal {signal} (potential segfault)")
+                        } else {
+                            "exited unknown".to_string()
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    "exited unknown".to_string()
+                };
+                emit_log(app, &format!("Engine process died: {reason}"), true);
+                eprintln!("[watermark-bridge] process died: {reason}");
+                false
+            }
+            Err(e) => {
+                emit_log(app, &format!("Error checking engine status: {e}"), true);
+                false
+            }
+        }
+    }
+
     pub fn send_command(&mut self, cmd: serde_json::Value, app: Option<&AppHandle>) -> Result<serde_json::Value, String> {
+        if let Some(app) = app {
+            if !self.is_alive(app) {
+                return Err("Engine process is not running. It may have crashed (check logs).".to_string());
+            }
+        }
+
         let line = format!("{}\n", cmd.to_string());
-        self.stdin.write_all(line.as_bytes()).map_err(|e: std::io::Error| e.to_string())?;
-        self.stdin.flush().map_err(|e: std::io::Error| e.to_string())?;
+        self.stdin.write_all(line.as_bytes()).map_err(|e: std::io::Error| {
+            format!("Failed to write to engine: {} (Is the process still running?)", e)
+        })?;
+        self.stdin.flush().map_err(|e: std::io::Error| {
+            format!("Failed to flush engine pipe: {} (Is the process still running?)", e)
+        })?;
 
         loop {
             let mut response = String::new();
@@ -455,15 +529,22 @@ impl WatermarkBridgeRuntime {
 
 pub fn get_or_create_bridge(app: &AppHandle) -> Result<Arc<Mutex<WatermarkBridgeRuntime>>, String> {
     let mut instance = BRIDGE_INSTANCE.lock().unwrap();
-    if instance.is_none() {
+    
+    let should_create = match instance.as_ref() {
+        None => true,
+        Some(arc) => {
+            let mut bridge = arc.lock().map_err(|e| e.to_string())?;
+            !bridge.is_alive(app)
+        }
+    };
+
+    if should_create {
         let bridge = WatermarkBridgeRuntime::new(app)?;
         *instance = Some(Arc::new(Mutex::new(bridge)));
     }
     Ok(instance.as_ref().unwrap().clone())
 }
 
-/// Auto-start bridge and load models if not already ready.
-/// This is the main entry point for commands that need the bridge.
 pub fn ensure_bridge_ready(app: &AppHandle) -> Result<Arc<Mutex<WatermarkBridgeRuntime>>, String> {
     let bridge_arc = get_or_create_bridge(app)?;
     
@@ -498,23 +579,41 @@ pub fn ensure_bridge_ready(app: &AppHandle) -> Result<Arc<Mutex<WatermarkBridgeR
     Ok(bridge_arc)
 }
 
-pub async fn download_model(app: AppHandle, model_id: String) -> Result<(), String> {
-    let repo_path = get_repo_path(&app)?;
-    let python_exe = get_python_executable(&app)?;
-    let models_dir = get_models_dir(&app)?;
+pub fn send_command_with_retry(app: &AppHandle, cmd: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut retry_count = 0;
+    loop {
+        let bridge_arc = ensure_bridge_ready(app)?;
+        let mut bridge = bridge_arc.lock().map_err(|e| e.to_string())?;
+        
+        match bridge.send_command(cmd.clone(), Some(app)) {
+            Ok(res) => return Ok(res),
+            Err(e) if e.contains("Broken pipe") || e.contains("os error 32") || e.contains("EOF") => {
+                if retry_count >= 1 {
+                    return Err(format!("Engine crashed repeatedly. Check logs for details. Error: {}", e));
+                }
+                eprintln!("[watermark-bridge] Broken pipe detected, restarting bridge...");
+                emit_log(app, "Engine connection lost. Restarting and retrying...", true);
+                
+                // Drop the lock and clear the instance to force a fresh start
+                drop(bridge);
+                if let Ok(mut instance) = BRIDGE_INSTANCE.lock() {
+                    *instance = None;
+                }
+                retry_count += 1;
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
 
-    emit_log(&app, &format!("Starting download for {model_id}..."), false);
+async fn run_command_with_logs(app: AppHandle, mut cmd: Command, description: &str) -> Result<(), String> {
+    emit_log(&app, &format!("Running: {}...", description), false);
+    
+    cmd.stdout(Stdio::piped())
+       .stderr(Stdio::piped());
 
-    let mut cmd = Command::new(python_exe);
-    cmd.env("HF_HOME", &models_dir)
-       .env("TORCH_HOME", &models_dir)
-       .env("PYTHONPATH", &repo_path)
-       .stdout(Stdio::piped())
-       .stderr(Stdio::piped())
-       .current_dir(&repo_path)
-       .args(["download_models.py", "--model", &model_id]);
-
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn {description}: {e}"))?;
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
@@ -535,30 +634,46 @@ pub async fn download_model(app: AppHandle, model_id: String) -> Result<(), Stri
         }
     });
 
-    let status = child.wait().map_err(|e| e.to_string())?;
+    let status = child.wait().map_err(|e| format!("Wait failed for {description}: {e}"))?;
     let _ = stdout_handle.join();
     let _ = stderr_handle.join();
 
     if status.success() {
-        emit_log(&app, &format!("Model {model_id} download completed!"), false);
         Ok(())
     } else {
-        emit_log(&app, &format!("Model {model_id} download failed! Check logs above."), true);
-        Err(format!("Download failed for {model_id}"))
+        let err_msg = format!("{} failed with exit code {}", description, status.code().unwrap_or(-1));
+        emit_log(&app, &err_msg, true);
+        Err(err_msg)
     }
+}
+
+pub async fn download_model(app: AppHandle, model_id: String) -> Result<(), String> {
+    let paths = EnginePaths::resolve(&app)?;
+    let python_exe = paths.python_executable();
+
+    let mut cmd = Command::new(python_exe);
+    cmd.env("HF_HOME", &paths.models)
+       .env("TORCH_HOME", &paths.models)
+       .env("PYTHONPATH", &paths.scripts)
+       .current_dir(&paths.scripts)
+       .args(["download_models.py", "--model", &model_id]);
+
+    run_command_with_logs(app.clone(), cmd, &format!("download for {model_id}")).await?;
+    emit_log(&app, &format!("Model {model_id} download completed!"), false);
+    Ok(())
 }
 
 
 pub async fn delete_model(app: AppHandle, model_id: String) -> Result<(), String> {
-    let models_dir = get_models_dir(&app)?;
+    let paths = EnginePaths::resolve(&app)?;
     emit_log(&app, &format!("Deleting model {}...", model_id), false);
     
     let p = if model_id.contains("florence") {
-        models_dir.join("hub").join(format!("models--florence-community--{}", model_id.replace("florence-2-", "Florence-2-")))
+        paths.models.join("hub").join(format!("models--florence-community--{}", model_id.replace("florence-2-", "Florence-2-")))
     } else if model_id == "rembg" {
-        models_dir.join("isnet-general-use.onnx")
+        paths.models.join("isnet-general-use.onnx")
     } else {
-        models_dir.join("torch").join("hub").join("checkpoints").join("big-lama.pt")
+        paths.models.join("torch").join("hub").join("checkpoints").join("big-lama.pt")
     };
     
     if p.exists() {
@@ -573,66 +688,68 @@ pub async fn delete_model(app: AppHandle, model_id: String) -> Result<(), String
 }
 
 pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), String> {
-    let base_dir = sidecar_base_dir(&app)?;
-    let repo_path = get_repo_path(&app)?;
-    let venv_path = get_venv_path(&app)?;
-    let models_dir = get_models_dir(&app)?;
+    let paths = EnginePaths::resolve(&app)?;
+    paths.ensure_dirs()?;
 
+    emit_log(&app, &format!("Initializing AI Engine in: {}", paths.engine.display()), false);
     emit_log(&app, "Starting Watermark AI setup...", false);
 
-    if !repo_path.exists() {
-        emit_log(&app, &format!("Cloning repository from {REPO_URL}..."), false);
-        let status = Command::new("git")
-            .args(["clone", REPO_URL, REPO_DIR_NAME])
-            .current_dir(&base_dir)
-            .status()
-            .map_err(|e| format!("Failed to run git clone: {e}"))?;
+    if !paths.scripts.exists() {
+        return Err("Bundled python scripts not found. Please reinstall the application.".to_string());
+    }
+
+    let mut force_recreate = force_reinstall;
+    if paths.venv.exists() {
+        // Check if the current venv's python version is compatible (3.10 to 3.13)
+        let python_exe = paths.python_executable();
+        let output = Command::new(python_exe)
+            .arg("--version")
+            .output();
         
-        if !status.success() {
-            return Err("Git clone failed".to_string());
-        }
-    } else {
-        emit_log(&app, "Repository already exists, pulling latest changes...", false);
-        // Note: We used to discard local modifications here to avoid merge conflicts.
-        // But for development, we now attempt a clean pull and only force-discard if it fails.
-        let pull_status = Command::new("git")
-            .args(["pull"])
-            .current_dir(&repo_path)
-            .status()
-            .map_err(|e| format!("Failed to run git pull: {e}"))?;
-        
-        if !pull_status.success() {
-            emit_log(&app, "Git pull failed (likely due to local changes). Attempting to resolve...", true);
-            // If pull fails, we force-discard so the user can at least get back to a working state
-            let _ = Command::new("git").args(["checkout", "--", "."]).current_dir(&repo_path).status();
-            let _ = Command::new("git").args(["clean", "-fd"]).current_dir(&repo_path).status();
-            let _ = Command::new("git").args(["pull"]).current_dir(&repo_path).status();
-            emit_log(&app, "Reset local state and pulled successfully.", false);
-        } else {
-            emit_log(&app, "Repository updated successfully.", false);
+        let (out_str, err_str) = match output {
+            Ok(o) => (
+                String::from_utf8_lossy(&o.stdout).to_string(),
+                String::from_utf8_lossy(&o.stderr).to_string()
+            ),
+            Err(_) => ("".to_string(), "".to_string()),
+        };
+
+        let version_info = format!("{} {}", out_str, err_str);
+        if version_info.contains("3.14") || version_info.trim().is_empty() {
+            emit_log(&app, &format!("Detected incompatible environment ({}). Forcing re-creation with Python 3.13...", version_info.trim()), true);
+            force_recreate = true;
         }
     }
 
-    if !venv_path.exists() || force_reinstall {
-        if venv_path.exists() {
+    if !paths.venv.exists() || force_recreate {
+        if paths.venv.exists() {
             emit_log(&app, "Removing existing virtual environment...", false);
-            fs::remove_dir_all(&venv_path).map_err(|e| format!("Failed to remove venv: {e}"))?;
+            fs::remove_dir_all(&paths.venv).map_err(|e| format!("Failed to remove venv: {e}"))?;
         }
         
-        emit_log(&app, "Creating virtual environment...", false);
-        let python_cmd = if check_command_exists("python3") { "python3" } else { "python" };
-        let status = Command::new(python_cmd)
-            .args(["-m", "venv", VENV_DIR_NAME])
-            .current_dir(&base_dir)
-            .status()
-            .map_err(|e| format!("Failed to create venv: {e}"))?;
+        emit_log(&app, "Creating virtual environment with Python 3.13...", false);
+        let uv_installed = check_command_exists("uv");
+        
+        let status = if uv_installed {
+            // Force Python 3.13 which has stable PyTorch/ROCm wheels
+            Command::new("uv")
+                .args(["venv", "--python", "3.13", VENV_DIR_NAME])
+                .current_dir(&paths.engine)
+                .status()
+        } else {
+            let python_cmd = if check_command_exists("python3") { "python3" } else { "python" };
+            Command::new(python_cmd)
+                .args(["-m", "venv", VENV_DIR_NAME])
+                .current_dir(&paths.engine)
+                .status()
+        }.map_err(|e| format!("Failed to create venv: {e}"))?;
         
         if !status.success() {
             return Err("Venv creation failed".to_string());
         }
     }
 
-    let python_exe = get_python_executable(&app)?;
+    let python_exe = paths.python_executable();
     let uv_installed = check_command_exists("uv");
     
     let (cmd_name, base_args) = if uv_installed {
@@ -644,9 +761,14 @@ pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), Stri
     // Step 0: Detect hardware and install PyTorch/ONNX accordingly
     let hw = detect_hardware();
     emit_log(&app, &format!("Hardware detected: {}", hw.to_uppercase()), false);
-    emit_log(&app, &format!("Installing PyTorch and ONNX Runtime using {}...", cmd_name), false);
 
     let mut hw_args = base_args.clone();
+    if uv_installed {
+        // Suggested by uv to resolve index priority issues with custom whl indices
+        hw_args.push("--index-strategy");
+        hw_args.push("unsafe-best-match");
+    }
+
     if hw == "nvidia" {
         hw_args.extend(["--extra-index-url", "https://download.pytorch.org/whl/cu124", "torch>=2.4.0", "torchvision>=0.19.0", "onnxruntime-gpu", "rembg[gpu]"]);
     } else if hw == "amd" {
@@ -669,54 +791,48 @@ pub async fn run_setup(app: AppHandle, force_reinstall: bool) -> Result<(), Stri
 
     let mut cmd = Command::new(cmd_name);
     cmd.args(&hw_args)
-       .env("VIRTUAL_ENV", &venv_path)
-       .env("HF_HOME", &models_dir)
-       .env("TORCH_HOME", &models_dir)
-       .current_dir(&repo_path);
-    let status = cmd.status().map_err(|e| e.to_string())?;
-    if !status.success() { return Err("Hardware dependency installation failed".to_string()); }
+       .env("VIRTUAL_ENV", &paths.venv)
+       .env("HF_HOME", &paths.models)
+       .env("TORCH_HOME", &paths.models)
+       .current_dir(&paths.engine);
+    
+    run_command_with_logs(app.clone(), cmd, "hardware dependencies (torch/onnx)").await?;
 
     // Step 1: Install remaining dependencies from requirements.txt
-    emit_log(&app, &format!("Installing remaining bridge dependencies using {}...", cmd_name), false);
+    let requirements_txt = paths.scripts.join("requirements.txt");
     let mut args = base_args.clone();
-    args.extend(["--upgrade", "-r", "requirements.txt"]);
+    args.extend(["--upgrade", "-r", requirements_txt.to_str().unwrap()]);
     let mut cmd = Command::new(cmd_name);
     cmd.args(&args)
-       .env("VIRTUAL_ENV", &venv_path)
-       .env("HF_HOME", &models_dir)
-       .env("TORCH_HOME", &models_dir)
-       .current_dir(&repo_path);
-    let status = cmd.status().map_err(|e| e.to_string())?;
-    if !status.success() { return Err("Core dependency installation failed".to_string()); }
+       .env("VIRTUAL_ENV", &paths.venv)
+       .env("HF_HOME", &paths.models)
+       .env("TORCH_HOME", &paths.models)
+       .current_dir(&paths.engine);
+    
+    run_command_with_logs(app.clone(), cmd, "bridge dependencies (requirements.txt)").await?;
 
     // Step 2: Install iopaint separately with --no-deps to avoid resolver conflicts
-    emit_log(&app, "Installing iopaint backend (--no-deps)...", false);
     let mut args = base_args.clone();
     args.extend(["iopaint", "--no-deps"]);
     let mut cmd = Command::new(cmd_name);
     cmd.args(&args)
-       .env("VIRTUAL_ENV", &venv_path)
-       .env("HF_HOME", &models_dir)
-       .env("TORCH_HOME", &models_dir)
-       .current_dir(&repo_path);
-    let _status = cmd.status().map_err(|e| e.to_string())?;
-    // (rembg is now installed dynamically in Step 0 based on hardware)
+       .env("VIRTUAL_ENV", &paths.venv)
+       .env("HF_HOME", &paths.models)
+       .env("TORCH_HOME", &paths.models)
+       .current_dir(&paths.engine);
+    
+    run_command_with_logs(app.clone(), cmd, "iopaint backend").await?;
 
     emit_log(&app, "Setup completed successfully!", false);
     Ok(())
 }
 
 pub fn reset_setup(app: &AppHandle) -> Result<(), String> {
-    let repo_path = get_repo_path(app)?;
-    let venv_path = get_venv_path(app)?;
+    let paths = EnginePaths::resolve(app)?;
 
-    if repo_path.exists() {
-        emit_log(app, "Removing repository...", false);
-        fs::remove_dir_all(&repo_path).map_err(|e| format!("Failed to remove repo: {e}"))?;
-    }
-    if venv_path.exists() {
+    if paths.venv.exists() {
         emit_log(app, "Removing virtual environment...", false);
-        fs::remove_dir_all(&venv_path).map_err(|e| format!("Failed to remove venv: {e}"))?;
+        fs::remove_dir_all(&paths.venv).map_err(|e| format!("Failed to remove venv: {e}"))?;
     }
 
     // Also reset bridge instance

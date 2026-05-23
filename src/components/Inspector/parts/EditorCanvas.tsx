@@ -20,7 +20,7 @@ import { computePaddedContentRect } from '../../../utils/paddedContentRect';
  * applied via CSS (which also enables GPU-accelerated transitions).
  */
 const SPRING_CONFIG = { type: 'spring', stiffness: 300, damping: 30, mass: 0.8 } as const;
-const ZOOM_SPRING = { type: 'spring', stiffness: 500, damping: 35, mass: 0.3 } as const;
+const ZOOM_SPRING = { type: 'spring', stiffness: 800, damping: 50, mass: 0.15 } as const;
 const ANCHOR_SPRING = {
   type: 'spring',
   stiffness: 400,

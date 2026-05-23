@@ -23,9 +23,12 @@ const MIN_CROP_SIZE = 10;
 const SNAP_THRESHOLD_MIN = 2;
 // Target snap zone in screen pixels. Converted to editor coordinates using the fit scale.
 const SNAP_THRESHOLD_SCREEN_PX = 6;
+// Hysteresis: once snapped, require this multiplier × threshold to un-snap.
+const SNAP_RELEASE_MULTIPLIER = 1.6;
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 4;
-const WHEEL_ZOOM_SPEED = 0.0016;
+const MAX_ZOOM = 10;
+const WHEEL_ZOOM_SPEED = 0.003;
+const WHEEL_ZOOM_SPEED_FAST = 0.006;
 const VIEW_COMMIT_DELAY_MS = 140;
 
 type Bounds = { width: number; height: number };
@@ -131,22 +134,6 @@ const clampCropToBounds = (
   return { x, y, w, h };
 };
 
-const roundCropXY = (crop: EditorCropRect): EditorCropRect => {
-  return {
-    ...crop,
-    x: Math.round(crop.x),
-    y: Math.round(crop.y),
-  };
-};
-
-const roundCropAll = (crop: EditorCropRect): EditorCropRect => {
-  return {
-    x: Math.round(crop.x),
-    y: Math.round(crop.y),
-    w: Math.round(crop.w),
-    h: Math.round(crop.h),
-  };
-};
 
 const remapCropToBounds = (
   crop: EditorCropRect,
@@ -471,9 +458,15 @@ export function useImageEditor({
     );
   }, [effectiveWidth, effectiveHeight, paddingPx]);
 
+  // Snap hysteresis: track if we're currently snapped to a guide on each axis.
+  // Once snapped, require a larger delta to un-snap ("sticky snap").
+  const moveSnapLockedRef = useRef<{ x: boolean; y: boolean }>({ x: false, y: false });
+  const resizeSnapLockedRef = useRef<{ x: boolean; y: boolean }>({ x: false, y: false });
+
   const applyMoveSnapping = useCallback(
     (nextRaw: EditorCropRect, bounds: Bounds): EditorCropRect => {
       const threshold = snapThreshold;
+      const releaseThreshold = snapThreshold * SNAP_RELEASE_MULTIPLIER;
 
       const candidatesX: number[] = [];
       const candidatesY: number[] = [];
@@ -514,21 +507,25 @@ export function useImageEditor({
         if (Math.abs(contentBottomDy) < threshold) candidatesY.push(contentBottomDy);
       }
 
-      const pickBest = (values: number[]) => {
+      const pickBest = (values: number[], axis: 'x' | 'y') => {
+        const isLocked = moveSnapLockedRef.current[axis];
+        const activeThreshold = isLocked ? releaseThreshold : threshold;
         let best = 0;
         let bestAbs = Number.POSITIVE_INFINITY;
         for (const value of values) {
           const abs = Math.abs(value);
-          if (abs < bestAbs) {
+          if (abs < activeThreshold && abs < bestAbs) {
             bestAbs = abs;
             best = value;
           }
         }
-        return bestAbs !== Number.POSITIVE_INFINITY ? best : 0;
+        const snapped = bestAbs !== Number.POSITIVE_INFINITY;
+        moveSnapLockedRef.current[axis] = snapped;
+        return snapped ? best : 0;
       };
 
-      const dx = pickBest(candidatesX);
-      const dy = pickBest(candidatesY);
+      const dx = pickBest(candidatesX, 'x');
+      const dy = pickBest(candidatesY, 'y');
       if (dx === 0 && dy === 0) return nextRaw;
 
       return {
@@ -647,6 +644,8 @@ export function useImageEditor({
   } | null>(null);
   const notifyFrameRef = useRef<number>(0);
   const wheelTimeoutRef = useRef<number | null>(null);
+  // Lock the zoom anchor at the start of a wheel burst so the focus point doesn't drift.
+  const wheelAnchorLockedRef = useRef(false);
 
   const applyHydrationState = useCallback(
     ({
@@ -911,7 +910,7 @@ export function useImageEditor({
     notifyFrameRef.current = window.setTimeout(() => {
       notifyFrameRef.current = 0;
       emitCurrentState(scheduledImageId);
-    }, 100) as unknown as number;
+    }, 50) as unknown as number;
   }, [emitCurrentState]);
 
   const commitChangeNow = useCallback(() => {
@@ -993,19 +992,8 @@ export function useImageEditor({
   }, [crop, effectiveWidth, effectiveHeight]);
 
   // ── Crop operations ─────────────────────────────────────
-  // Pointer move events can fire extremely frequently; updating React state on every event
-  // makes the whole app feel laggy. Coalesce crop updates to 1 per animation frame.
-  const pendingMoveDeltaRef = useRef<{ totalDx: number; totalDy: number; startCrop: EditorCropRect | null; bypassSnap: boolean; lockRatio: boolean }>({ totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false });
-  const pendingMoveRafRef = useRef<number | null>(null);
-  const pendingResizeRef = useRef<{
-    handleId: string;
-    totalDx: number;
-    totalDy: number;
-    startCrop: EditorCropRect | null;
-    bypassSnap: boolean;
-    lockRatio: boolean;
-  } | null>(null);
-  const pendingResizeRafRef = useRef<number | null>(null);
+  // Crop updates are applied synchronously for zero-lag interaction.
+  // Only store commits (notifyChange) are debounced.
 
   const applyMoveNow = useCallback(
     (totalDx: number, totalDy: number, startCrop: EditorCropRect | null, bypassSnap: boolean, _lockRatio: boolean) => {
@@ -1017,8 +1005,7 @@ export function useImageEditor({
         y: startCrop.y + totalDy,
       };
       const clamped = clampCropToBounds(unclamped, bounds);
-      const snapped = bypassSnap ? clamped : clampCropToBounds(applyMoveSnapping(clamped, bounds), bounds);
-      const next = clampCropToBounds(roundCropXY(snapped), bounds);
+      const next = bypassSnap ? clamped : clampCropToBounds(applyMoveSnapping(clamped, bounds), bounds);
       cropRef.current = next;
       setCropRaw(next);
     },
@@ -1106,93 +1093,26 @@ export function useImageEditor({
       }
 
       const clamped = clampCropToBounds({ x, y, w, h }, bounds);
-      const snapped = bypassSnap ? clamped : clampCropToBounds(
+      const next = bypassSnap ? clamped : clampCropToBounds(
         applyResizeSnapping(clamped, handleId, bounds),
         bounds,
       );
-      const next = clampCropToBounds(roundCropAll(snapped), bounds);
       cropRef.current = next;
       setCropRaw(next);
     },
     [applyResizeSnapping, getBoundsForRotation],
   );
 
-  const flushPendingCropFrame = useCallback(() => {
-    let didFlush = false;
-
-    if (pendingMoveRafRef.current !== null) {
-      window.cancelAnimationFrame(pendingMoveRafRef.current);
-      pendingMoveRafRef.current = null;
-      const pending = pendingMoveDeltaRef.current;
-      pendingMoveDeltaRef.current = { totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false };
-      if (pending.startCrop) {
-        applyMoveNow(pending.totalDx, pending.totalDy, pending.startCrop, pending.bypassSnap, pending.lockRatio);
-        didFlush = true;
-      }
-    }
-
-    if (pendingResizeRafRef.current !== null) {
-      window.cancelAnimationFrame(pendingResizeRafRef.current);
-      pendingResizeRafRef.current = null;
-      const pending = pendingResizeRef.current;
-      pendingResizeRef.current = null;
-      if (pending && pending.startCrop) {
-        applyResizeNow(pending.handleId, pending.totalDx, pending.totalDy, pending.startCrop, pending.bypassSnap, pending.lockRatio);
-        didFlush = true;
-      }
-    }
-
-    return didFlush;
-  }, [applyMoveNow, applyResizeNow]);
-
   useLayoutEffect(() => {
-    // Reset any in-flight drag frames when the image changes.
-    pendingMoveDeltaRef.current = { totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false };
-    if (pendingMoveRafRef.current !== null) {
-      window.cancelAnimationFrame(pendingMoveRafRef.current);
-      pendingMoveRafRef.current = null;
-    }
-    pendingResizeRef.current = null;
-    if (pendingResizeRafRef.current !== null) {
-      window.cancelAnimationFrame(pendingResizeRafRef.current);
-      pendingResizeRafRef.current = null;
-    }
+    // Reset snap hysteresis when the image changes.
+    moveSnapLockedRef.current = { x: false, y: false };
+    resizeSnapLockedRef.current = { x: false, y: false };
   }, [imageId]);
-
-  useEffect(() => {
-    return () => {
-      // Ensure we don't leave rAF callbacks scheduled after unmount.
-      pendingMoveDeltaRef.current = { totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false };
-      if (pendingMoveRafRef.current !== null) {
-        window.cancelAnimationFrame(pendingMoveRafRef.current);
-        pendingMoveRafRef.current = null;
-      }
-      pendingResizeRef.current = null;
-      if (pendingResizeRafRef.current !== null) {
-        window.cancelAnimationFrame(pendingResizeRafRef.current);
-        pendingResizeRafRef.current = null;
-      }
-    };
-  }, []);
 
   const moveCrop = useCallback(
     (totalDx: number, totalDy: number, startCrop: EditorCropRect | null, bypassSnap = false, lockRatio = false) => {
-      pendingMoveDeltaRef.current = {
-        totalDx: Number(totalDx) || 0,
-        totalDy: Number(totalDy) || 0,
-        startCrop,
-        bypassSnap,
-        lockRatio
-      };
-      if (pendingMoveRafRef.current !== null) return;
-      pendingMoveRafRef.current = window.requestAnimationFrame(() => {
-        pendingMoveRafRef.current = null;
-        const pending = pendingMoveDeltaRef.current;
-        pendingMoveDeltaRef.current = { totalDx: 0, totalDy: 0, startCrop: null, bypassSnap: false, lockRatio: false };
-        if (!pending.startCrop) return;
-        applyMoveNow(pending.totalDx, pending.totalDy, pending.startCrop, pending.bypassSnap, pending.lockRatio);
-        notifyChange();
-      });
+      applyMoveNow(Number(totalDx) || 0, Number(totalDy) || 0, startCrop, bypassSnap, lockRatio);
+      notifyChange();
     },
     [applyMoveNow, notifyChange],
   );
@@ -1206,23 +1126,8 @@ export function useImageEditor({
       bypassSnap = false,
       lockRatio = false
     ) => {
-      pendingResizeRef.current = {
-        handleId,
-        totalDx: Number(totalDx) || 0,
-        totalDy: Number(totalDy) || 0,
-        startCrop,
-        bypassSnap,
-        lockRatio
-      };
-      if (pendingResizeRafRef.current !== null) return;
-      pendingResizeRafRef.current = window.requestAnimationFrame(() => {
-        pendingResizeRafRef.current = null;
-        const pending = pendingResizeRef.current;
-        pendingResizeRef.current = null;
-        if (!pending) return;
-        applyResizeNow(pending.handleId, pending.totalDx, pending.totalDy, pending.startCrop, pending.bypassSnap, pending.lockRatio);
-        notifyChange();
-      });
+      applyResizeNow(handleId, Number(totalDx) || 0, Number(totalDy) || 0, startCrop, bypassSnap, lockRatio);
+      notifyChange();
     },
     [applyResizeNow, notifyChange],
   );
@@ -1695,19 +1600,27 @@ export function useImageEditor({
       }
       wheelTimeoutRef.current = window.setTimeout(() => {
         isInteractingRef.current = false;
+        wheelAnchorLockedRef.current = false;
         const appliedPendingHydration = flushPendingHydration();
         if (!appliedPendingHydration) {
           commitChangeNow();
         }
       }, 150);
 
-      updateZoomAnchorFromClientPoint({
-        clientX: event.clientX,
-        clientY: event.clientY,
-        containerElement: event.currentTarget as HTMLElement | null,
-      });
+      // Lock the anchor on the first wheel event of a burst so the
+      // zoom focus point stays fixed during continuous scrolling.
+      if (!wheelAnchorLockedRef.current) {
+        wheelAnchorLockedRef.current = true;
+        updateZoomAnchorFromClientPoint({
+          clientX: event.clientX,
+          clientY: event.clientY,
+          containerElement: event.currentTarget as HTMLElement | null,
+        });
+      }
 
-      const zoomFactor = Math.exp(-deltaY * WHEEL_ZOOM_SPEED);
+      // Ctrl/Meta + wheel = fast zoom (2× speed)
+      const speed = (event.ctrlKey || event.metaKey) ? WHEEL_ZOOM_SPEED_FAST : WHEEL_ZOOM_SPEED;
+      const zoomFactor = Math.exp(-deltaY * speed);
       const nextZoom = clampZoom(zoomRef.current * zoomFactor);
       zoomRef.current = nextZoom;
       setZoomRaw(nextZoom);
@@ -1724,15 +1637,19 @@ export function useImageEditor({
   // ── Drag start/end (for CropOverlay) ────────────────────
   const onDragStart = useCallback(() => {
     isInteractingRef.current = true;
+    // Reset snap hysteresis at the start of each drag gesture
+    moveSnapLockedRef.current = { x: false, y: false };
+    resizeSnapLockedRef.current = { x: false, y: false };
   }, []);
   const onDragEnd = useCallback(() => {
     isInteractingRef.current = false;
-    flushPendingCropFrame();
+    moveSnapLockedRef.current = { x: false, y: false };
+    resizeSnapLockedRef.current = { x: false, y: false };
     const appliedPendingHydration = flushPendingHydration();
     if (!appliedPendingHydration) {
       commitChangeNow();
     }
-  }, [commitChangeNow, flushPendingCropFrame, flushPendingHydration]);
+  }, [commitChangeNow, flushPendingHydration]);
 
   // ── Return full API ─────────────────────────────────────
   return {
