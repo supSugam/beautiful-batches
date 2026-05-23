@@ -404,16 +404,24 @@ impl WatermarkBridgeRuntime {
                 let lower_line = line.to_lowercase();
                 
                 // Detect log level to avoid scaring the user with "ERROR" for everything
-                let is_true_error = lower_line.contains("error") || 
+                let is_true_error = (lower_line.contains("error") || 
                                    lower_line.contains("exception") || 
                                    lower_line.contains("traceback") ||
-                                   lower_line.contains("failed");
+                                   lower_line.contains("failed")) && 
+                                   !lower_line.contains("futurewarning");
                 
-                let is_warning = lower_line.contains("warning") || lower_line.contains("deprecated");
+                let is_warning = lower_line.contains("warning") || 
+                                lower_line.contains("deprecated") ||
+                                lower_line.contains("unsupported");
+                
+                let is_status = lower_line.contains("downloading") || 
+                               lower_line.contains("extracting") ||
+                               lower_line.contains("installing");
                 
                 // Format the prefix based on content
                 let prefix = if is_true_error { "[bridge-err]" } 
                             else if is_warning { "[bridge-warn]" }
+                            else if is_status { "[bridge-status]" }
                             else { "[bridge-info]" };
 
                 emit_log(&app_clone, &format!("{} {}", prefix, line), is_true_error);

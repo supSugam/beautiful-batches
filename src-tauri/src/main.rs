@@ -31,30 +31,46 @@ fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
-fn load_app_icon() -> Option<tauri::image::Image<'static>> {
-    let decoded = image::load_from_memory(include_bytes!("../icons/icon.png")).ok()?;
-    let rgba = decoded.to_rgba8();
-    let (width, height) = rgba.dimensions();
-    Some(tauri::image::Image::new_owned(
-        rgba.into_raw(),
-        width,
-        height,
-    ))
-}
-
+use std::sync::OnceLock;
 use tauri::WebviewUrl;
 use tauri::WebviewWindowBuilder;
 
+static APP_ICON: OnceLock<Option<tauri::image::Image<'static>>> = OnceLock::new();
+
+fn get_app_icon() -> Option<tauri::image::Image<'static>> {
+    APP_ICON.get_or_init(|| {
+        let decoded = image::load_from_memory(include_bytes!("../icons/icon.png")).ok()?;
+        let rgba = decoded.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        Some(tauri::image::Image::new_owned(
+            rgba.into_raw(),
+            width,
+            height,
+        ))
+    }).clone()
+}
+
 fn create_app_window(app: &tauri::AppHandle, label: &str) -> tauri::Result<tauri::WebviewWindow> {
-    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title("Beautiful Batches")
         .inner_size(1440.0, 920.0)
         .resizable(true)
         .decorations(false) // Custom titlebar logic
-        .build()?;
+        .transparent(true)
+        .shadow(true);
 
-    if let Some(app_icon) = load_app_icon() {
-        let _ = window.set_icon(app_icon);
+    // On Linux, the WM_CLASS / app_id is vital for grouping and icons.
+    // We set it explicitly to the identifier from tauri.conf.json.
+    #[cfg(target_os = "linux")]
+    {
+        // This is a common trick to ensure GNOME/Wayland links the window to the correct icon/app
+        builder = builder.window_classname("com.supSugam.beautifulbatches");
+    }
+
+    let window = builder.build()?;
+
+    if let Some(icon) = get_app_icon() {
+        let _ = window.set_icon(icon);
     }
 
     Ok(window)
@@ -73,11 +89,10 @@ fn main() {
             // Ensure we have a cache dir ready
             let _ = app.path().app_cache_dir();
 
-            // The main window is created via tauri.conf.json by default.
-            // We ensure it has the correct icon here.
-            if let Some(app_icon) = load_app_icon() {
+            // Apply icon to the initial window created by tauri.conf.json
+            if let Some(icon) = get_app_icon() {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.set_icon(app_icon);
+                    let _ = window.set_icon(icon);
                 }
             }
 
