@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1](https://github.com/supSugam/beautiful-batches/compare/v0.8.0...v0.8.1) (2026-05-23)
+
+
+### Bug Fixes
+
+* increase resize handle hit area and professionalize Linux window identity ([5fd73ea](https://github.com/supSugam/beautiful-batches/commit/5fd73ead8146f44c627bb77c17ac022d035f464b))
+* resolve persistent macOS build errors and hardware detection warnings ([eb1c7df](https://github.com/supSugam/beautiful-batches/commit/eb1c7df98e79385bdda374fa05a8a82ef105ece8))
+* resolve silent AI engine failures and taskbar icon issues on Linux ([00c1093](https://github.com/supSugam/beautiful-batches/commit/00c1093a4e68cd49308be92fc3d144b5a2645687))
+
 ## [0.8.0](https://github.com/supSugam/beautiful-batches/compare/v0.7.0...v0.8.0) (2026-05-23)
 
 

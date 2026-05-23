@@ -1,6 +1,6 @@
 [package]
 name = "beautiful_batches_tauri"
-version = "0.8.0"
+version = "0.8.1"
 description = "Beautiful Batches desktop app"
 edition = "2021"
 
