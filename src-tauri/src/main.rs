@@ -51,7 +51,6 @@ fn create_app_window(app: &tauri::AppHandle, label: &str) -> tauri::Result<tauri
         .inner_size(1440.0, 920.0)
         .resizable(true)
         .decorations(false) // Custom titlebar logic
-        .transparent(true)
         .build()?;
 
     if let Some(app_icon) = load_app_icon() {

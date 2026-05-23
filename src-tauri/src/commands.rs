@@ -716,7 +716,15 @@ pub struct DetailedSystemInfo {
 
 #[tauri::command]
 pub async fn get_detailed_system_info() -> Result<DetailedSystemInfo, String> {
+    #[cfg(all(unix, not(target_os = "macos")))]
     let mut info = DetailedSystemInfo {
+        distro: None,
+        distro_version: None,
+        desktop_environment: None,
+    };
+    
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    let info = DetailedSystemInfo {
         distro: None,
         distro_version: None,
         desktop_environment: None,

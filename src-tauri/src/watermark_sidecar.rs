@@ -69,7 +69,14 @@ pub fn detect_hardware() -> String {
         }
     }
     
-    "cpu".to_string()
+    #[cfg(not(target_os = "macos"))]
+    {
+        "cpu".to_string()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "apple".to_string()
+    }
 }
 
 /// Centralized path management for the AI Engine.
