@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/supSugam/beautiful-batches/compare/v0.7.0...v0.8.0) (2026-05-23)
+
+
+### Features
+
+* automate AI engine setup in background and improve UX feedback ([8b9aa4c](https://github.com/supSugam/beautiful-batches/commit/8b9aa4c7f62c66440cfabec4a04df89799e8ae5f))
+
+
+### Bug Fixes
+
+* resolve macOS build errors and cross-platform warnings ([8a52490](https://github.com/supSugam/beautiful-batches/commit/8a52490927242793311016ece0c32bb3dd4becff))
+
 ## [0.7.0](https://github.com/supSugam/beautiful-batches/compare/v0.6.0...v0.7.0) (2026-05-23)
 
 
