@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/supSugam/beautiful-batches/compare/v0.6.0...v0.7.0) (2026-05-23)
+
+
+### Features
+
+* vendor AI engine, improve stability, and optimize taskbar grouping ([0a9db4a](https://github.com/supSugam/beautiful-batches/commit/0a9db4af1b6df4e3f9c66e6c23017355c9fecbad))
+
 ## [0.6.0](https://github.com/supSugam/beautiful-batches/compare/v0.5.0...v0.6.0) (2026-05-04)
 
 
