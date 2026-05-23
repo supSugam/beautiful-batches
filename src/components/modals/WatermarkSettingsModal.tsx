@@ -366,6 +366,7 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
   );
   const updateCropEntry = useStore((state) => state.updateCropEntry);
   const [status, setStatus] = useState<WatermarkSidecarStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [isSetupRunning, setIsSetupRunning] = useState(false);
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [showWipeConfirm, setShowWipeConfirm] = useState(false);
@@ -518,8 +519,10 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
     try {
       const nextStatus = await invoke<WatermarkSidecarStatus>('get_watermark_sidecar_status');
       setStatus(nextStatus);
+      setStatusError(null);
     } catch (error) {
       console.error('Failed to fetch sidecar status:', error);
+      setStatusError(String(error));
     }
   }, []);
 
@@ -873,12 +876,29 @@ const WatermarkSettingsModal = ({ initialTab = 'engine', onClose }: WatermarkSet
                 <div className="wsm-body is-scrollable">
                   {!status ? (
                     <div className="wsm-loading">
-                      <RefreshCcw
-                        size={22}
-                        className="spin"
-                        style={{ color: 'var(--accent)' }}
-                      />
-                      <span>Scanning environment…</span>
+                      {statusError ? (
+                        <div style={{ textAlign: 'center', padding: '2rem' }}>
+                          <AlertTriangle size={32} color="var(--error)" style={{ marginBottom: '1rem' }} />
+                          <p style={{ color: 'var(--text-bright)', marginBottom: '0.5rem' }}>Failed to load AI Engine</p>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', maxWidth: '300px', margin: '0 auto' }}>{statusError}</p>
+                          <button 
+                            className="btn btn-sm btn-ghost" 
+                            style={{ marginTop: '1rem' }}
+                            onClick={() => { setStatusError(null); fetchStatus(); }}
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <RefreshCcw
+                            size={22}
+                            className="spin"
+                            style={{ color: 'var(--accent)' }}
+                          />
+                          <span>Scanning environment…</span>
+                        </>
+                      )}
                     </div>
                   ) : (
                     <>

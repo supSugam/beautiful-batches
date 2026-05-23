@@ -2,77 +2,78 @@
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 9999;
+  z-index: 10001; /* Higher than almost everything else */
 }
 
 .resize-handle {
   position: absolute;
   pointer-events: auto;
-  /* background: rgba(255, 0, 0, 0.2); */ /* Uncomment for debugging */
+  /* Use a background for debugging if needed */
+  /* background: rgba(255, 0, 0, 0.1); */
 }
 
-/* Edges */
+/* Edges: 10px hit area */
 .resize-handle.top {
   top: 0;
-  left: 5px;
-  right: 5px;
-  height: 4px;
+  left: 15px;
+  right: 15px;
+  height: 10px;
   cursor: n-resize;
 }
 
 .resize-handle.bottom {
   bottom: 0;
-  left: 5px;
-  right: 5px;
-  height: 4px;
+  left: 15px;
+  right: 15px;
+  height: 10px;
   cursor: s-resize;
 }
 
 .resize-handle.left {
-  top: 5px;
-  bottom: 5px;
+  top: 15px;
+  bottom: 15px;
   left: 0;
-  width: 4px;
+  width: 10px;
   cursor: w-resize;
 }
 
 .resize-handle.right {
-  top: 5px;
-  bottom: 5px;
+  top: 15px;
+  bottom: 15px;
   right: 0;
-  width: 4px;
+  width: 10px;
   cursor: e-resize;
 }
 
-/* Corners */
+/* Corners: 20x20px hit area */
 .resize-handle.top-left {
   top: 0;
   left: 0;
-  width: 8px;
-  height: 8px;
+  width: 20px;
+  height: 20px;
   cursor: nw-resize;
 }
 
 .resize-handle.top-right {
   top: 0;
   right: 0;
-  width: 8px;
-  height: 8px;
+  width: 20px;
+  height: 20px;
   cursor: ne-resize;
 }
 
 .resize-handle.bottom-left {
   bottom: 0;
   left: 0;
-  width: 8px;
-  height: 8px;
+  width: 20px;
+  height: 20px;
   cursor: sw-resize;
 }
 
 .resize-handle.bottom-right {
   bottom: 0;
   right: 0;
-  width: 8px;
-  height: 8px;
+  width: 20px;
+  height: 20px;
   cursor: se-resize;
 }
